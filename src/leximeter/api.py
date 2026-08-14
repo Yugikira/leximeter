@@ -464,6 +464,7 @@ async def merge(
     additional_instructions: Optional[str] = None,
     short_list_len: int = 16,
     long_list_len: int = 256,
+    use_embeddings: bool = True,
     file_name: str = "merge_responses.csv",
     reset_files: bool = False,
     client: Optional[LLMClient] = None,
@@ -483,6 +484,7 @@ async def merge(
         additional_instructions=additional_instructions,
         short_list_len=short_list_len,
         long_list_len=long_list_len,
+        use_embeddings=use_embeddings,
     )
     task = Merge(
         cfg,
@@ -512,6 +514,8 @@ async def deduplicate(
     additional_instructions: Optional[str] = None,
     group_size: int = 500,
     modality: str = "entity",
+    use_embeddings: bool = True,
+    embedding_similarity_threshold: float = 0.85,
     file_name: str = "deduplicate_responses.csv",
     reset_files: bool = False,
     client: Optional[LLMClient] = None,
@@ -531,6 +535,8 @@ async def deduplicate(
         additional_instructions=additional_instructions,
         group_size=group_size,
         modality=modality,
+        use_embeddings=use_embeddings,
+        embedding_similarity_threshold=embedding_similarity_threshold,
     )
     task = Deduplicate(
         cfg,

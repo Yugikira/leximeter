@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
 from ..templates import load_prompt
 from ..utils.parsing import safe_json
+from ..utils.similarity import cluster_by_similarity
 from . import _common
 from .base import Task
 
@@ -23,6 +24,8 @@ class DeduplicateConfig:
     additional_instructions: Optional[str] = None
     group_size: int = 500
     modality: str = "entity"
+    use_embeddings: bool = True
+    embedding_similarity_threshold: float = 0.85
 
 
 class Deduplicate(Task):
@@ -42,14 +45,11 @@ class Deduplicate(Task):
     ) -> pd.DataFrame:
         values = [str(v) for v in df[column_name].tolist()]
         unique = list(dict.fromkeys(values))
-        groups = [
-            unique[i : i + self.cfg.group_size]
-            for i in range(0, len(unique), self.cfg.group_size)
-        ]
+        groups = await self._group_terms(unique)
 
         mapping: Dict[str, str] = {}
         prompts, ids, groups_meta = [], [], []
-        for g_idx, group in enumerate(groups):
+        for group in groups:
             ids.append(_common.hash_identifier("\x1f".join(sorted(group))))
             prompts.append(
                 self._template.render(
@@ -78,6 +78,24 @@ class Deduplicate(Task):
         ]
         self._save(out)
         return out
+
+    async def _group_terms(self, unique: List[str]) -> List[List[str]]:
+        if self.cfg.use_embeddings and len(unique) > 1:
+            try:
+                emb = await self._get_embedding_client().embed(unique)
+                clusters = cluster_by_similarity(
+                    emb, self.cfg.embedding_similarity_threshold
+                )
+                return [[unique[i] for i in cluster] for cluster in clusters]
+            except Exception as exc:  # noqa: BLE001 - optional dependency may be absent
+                print(
+                    f"[Deduplicate] embedding prefilter unavailable ({exc}); "
+                    "falling back to chunking."
+                )
+        return [
+            unique[i : i + self.cfg.group_size]
+            for i in range(0, len(unique), self.cfg.group_size)
+        ]
 
     async def _execute(self, prompts, ids, *, reset_files, **kwargs):
         from ..engine.batch import batch_execute

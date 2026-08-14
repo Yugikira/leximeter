@@ -26,6 +26,7 @@ from leximeter import (
 )
 
 from conftest import CountingClient, DictClient, TextClient
+from leximeter.client import DummyEmbeddingClient
 
 
 def run(coro):
@@ -194,6 +195,25 @@ def test_merge(tmp_path):
             right_on="name",
             save_dir=str(tmp_path / "m"),
             client=client,
+            use_embeddings=False,
+        )
+    )
+    assert res["id"].iloc[0] == 1
+
+
+def test_merge_embeddings(tmp_path):
+    df_left = pd.DataFrame({"company": ["Google Inc."]})
+    df_right = pd.DataFrame({"name": ["Gooogle Incorporated"], "id": [1]})
+    client = DictClient({"Google Inc.": "Gooogle Incorporated"})
+    res = run(
+        merge(
+            df_left,
+            df_right,
+            left_on="company",
+            right_on="name",
+            save_dir=str(tmp_path / "m2"),
+            client=client,
+            embedding_client=DummyEmbeddingClient(),
         )
     )
     assert res["id"].iloc[0] == 1
@@ -203,7 +223,24 @@ def test_deduplicate(tmp_path):
     df = pd.DataFrame({"tech": ["iPhone", "Iphone 6", "Android"]})
     client = DictClient({"iPhone": ["iPhone", "Iphone 6"]})
     res = run(
-        deduplicate(df, "tech", save_dir=str(tmp_path / "d"), client=client)
+        deduplicate(
+            df, "tech", save_dir=str(tmp_path / "d"), client=client, use_embeddings=False
+        )
+    )
+    assert list(res["mapped_tech"]) == ["iPhone", "iPhone", "Android"]
+
+
+def test_deduplicate_embeddings(tmp_path):
+    df = pd.DataFrame({"tech": ["iPhone", "Iphone 6", "Android"]})
+    client = DictClient({"iPhone": ["iPhone", "Iphone 6"]})
+    res = run(
+        deduplicate(
+            df,
+            "tech",
+            save_dir=str(tmp_path / "d2"),
+            client=client,
+            embedding_client=DummyEmbeddingClient(),
+        )
     )
     assert list(res["mapped_tech"]) == ["iPhone", "iPhone", "Android"]
 
