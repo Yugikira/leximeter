@@ -1,7 +1,9 @@
 """Business tasks.  Simple tasks are single modules; complex tasks are packages."""
 
 from .base import AttributeTask, Task
+from .bucket import Bucket, BucketConfig
 from .classify import Classify, ClassifyConfig
+from .codify import Codify, CodifyConfig
 from .compare import Compare, CompareConfig
 from .deduplicate import Deduplicate, DeduplicateConfig
 from .deidentify import Deidentify, DeidentifyConfig
@@ -36,6 +38,10 @@ __all__ = [
     "MergeConfig",
     "Deduplicate",
     "DeduplicateConfig",
+    "Bucket",
+    "BucketConfig",
+    "Codify",
+    "CodifyConfig",
     "Whatever",
     "WhateverConfig",
 ]

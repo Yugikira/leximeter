@@ -4,7 +4,9 @@ Forked from openai/GABRIEL and refactored for maintainability. See PLAN.md.
 """
 
 from .api import (
+    bucket,
     classify,
+    codify,
     compare,
     deduplicate,
     deidentify,
@@ -16,6 +18,7 @@ from .api import (
     seed,
     whatever,
 )
+from .load import load
 
 __version__ = "0.1.0"
 
@@ -30,5 +33,8 @@ __all__ = [
     "seed",
     "merge",
     "deduplicate",
+    "bucket",
+    "codify",
     "whatever",
+    "load",
 ]

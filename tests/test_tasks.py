@@ -7,12 +7,15 @@ import asyncio
 import pandas as pd
 
 from leximeter import (
+    bucket,
     classify,
+    codify,
     compare,
     deduplicate,
     deidentify,
     extract,
     filter,
+    load,
     merge,
     paraphrase,
     rate,
@@ -201,3 +204,39 @@ def test_deduplicate(tmp_path):
         deduplicate(df, "tech", save_dir=str(tmp_path / "d"), client=client)
     )
     assert list(res["mapped_tech"]) == ["iPhone", "iPhone", "Android"]
+
+
+def test_bucket(tmp_path):
+    df = pd.DataFrame({"tech": ["iPhone", "iPad"]})
+    client = DictClient({"mobile device": "a definition"})
+    res = run(
+        bucket(df, "tech", save_dir=str(tmp_path / "b"), client=client, bucket_count=1)
+    )
+    assert set(res.columns) == {"bucket", "definition"}
+    assert res["bucket"].iloc[0] == "mobile device"
+
+
+def test_codify(tmp_path):
+    df = pd.DataFrame({"text": ["hello world"]})
+    client = DictClient(
+        {"code1": [{"beginning excerpt": "hello world", "ending excerpt": ""}]}
+    )
+    res = run(
+        codify(
+            df,
+            "text",
+            categories={"code1": "def"},
+            save_dir=str(tmp_path / "c"),
+            client=client,
+        )
+    )
+    assert "coded_passages" in res.columns
+    assert res["coded_passages"].iloc[0]["code1"][0]["beginning excerpt"] == "hello world"
+
+
+def test_load(tmp_path):
+    f = tmp_path / "a.txt"
+    f.write_text("hello world", encoding="utf-8")
+    res = load(str(tmp_path))
+    assert list(res["name"]) == ["a.txt"]
+    assert res["text"].iloc[0] == "hello world"
