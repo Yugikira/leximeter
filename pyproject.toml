@@ -1,0 +1,68 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "leximeter"
+version = "0.1.0"
+description = "Text-only, provider-neutral LLM library to measure quantitative attributes on qualitative text"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+keywords = [
+    "llm",
+    "text analysis",
+    "social science",
+    "measurement",
+    "economics",
+    "research",
+]
+classifiers = [
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+    "Topic :: Software Development :: Libraries",
+]
+dependencies = [
+    "openai>=1.0.0",
+    "pandas>=1.0.0",
+    "numpy>=1.18.0",
+    "Jinja2>=3.0.0",
+    "tqdm>=4.40.0",
+    "aiohttp>=3.7.0",
+    "aiolimiter>=1.0.0",
+    "httpx>=0.23.0",
+    "pydantic>=1.10.0",
+    "scipy>=1.8.0",
+    "statsmodels>=0.14.0",
+    "plotly>=5.0.0",
+    "matplotlib>=3.6.0",
+]
+
+[project.optional-dependencies]
+embeddings = ["sentence-transformers>=2.2.0"]
+search = ["tavily-python>=0.3.0"]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "ruff>=0.4.0",
+    "mypy>=1.0.0",
+]
+
+[project.urls]
+Repository = "https://github.com/openai/GABRIEL"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["leximeter*"]
+
+[tool.setuptools.package-data]
+"leximeter.prompts" = ["*.jinja2"]
