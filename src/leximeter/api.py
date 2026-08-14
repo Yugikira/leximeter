@@ -17,8 +17,10 @@ from .client.base import LLMClient
 from .client.embedding import EmbeddingClient
 from .client.search import SearchTool
 from .tasks.classify import Classify, ClassifyConfig
+from .tasks.compare import Compare, CompareConfig
 from .tasks.extract import Extract, ExtractConfig
 from .tasks.filter import Filter, FilterConfig
+from .tasks.paraphrase import Paraphrase, ParaphraseConfig
 from .tasks.rate import Rate, RateConfig
 from .tasks.whatever import Whatever, WhateverConfig
 
@@ -252,3 +254,90 @@ async def whatever(
         reset_files=reset_files,
         **engine_kwargs,
     )
+
+
+async def compare(
+    df: pd.DataFrame,
+    circle_column_name: str,
+    square_column_name: str,
+    *,
+    save_dir: str,
+    differentiate: bool = True,
+    additional_instructions: Optional[str] = None,
+    model: str = "gpt-5.4-mini",
+    n_parallels: int = 50,
+    modality: str = "text",
+    circle_first: Optional[bool] = None,
+    file_name: str = "comparison_responses.csv",
+    reset_files: bool = False,
+    client: Optional[LLMClient] = None,
+    embedding_client: Optional[EmbeddingClient] = None,
+    search_tool: Optional[SearchTool] = None,
+    **engine_kwargs: Any,
+) -> pd.DataFrame:
+    """Identify similarities/differences between paired entries.
+
+    Returns a long DataFrame with ``circle``, ``square``, ``attribute`` and
+    ``explanation`` columns (one row per term).
+    """
+    cfg = CompareConfig(
+        save_dir=save_dir,
+        file_name=file_name,
+        model=model,
+        n_parallels=n_parallels,
+        differentiate=differentiate,
+        additional_instructions=additional_instructions,
+        modality=modality,
+        circle_first=circle_first,
+    )
+    task = Compare(
+        cfg,
+        client=client,
+        embedding_client=embedding_client,
+        search_tool=search_tool,
+    )
+    return await task.run(
+        df, circle_column_name, square_column_name, reset_files=reset_files, **engine_kwargs
+    )
+
+
+async def paraphrase(
+    df: pd.DataFrame,
+    column_name: str,
+    *,
+    instructions: str,
+    save_dir: str,
+    model: str = "gpt-5.4-mini",
+    n_parallels: int = 50,
+    modality: str = "text",
+    json_mode: bool = False,
+    revised_column_name: Optional[str] = None,
+    file_name: str = "paraphrase_responses.csv",
+    reset_files: bool = False,
+    client: Optional[LLMClient] = None,
+    embedding_client: Optional[EmbeddingClient] = None,
+    search_tool: Optional[SearchTool] = None,
+    **engine_kwargs: Any,
+) -> pd.DataFrame:
+    """Rewrite each item per ``instructions``.
+
+    Returns ``df`` with a new paraphrased column (``revised_column_name`` or
+    ``<column_name>_paraphrased``).
+    """
+    cfg = ParaphraseConfig(
+        instructions=instructions,
+        save_dir=save_dir,
+        file_name=file_name,
+        model=model,
+        n_parallels=n_parallels,
+        modality=modality,
+        json_mode=json_mode,
+        revised_column_name=revised_column_name,
+    )
+    task = Paraphrase(
+        cfg,
+        client=client,
+        embedding_client=embedding_client,
+        search_tool=search_tool,
+    )
+    return await task.run(df, column_name, reset_files=reset_files, **engine_kwargs)

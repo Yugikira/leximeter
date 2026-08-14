@@ -6,9 +6,9 @@ import asyncio
 
 import pandas as pd
 
-from leximeter import classify, extract, filter, rate, whatever
+from leximeter import classify, compare, extract, filter, paraphrase, rate, whatever
 
-from conftest import CountingClient, DictClient
+from conftest import CountingClient, DictClient, TextClient
 
 
 def run(coro):
@@ -113,3 +113,29 @@ def test_whatever_json_mode(tmp_path):
     )
     assert list(res.columns) == ["Identifier", "Response", "Response JSON"]
     assert list(res["Response JSON"]) == [{"ok": True}, {"ok": True}]
+
+
+def test_compare(tmp_path):
+    df = pd.DataFrame({"a": ["x", "y"], "b": ["x2", "y2"]})
+    client = DictClient({"circle has more": "justification"})
+    res = run(
+        compare(df, "a", "b", save_dir=str(tmp_path / "cmp"), client=client)
+    )
+    assert set(res.columns) == {"circle", "square", "attribute", "explanation"}
+    assert list(res["attribute"]) == ["circle has more", "circle has more"]
+
+
+def test_paraphrase(tmp_path):
+    df = pd.DataFrame({"text": ["hello", "world"]})
+    client = TextClient("REWRITTEN")
+    res = run(
+        paraphrase(
+            df,
+            "text",
+            instructions="summarize",
+            save_dir=str(tmp_path / "para"),
+            client=client,
+        )
+    )
+    assert "text_paraphrased" in res.columns
+    assert list(res["text_paraphrased"]) == ["REWRITTEN", "REWRITTEN"]
