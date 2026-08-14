@@ -6,9 +6,11 @@ Forked from openai/GABRIEL and refactored for maintainability. See PLAN.md.
 from .api import (
     classify,
     compare,
+    deduplicate,
     deidentify,
     extract,
     filter,
+    merge,
     paraphrase,
     rate,
     seed,
@@ -26,5 +28,7 @@ __all__ = [
     "paraphrase",
     "deidentify",
     "seed",
+    "merge",
+    "deduplicate",
     "whatever",
 ]

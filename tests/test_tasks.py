@@ -9,9 +9,11 @@ import pandas as pd
 from leximeter import (
     classify,
     compare,
+    deduplicate,
     deidentify,
     extract,
     filter,
+    merge,
     paraphrase,
     rate,
     seed,
@@ -173,3 +175,29 @@ def test_deidentify(tmp_path):
     )
     res = run(deidentify(df, "text", save_dir=str(tmp_path / "deid"), client=client))
     assert res["deidentified_text"].iloc[0] == "Zoe went to school"
+
+
+def test_merge(tmp_path):
+    df_left = pd.DataFrame({"company": ["Google Inc."]})
+    df_right = pd.DataFrame({"name": ["Gooogle Incorporated"], "id": [1]})
+    client = DictClient({"Google Inc.": "Gooogle Incorporated"})
+    res = run(
+        merge(
+            df_left,
+            df_right,
+            left_on="company",
+            right_on="name",
+            save_dir=str(tmp_path / "m"),
+            client=client,
+        )
+    )
+    assert res["id"].iloc[0] == 1
+
+
+def test_deduplicate(tmp_path):
+    df = pd.DataFrame({"tech": ["iPhone", "Iphone 6", "Android"]})
+    client = DictClient({"iPhone": ["iPhone", "Iphone 6"]})
+    res = run(
+        deduplicate(df, "tech", save_dir=str(tmp_path / "d"), client=client)
+    )
+    assert list(res["mapped_tech"]) == ["iPhone", "iPhone", "Android"]

@@ -18,9 +18,11 @@ from .client.embedding import EmbeddingClient
 from .client.search import SearchTool
 from .tasks.classify import Classify, ClassifyConfig
 from .tasks.compare import Compare, CompareConfig
+from .tasks.deduplicate import Deduplicate, DeduplicateConfig
 from .tasks.deidentify import Deidentify, DeidentifyConfig
 from .tasks.extract import Extract, ExtractConfig
 from .tasks.filter import Filter, FilterConfig
+from .tasks.merge import Merge, MergeConfig
 from .tasks.paraphrase import Paraphrase, ParaphraseConfig
 from .tasks.rate import Rate, RateConfig
 from .tasks.seed import Seed, SeedConfig
@@ -439,3 +441,94 @@ async def deidentify(
         reset_files=reset_files,
         **engine_kwargs,
     )
+
+
+async def merge(
+    df_left: pd.DataFrame,
+    df_right: pd.DataFrame,
+    *,
+    save_dir: str,
+    on: Optional[str] = None,
+    left_on: Optional[str] = None,
+    right_on: Optional[str] = None,
+    how: str = "left",
+    model: str = "gpt-5.4-nano",
+    n_parallels: int = 50,
+    additional_instructions: Optional[str] = None,
+    short_list_len: int = 16,
+    long_list_len: int = 256,
+    file_name: str = "merge_responses.csv",
+    reset_files: bool = False,
+    client: Optional[LLMClient] = None,
+    embedding_client: Optional[EmbeddingClient] = None,
+    search_tool: Optional[SearchTool] = None,
+    **engine_kwargs: Any,
+) -> pd.DataFrame:
+    """Fuzzy-join two tables via LLM matching (pure-LLM path in v1).
+
+    Returns ``df_left`` merged with ``df_right`` on the matched key.
+    """
+    cfg = MergeConfig(
+        save_dir=save_dir,
+        file_name=file_name,
+        model=model,
+        n_parallels=n_parallels,
+        additional_instructions=additional_instructions,
+        short_list_len=short_list_len,
+        long_list_len=long_list_len,
+    )
+    task = Merge(
+        cfg,
+        client=client,
+        embedding_client=embedding_client,
+        search_tool=search_tool,
+    )
+    return await task.run(
+        df_left,
+        df_right,
+        on=on,
+        left_on=left_on,
+        right_on=right_on,
+        how=how,
+        reset_files=reset_files,
+        **engine_kwargs,
+    )
+
+
+async def deduplicate(
+    df: pd.DataFrame,
+    column_name: str,
+    *,
+    save_dir: str,
+    model: str = "gpt-5.4-mini",
+    n_parallels: int = 50,
+    additional_instructions: Optional[str] = None,
+    group_size: int = 500,
+    modality: str = "entity",
+    file_name: str = "deduplicate_responses.csv",
+    reset_files: bool = False,
+    client: Optional[LLMClient] = None,
+    embedding_client: Optional[EmbeddingClient] = None,
+    search_tool: Optional[SearchTool] = None,
+    **engine_kwargs: Any,
+) -> pd.DataFrame:
+    """Map conceptually-equivalent terms to one representative.
+
+    Returns ``df`` with a ``mapped_<column_name>`` column.
+    """
+    cfg = DeduplicateConfig(
+        save_dir=save_dir,
+        file_name=file_name,
+        model=model,
+        n_parallels=n_parallels,
+        additional_instructions=additional_instructions,
+        group_size=group_size,
+        modality=modality,
+    )
+    task = Deduplicate(
+        cfg,
+        client=client,
+        embedding_client=embedding_client,
+        search_tool=search_tool,
+    )
+    return await task.run(df, column_name, reset_files=reset_files, **engine_kwargs)
