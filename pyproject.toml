@@ -60,6 +60,10 @@ Repository = "https://github.com/openai/GABRIEL"
 package-dir = { "" = "src" }
 include-package-data = true
 
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["leximeter*"]
