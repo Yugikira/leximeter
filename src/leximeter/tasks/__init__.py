@@ -11,6 +11,7 @@ from .extract import Extract, ExtractConfig
 from .filter import Filter, FilterConfig
 from .merge import Merge, MergeConfig
 from .paraphrase import Paraphrase, ParaphraseConfig
+from .rank import Rank, RankConfig
 from .rate import Rate, RateConfig
 from .seed import Seed, SeedConfig
 from .whatever import Whatever, WhateverConfig
@@ -18,6 +19,8 @@ from .whatever import Whatever, WhateverConfig
 __all__ = [
     "Task",
     "AttributeTask",
+    "Rank",
+    "RankConfig",
     "Rate",
     "RateConfig",
     "Classify",

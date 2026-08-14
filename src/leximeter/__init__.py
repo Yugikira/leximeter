@@ -14,6 +14,7 @@ from .api import (
     filter,
     merge,
     paraphrase,
+    rank,
     rate,
     seed,
     whatever,
@@ -24,6 +25,7 @@ __version__ = "0.1.0"
 
 __all__ = [
     "rate",
+    "rank",
     "classify",
     "extract",
     "filter",

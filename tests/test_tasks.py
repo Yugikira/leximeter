@@ -18,6 +18,7 @@ from leximeter import (
     load,
     merge,
     paraphrase,
+    rank,
     rate,
     seed,
     whatever,
@@ -240,3 +241,21 @@ def test_load(tmp_path):
     res = load(str(tmp_path))
     assert list(res["name"]) == ["a.txt"]
     assert res["text"].iloc[0] == "hello world"
+
+
+def test_rank(tmp_path):
+    df = pd.DataFrame({"speech": ["a", "b", "c"]})
+    client = DictClient({"populism": "circle"})
+    res = run(
+        rank(
+            df,
+            "speech",
+            attributes={"populism": ""},
+            save_dir=str(tmp_path / "r"),
+            client=client,
+            n_rounds=1,
+            matches_per_round=1,
+        )
+    )
+    assert "populism" in res.columns
+    assert len(res) == 3

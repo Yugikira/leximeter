@@ -26,6 +26,7 @@ from .tasks.extract import Extract, ExtractConfig
 from .tasks.filter import Filter, FilterConfig
 from .tasks.merge import Merge, MergeConfig
 from .tasks.paraphrase import Paraphrase, ParaphraseConfig
+from .tasks.rank import Rank, RankConfig
 from .tasks.rate import Rate, RateConfig
 from .tasks.seed import Seed, SeedConfig
 from .tasks.whatever import Whatever, WhateverConfig
@@ -619,3 +620,48 @@ async def codify(
         reset_files=reset_files,
         **engine_kwargs,
     )
+
+
+async def rank(
+    df: pd.DataFrame,
+    column_name: str,
+    *,
+    attributes: Dict[str, str],
+    save_dir: str,
+    model: str = "gpt-5.4-mini",
+    n_rounds: int = 5,
+    matches_per_round: int = 3,
+    learning_rate: float = 0.1,
+    n_parallels: int = 50,
+    additional_instructions: Optional[str] = None,
+    modality: str = "text",
+    file_name: str = "rankings",
+    reset_files: bool = False,
+    client: Optional[LLMClient] = None,
+    embedding_client: Optional[EmbeddingClient] = None,
+    search_tool: Optional[SearchTool] = None,
+    **engine_kwargs: Any,
+) -> pd.DataFrame:
+    """Compare items pairwise and output centered Bradley–Terry z-scores.
+
+    Returns ``df`` with one column per attribute (centered log-strength).
+    """
+    cfg = RankConfig(
+        attributes=attributes,
+        save_dir=save_dir,
+        file_name=file_name,
+        model=model,
+        n_rounds=n_rounds,
+        matches_per_round=matches_per_round,
+        learning_rate=learning_rate,
+        n_parallels=n_parallels,
+        additional_instructions=additional_instructions,
+        modality=modality,
+    )
+    task = Rank(
+        cfg,
+        client=client,
+        embedding_client=embedding_client,
+        search_tool=search_tool,
+    )
+    return await task.run(df, column_name, reset_files=reset_files, **engine_kwargs)
