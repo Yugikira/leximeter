@@ -116,8 +116,15 @@ class AttributeTask(Task):
     ) -> Dict[str, Any]:
         """Parse one raw completion into ``{attribute: value}``."""
 
+    def _get_attributes(self) -> Dict[str, str]:
+        """Return the attribute (or label) dict for this task."""
+        return dict(self.cfg.attributes)
+
+    def _set_attributes(self, attributes: Dict[str, str]) -> None:
+        self.cfg.attributes = attributes
+
     def _attribute_names(self) -> List[str]:
-        return list(self.cfg.attributes.keys())
+        return list(self._get_attributes().keys())
 
     def aggregate(self, records: pd.DataFrame, df_proc: pd.DataFrame) -> pd.DataFrame:
         """Combine per-run records into final per-item values (default: mean)."""
@@ -146,11 +153,11 @@ class AttributeTask(Task):
         # 2. attributes, persisted for reproducibility
         attributes = _common.load_persisted_attributes(
             self.cfg.save_dir,
-            dict(self.cfg.attributes),
+            self._get_attributes(),
             reset_files=reset_files,
             task_name=self.__class__.__name__,
         )
-        self.cfg.attributes = attributes
+        self._set_attributes(attributes)
 
         # 3. batch attributes into prompts (reuse saved plan on resume)
         base_name = self._base_name()

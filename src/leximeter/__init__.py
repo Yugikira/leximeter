@@ -3,8 +3,8 @@
 Forked from openai/GABRIEL and refactored for maintainability. See PLAN.md.
 """
 
-from .api import rate
+from .api import classify, extract, rate
 
 __version__ = "0.1.0"
 
-__all__ = ["rate"]
+__all__ = ["rate", "classify", "extract"]
