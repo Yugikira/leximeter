@@ -15,6 +15,7 @@ from leximeter import (
     deidentify,
     extract,
     filter,
+    ideate,
     load,
     merge,
     paraphrase,
@@ -259,3 +260,13 @@ def test_rank(tmp_path):
     )
     assert "populism" in res.columns
     assert len(res) == 3
+
+
+def test_ideate(tmp_path):
+    client = TextClient("Title: Test\nIn a nutshell: A nutshell.")
+    res = run(
+        ideate("some topic", save_dir=str(tmp_path / "i"), client=client, n_ideas=2)
+    )
+    assert "title" in res.columns
+    assert res["title"].iloc[0] == "Test"
+    assert len(res) == 2

@@ -20,12 +20,16 @@ from .tasks.bucket import Bucket, BucketConfig
 from .tasks.classify import Classify, ClassifyConfig
 from .tasks.codify import Codify, CodifyConfig
 from .tasks.compare import Compare, CompareConfig
+from .tasks.debias import Debias, DebiasConfig
 from .tasks.deduplicate import Deduplicate, DeduplicateConfig
 from .tasks.deidentify import Deidentify, DeidentifyConfig
+from .tasks.discover import Discover, DiscoverConfig
 from .tasks.extract import Extract, ExtractConfig
 from .tasks.filter import Filter, FilterConfig
+from .tasks.ideate import Ideate, IdeateConfig
 from .tasks.merge import Merge, MergeConfig
 from .tasks.paraphrase import Paraphrase, ParaphraseConfig
+from .tasks.poll import Poll, PollConfig
 from .tasks.rank import Rank, RankConfig
 from .tasks.rate import Rate, RateConfig
 from .tasks.seed import Seed, SeedConfig
@@ -659,6 +663,175 @@ async def rank(
         modality=modality,
     )
     task = Rank(
+        cfg,
+        client=client,
+        embedding_client=embedding_client,
+        search_tool=search_tool,
+    )
+    return await task.run(df, column_name, reset_files=reset_files, **engine_kwargs)
+
+
+async def discover(
+    df: pd.DataFrame,
+    *,
+    column_name: Optional[str] = None,
+    circle_column_name: Optional[str] = None,
+    square_column_name: Optional[str] = None,
+    save_dir: str,
+    bucket_count: int = 10,
+    model: str = "gpt-5.4-mini",
+    n_parallels: int = 50,
+    additional_instructions: Optional[str] = None,
+    reset_files: bool = False,
+    client: Optional[LLMClient] = None,
+    embedding_client: Optional[EmbeddingClient] = None,
+    search_tool: Optional[SearchTool] = None,
+    **engine_kwargs: Any,
+) -> Dict[str, Any]:
+    """Contrast two columns (or mine one) and bucket distinguishing features.
+
+    Returns ``{"candidates": DataFrame, "buckets": DataFrame}``.
+    """
+    cfg = DiscoverConfig(
+        save_dir=save_dir,
+        model=model,
+        n_parallels=n_parallels,
+        bucket_count=bucket_count,
+        additional_instructions=additional_instructions,
+    )
+    task = Discover(
+        cfg,
+        client=client,
+        embedding_client=embedding_client,
+        search_tool=search_tool,
+    )
+    return await task.run(
+        df,
+        column_name=column_name,
+        circle_column_name=circle_column_name,
+        square_column_name=square_column_name,
+        reset_files=reset_files,
+        **engine_kwargs,
+    )
+
+
+async def ideate(
+    topic: str,
+    *,
+    save_dir: str,
+    n_ideas: int = 1000,
+    scientific_theory: bool = True,
+    model: str = "gpt-5.4-mini",
+    n_parallels: int = 50,
+    additional_instructions: Optional[str] = None,
+    file_name: str = "ideation.csv",
+    reset_files: bool = False,
+    client: Optional[LLMClient] = None,
+    embedding_client: Optional[EmbeddingClient] = None,
+    search_tool: Optional[SearchTool] = None,
+    **engine_kwargs: Any,
+) -> pd.DataFrame:
+    """Generate ``n_ideas`` reports on a topic and parse them into fields."""
+    cfg = IdeateConfig(
+        save_dir=save_dir,
+        file_name=file_name,
+        model=model,
+        n_parallels=n_parallels,
+        n_ideas=n_ideas,
+        scientific_theory=scientific_theory,
+        additional_instructions=additional_instructions,
+    )
+    task = Ideate(
+        cfg,
+        client=client,
+        embedding_client=embedding_client,
+        search_tool=search_tool,
+    )
+    return await task.run(
+        topic,
+        additional_instructions=additional_instructions,
+        reset_files=reset_files,
+        **engine_kwargs,
+    )
+
+
+async def poll(
+    df: Optional[pd.DataFrame] = None,
+    column_name: Optional[str] = None,
+    *,
+    population_description: Optional[str] = None,
+    questions: Optional[Any] = None,
+    save_dir: str,
+    seed_model: str = "gpt-5.5",
+    persona_model: str = "gpt-5.5",
+    poll_model: str = "gpt-5.5",
+    n_parallels: int = 50,
+    num_personas: int = 1000,
+    entities_per_generation: int = 50,
+    n_questions_per_run: int = 8,
+    file_name: str = "poll_results.csv",
+    reset_files: bool = False,
+    client: Optional[LLMClient] = None,
+    embedding_client: Optional[EmbeddingClient] = None,
+    search_tool: Optional[SearchTool] = None,
+    **engine_kwargs: Any,
+) -> pd.DataFrame:
+    """Seed a population, expand personas, and survey them."""
+    cfg = PollConfig(
+        population_description=population_description,
+        questions=list(questions) if questions else [],
+        save_dir=save_dir,
+        file_name=file_name,
+        seed_model=seed_model,
+        persona_model=persona_model,
+        poll_model=poll_model,
+        n_parallels=n_parallels,
+        num_personas=num_personas,
+        entities_per_generation=entities_per_generation,
+        n_questions_per_run=n_questions_per_run,
+    )
+    task = Poll(
+        cfg,
+        client=client,
+        embedding_client=embedding_client,
+        search_tool=search_tool,
+    )
+    return await task.run(
+        df=df,
+        column_name=column_name,
+        population_description=population_description,
+        questions=questions,
+        reset_files=reset_files,
+        **engine_kwargs,
+    )
+
+
+async def debias(
+    df: pd.DataFrame,
+    column_name: str,
+    *,
+    save_dir: str,
+    measurement_attribute: str,
+    removal_attribute: str,
+    attributes: Dict[str, str],
+    model: str = "gpt-5.4-mini",
+    n_parallels: int = 50,
+    reset_files: bool = False,
+    client: Optional[LLMClient] = None,
+    embedding_client: Optional[EmbeddingClient] = None,
+    search_tool: Optional[SearchTool] = None,
+    **engine_kwargs: Any,
+) -> Dict[str, Any]:
+    """Measure a signal, strip a confounder, re-measure, and regress out bias."""
+    cfg = DebiasConfig(
+        save_dir=save_dir,
+        model=model,
+        n_parallels=n_parallels,
+        measurement_attribute=measurement_attribute,
+        removal_attribute=removal_attribute,
+        attributes=attributes,
+    )
+    task = Debias(
         cfg,
         client=client,
         embedding_client=embedding_client,
