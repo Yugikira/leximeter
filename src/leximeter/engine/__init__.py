@@ -1,5 +1,8 @@
-"""Provider-agnostic orchestration: concurrency, retries, checkpointing, cost.
+"""Provider-agnostic orchestration: concurrency, retries, checkpointing.
 
-This layer depends only on ``LLMClient.complete`` — never on a specific vendor.
-Implemented in milestone M2.
+Depends only on ``LLMClient.complete`` — never on a specific vendor.
 """
+
+from .batch import batch_execute
+
+__all__ = ["batch_execute"]

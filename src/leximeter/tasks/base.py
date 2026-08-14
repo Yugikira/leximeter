@@ -119,9 +119,13 @@ class AttributeTask(Task):
     def _attribute_names(self) -> List[str]:
         return list(self.cfg.attributes.keys())
 
-    def aggregate(self, records: pd.DataFrame) -> pd.DataFrame:
+    def aggregate(self, records: pd.DataFrame, df_proc: pd.DataFrame) -> pd.DataFrame:
         """Combine per-run records into final per-item values (default: mean)."""
-        return records.groupby("id")[self._attribute_names()].mean()
+        attrs = self._attribute_names()
+        agg = records.groupby("id")[attrs].mean()
+        return df_proc.merge(agg, left_on="_gid", right_index=True, how="left").drop(
+            columns=["_gid"]
+        )
 
     # ---- invariant pipeline (template method) ------------------------
     async def run(
@@ -148,64 +152,88 @@ class AttributeTask(Task):
         )
         self.cfg.attributes = attributes
 
-        # 3. batch attributes into prompts
+        # 3. batch attributes into prompts (reuse saved plan on resume)
+        base_name = self._base_name()
+        run_metadata = _common.load_run_metadata(
+            self.cfg.save_dir, base_name, reset_files=reset_files
+        )
         attr_items = list(attributes.items())
-        batches, _ = _common.resolve_attribute_batches(
+        batches, n_per_run = _common.resolve_attribute_batches(
             attr_items,
             requested_n=getattr(self.cfg, "n_attributes_per_run", None),
-            metadata={},
+            metadata=run_metadata,
             reset_files=reset_files,
         )
+        _common.update_run_metadata(
+            self.cfg.save_dir,
+            base_name,
+            model=self.cfg.model,
+            n_attributes_per_run=n_per_run,
+            attribute_batches=[[name for name, _ in b] for b in batches],
+        )
 
-        # 4. render prompts (batches x unique items)
+        # 4. build jobs: (batch x unique item x run)
+        n_runs = max(1, int(getattr(self.cfg, "n_runs", 1)))
         prompts: List[str] = []
         ids: List[str] = []
+        meta: List[Tuple[str, int, int]] = []  # (base_id, batch_idx, run_idx)
         for batch_idx, batch_items in enumerate(batches):
             batch_attrs = dict(batch_items)
             for ident in base_ids:
-                prompts.append(self.render_prompt(id_to_text[ident], batch_attrs))
-                ids.append(f"{ident}_batch{batch_idx}")
+                for run_idx in range(1, n_runs + 1):
+                    ids.append(f"{ident}_batch{batch_idx}_run{run_idx}")
+                    prompts.append(self.render_prompt(id_to_text[ident], batch_attrs))
+                    meta.append((ident, batch_idx, run_idx))
 
-        # 5. execute (sequential for M0; concurrent engine.batch lands in M2)
-        raw_responses = await self._execute(prompts, **kwargs)
+        # 5. execute through the provider-agnostic engine
+        resp_df = await self._execute(prompts, ids, reset_files=reset_files, **kwargs)
+        resp_lookup = dict(zip(resp_df["Identifier"], resp_df["Response"]))
 
-        # 6. parse each response into attribute values
-        records = await self._parse_all(raw_responses, ids, batches, base_ids)
+        # 6. parse each response into per-run records
+        records = await self._parse_all(meta, ids, resp_lookup, batches)
 
         # 7. aggregate + merge back onto the input frame
-        result = self.aggregate(records)
-        result = df_proc.merge(result, left_on="_gid", right_index=True, how="left")
-        result = result.drop(columns=["_gid"])
-
+        result = self.aggregate(records, df_proc)
         self._save(result)
         return result
 
-    # ---- internal steps (M2/M3 flesh these out) ----------------------
-    async def _execute(self, prompts: List[str], **kwargs: Any) -> List[str]:
-        client = self._get_client()
-        out: List[str] = []
-        for prompt in prompts:
-            out.append(
-                await client.complete(
-                    prompt, model=self.cfg.model, json_mode=True, **kwargs
-                )
-            )
-        return out
+    # ---- internal steps ---------------------------------------------
+    async def _execute(
+        self,
+        prompts: List[str],
+        ids: List[str],
+        *,
+        reset_files: bool,
+        **kwargs: Any,
+    ) -> pd.DataFrame:
+        from ..engine.batch import batch_execute
+
+        return await batch_execute(
+            prompts,
+            ids,
+            client=self._get_client(),
+            model=self.cfg.model,
+            json_mode=True,
+            n_parallels=getattr(self.cfg, "n_parallels", 50),
+            save_path=os.path.join(
+                self.cfg.save_dir, f"{self._base_name()}_raw_responses.csv"
+            ),
+            reset_files=reset_files,
+            **kwargs,
+        )
 
     async def _parse_all(
         self,
-        raw_responses: List[str],
+        meta: List[Tuple[str, int, int]],
         ids: List[str],
+        resp_lookup: Dict[str, Any],
         batches: Sequence[Sequence[Tuple[str, Any]]],
-        base_ids: List[str],
     ) -> pd.DataFrame:
         records: List[Dict[str, Any]] = []
-        for ident_batch, raw in zip(ids, raw_responses):
-            base_ident, batch_part = ident_batch.rsplit("_batch", 1)
-            batch_idx = int(batch_part)
+        for (base_id, batch_idx, run_idx), ident in zip(meta, ids):
             names = [name for name, _ in batches[batch_idx]]
-            parsed = await self.parse_response(raw, names)
-            records.append({"id": base_ident, **parsed})
+            parsed = await self.parse_response(resp_lookup.get(ident), names)
+            records.append({"id": base_id, "run": run_idx, **parsed})
         return pd.DataFrame(records)
 
     def _save(self, result: pd.DataFrame) -> None:

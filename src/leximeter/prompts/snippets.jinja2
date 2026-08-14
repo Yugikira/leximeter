@@ -1,0 +1,13 @@
+{% macro single_entry(modality, text) %}
+{% if modality == "entity" %}
+Entity: {{ text }}
+Use your prodigious internal knowledge on the item/entity "{{ text }}".
+Comprehensively consider every relevant detail, both big picture and subtleties.
+Consider "{{ text }}" as the content to be analyzed.
+{% else %}
+BEGIN TEXT ENTRY
+{{ text }}
+END TEXT ENTRY
+Read entire text content carefully—start, middle, end. Do not skim; comprehend whole text deeply, including subtleties buried deep in the content.
+{% endif %}
+{% endmacro %}
