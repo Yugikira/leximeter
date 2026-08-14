@@ -18,10 +18,12 @@ from .client.embedding import EmbeddingClient
 from .client.search import SearchTool
 from .tasks.classify import Classify, ClassifyConfig
 from .tasks.compare import Compare, CompareConfig
+from .tasks.deidentify import Deidentify, DeidentifyConfig
 from .tasks.extract import Extract, ExtractConfig
 from .tasks.filter import Filter, FilterConfig
 from .tasks.paraphrase import Paraphrase, ParaphraseConfig
 from .tasks.rate import Rate, RateConfig
+from .tasks.seed import Seed, SeedConfig
 from .tasks.whatever import Whatever, WhateverConfig
 
 
@@ -341,3 +343,99 @@ async def paraphrase(
         search_tool=search_tool,
     )
     return await task.run(df, column_name, reset_files=reset_files, **engine_kwargs)
+
+
+async def seed(
+    instructions: str,
+    *,
+    save_dir: str,
+    model: str = "gpt-5.5",
+    n_parallels: int = 50,
+    num_entities: int = 1000,
+    entities_per_generation: int = 50,
+    existing_entities_cap: int = 100,
+    deduplicate: bool = False,
+    deduplicate_sample_seed: int = 42,
+    file_name: str = "seed_entities.csv",
+    existing_entities: Optional[list] = None,
+    reset_files: bool = False,
+    client: Optional[LLMClient] = None,
+    embedding_client: Optional[EmbeddingClient] = None,
+    search_tool: Optional[SearchTool] = None,
+    **engine_kwargs: Any,
+) -> pd.DataFrame:
+    """Generate ``num_entities`` distinct entities per ``instructions``.
+
+    Returns a DataFrame with ``entity`` and ``entity_id`` columns.
+    """
+    cfg = SeedConfig(
+        instructions=instructions,
+        save_dir=save_dir,
+        file_name=file_name,
+        model=model,
+        n_parallels=n_parallels,
+        num_entities=num_entities,
+        entities_per_generation=entities_per_generation,
+        existing_entities_cap=existing_entities_cap,
+        deduplicate=deduplicate,
+        deduplicate_sample_seed=deduplicate_sample_seed,
+    )
+    task = Seed(
+        cfg,
+        client=client,
+        embedding_client=embedding_client,
+        search_tool=search_tool,
+    )
+    return await task.run(
+        existing_entities=existing_entities, reset_files=reset_files, **engine_kwargs
+    )
+
+
+async def deidentify(
+    df: pd.DataFrame,
+    column_name: str,
+    *,
+    save_dir: str,
+    grouping_column: Optional[str] = None,
+    mapping_column: Optional[str] = None,
+    model: str = "gpt-5.4-mini",
+    n_parallels: int = 50,
+    max_words_per_call: int = 7500,
+    additional_instructions: Optional[str] = None,
+    n_passes: int = 1,
+    use_existing_mappings_only: bool = False,
+    file_name: str = "deidentified.csv",
+    reset_files: bool = False,
+    client: Optional[LLMClient] = None,
+    embedding_client: Optional[EmbeddingClient] = None,
+    search_tool: Optional[SearchTool] = None,
+    **engine_kwargs: Any,
+) -> pd.DataFrame:
+    """Replace PII with consistent fake PII.
+
+    Returns ``df`` with ``deidentified_text`` and ``mapping`` columns.
+    """
+    cfg = DeidentifyConfig(
+        save_dir=save_dir,
+        file_name=file_name,
+        model=model,
+        n_parallels=n_parallels,
+        max_words_per_call=max_words_per_call,
+        additional_instructions=additional_instructions,
+        n_passes=n_passes,
+        use_existing_mappings_only=use_existing_mappings_only,
+    )
+    task = Deidentify(
+        cfg,
+        client=client,
+        embedding_client=embedding_client,
+        search_tool=search_tool,
+    )
+    return await task.run(
+        df,
+        column_name,
+        grouping_column=grouping_column,
+        mapping_column=mapping_column,
+        reset_files=reset_files,
+        **engine_kwargs,
+    )

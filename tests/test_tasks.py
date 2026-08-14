@@ -6,7 +6,17 @@ import asyncio
 
 import pandas as pd
 
-from leximeter import classify, compare, extract, filter, paraphrase, rate, whatever
+from leximeter import (
+    classify,
+    compare,
+    deidentify,
+    extract,
+    filter,
+    paraphrase,
+    rate,
+    seed,
+    whatever,
+)
 
 from conftest import CountingClient, DictClient, TextClient
 
@@ -139,3 +149,27 @@ def test_paraphrase(tmp_path):
     )
     assert "text_paraphrased" in res.columns
     assert list(res["text_paraphrased"]) == ["REWRITTEN", "REWRITTEN"]
+
+
+def test_seed(tmp_path):
+    client = DictClient({"entity 1": "person A", "entity 2": "person B"})
+    res = run(
+        seed(
+            "generate people",
+            save_dir=str(tmp_path / "seed"),
+            client=client,
+            num_entities=2,
+            entities_per_generation=2,
+        )
+    )
+    assert list(res.columns) == ["entity", "entity_id"]
+    assert len(res) == 2
+
+
+def test_deidentify(tmp_path):
+    df = pd.DataFrame({"text": ["Alice went to school"]})
+    client = DictClient(
+        {"person's name": {"real forms": ["Alice"], "casted form": "Zoe"}}
+    )
+    res = run(deidentify(df, "text", save_dir=str(tmp_path / "deid"), client=client))
+    assert res["deidentified_text"].iloc[0] == "Zoe went to school"
