@@ -18,7 +18,9 @@ from .client.embedding import EmbeddingClient
 from .client.search import SearchTool
 from .tasks.classify import Classify, ClassifyConfig
 from .tasks.extract import Extract, ExtractConfig
+from .tasks.filter import Filter, FilterConfig
 from .tasks.rate import Rate, RateConfig
+from .tasks.whatever import Whatever, WhateverConfig
 
 
 async def rate(
@@ -155,3 +157,98 @@ async def extract(
         search_tool=search_tool,
     )
     return await task.run(df, column_name, reset_files=reset_files, **engine_kwargs)
+
+
+async def filter(
+    df: pd.DataFrame,
+    column_name: str,
+    *,
+    condition: str,
+    save_dir: str,
+    model: str = "gpt-5.4-nano",
+    n_runs: int = 1,
+    n_parallels: int = 50,
+    entities_per_call: int = 150,
+    shuffle: bool = True,
+    random_seed: int = 42,
+    threshold: float = 0.5,
+    additional_instructions: Optional[str] = None,
+    file_name: str = "filter_responses.csv",
+    reset_files: bool = False,
+    client: Optional[LLMClient] = None,
+    embedding_client: Optional[EmbeddingClient] = None,
+    search_tool: Optional[SearchTool] = None,
+    **engine_kwargs: Any,
+) -> pd.DataFrame:
+    """Keep items whose natural-language ``condition`` holds.
+
+    Returns ``df`` with a boolean ``keep`` column and a ``score`` column (the
+    proportion of runs marking the item as meeting the condition).
+    """
+    cfg = FilterConfig(
+        condition=condition,
+        save_dir=save_dir,
+        file_name=file_name,
+        model=model,
+        n_runs=n_runs,
+        n_parallels=n_parallels,
+        entities_per_call=entities_per_call,
+        shuffle=shuffle,
+        random_seed=random_seed,
+        threshold=threshold,
+        additional_instructions=additional_instructions,
+    )
+    task = Filter(
+        cfg,
+        client=client,
+        embedding_client=embedding_client,
+        search_tool=search_tool,
+    )
+    return await task.run(df, column_name, reset_files=reset_files, **engine_kwargs)
+
+
+async def whatever(
+    prompts: Optional[Any] = None,
+    *,
+    df: Optional[pd.DataFrame] = None,
+    column_name: Optional[str] = None,
+    identifiers: Optional[list] = None,
+    identifier_column: Optional[str] = None,
+    save_dir: str = "whatever",
+    model: str = "gpt-5.4-mini",
+    json_mode: bool = False,
+    n_parallels: int = 50,
+    file_name: str = "custom_prompt_responses.csv",
+    reset_files: bool = False,
+    client: Optional[LLMClient] = None,
+    embedding_client: Optional[EmbeddingClient] = None,
+    search_tool: Optional[SearchTool] = None,
+    **engine_kwargs: Any,
+) -> pd.DataFrame:
+    """Run arbitrary prompts, reusing concurrency and checkpointing.
+
+    Returns a DataFrame with ``Identifier`` and ``Response`` columns (plus
+    ``Response JSON`` when ``json_mode=True``).
+    """
+    cfg = WhateverConfig(
+        save_dir=save_dir,
+        file_name=file_name,
+        model=model,
+        json_mode=json_mode,
+        n_parallels=n_parallels,
+    )
+    task = Whatever(
+        cfg,
+        client=client,
+        embedding_client=embedding_client,
+        search_tool=search_tool,
+    )
+    return await task.run(
+        prompts,
+        df=df,
+        column_name=column_name,
+        identifiers=identifiers,
+        identifier_column=identifier_column,
+        reset_files=reset_files,
+        **engine_kwargs,
+    )

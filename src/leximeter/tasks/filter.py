@@ -1,0 +1,129 @@
+"""Filter task: high-throughput boolean screening by natural-language condition."""
+
+from __future__ import annotations
+
+import os
+import random
+from dataclasses import dataclass
+from typing import Any, List, Optional
+
+import pandas as pd
+
+from ..templates import load_prompt
+from ..utils.parsing import safe_json
+from . import _common
+from .base import Task
+
+
+@dataclass
+class FilterConfig:
+    condition: str
+    save_dir: str = "filter"
+    file_name: str = "filter_responses.csv"
+    model: str = "gpt-5.4-nano"
+    n_parallels: int = 50
+    entities_per_call: int = 150
+    shuffle: bool = True
+    random_seed: int = 42
+    n_runs: int = 1
+    threshold: float = 0.5
+    additional_instructions: Optional[str] = None
+
+
+class Filter(Task):
+    """Keep items whose natural-language ``condition`` holds."""
+
+    def __init__(self, cfg: FilterConfig, **kwargs: Any) -> None:
+        super().__init__(cfg, **kwargs)
+        self._template = load_prompt("filter_prompt.jinja2")
+
+    async def run(
+        self,
+        df: pd.DataFrame,
+        column_name: str,
+        *,
+        reset_files: bool = False,
+        **kwargs: Any,
+    ) -> pd.DataFrame:
+        # 1. unique entities, optionally shuffled with a fixed seed
+        values = [str(v) for v in df[column_name].tolist()]
+        unique = list(dict.fromkeys(values))
+        if self.cfg.shuffle:
+            rnd = random.Random(self.cfg.random_seed)
+            rnd.shuffle(unique)
+
+        # 2. batch into groups
+        batches = [
+            unique[i : i + self.cfg.entities_per_call]
+            for i in range(0, len(unique), self.cfg.entities_per_call)
+        ]
+
+        # 3. jobs: batch x run
+        n_runs = max(1, int(self.cfg.n_runs))
+        prompts: List[str] = []
+        ids: List[str] = []
+        meta: List[tuple[int, int]] = []
+        for batch_idx, batch in enumerate(batches):
+            batch_id = _common.hash_identifier("\x1f".join(sorted(batch)))
+            prompt = self._template.render(
+                condition=self.cfg.condition,
+                entities="\n".join(batch),
+                additional_instructions=self.cfg.additional_instructions,
+            )
+            for run_idx in range(1, n_runs + 1):
+                prompts.append(prompt)
+                ids.append(f"{batch_id}_run{run_idx}")
+                meta.append((batch_idx, run_idx))
+
+        # 4. execute
+        resp_df = await self._execute(prompts, ids, reset_files=reset_files, **kwargs)
+        resp_lookup = dict(zip(resp_df["Identifier"], resp_df["Response"]))
+
+        # 5. tally "meets condition" per entity across runs
+        marks: dict[str, int] = {}
+        for (batch_idx, _run_idx), ident in zip(meta, ids):
+            marked = self._parse_entities(resp_lookup.get(ident))
+            for entity in batches[batch_idx]:
+                if entity in marked:
+                    marks[entity] = marks.get(entity, 0) + 1
+
+        # 6. keep/score per entity, mapped back onto the input frame
+        score = {entity: marks.get(entity, 0) / n_runs for entity in unique}
+        out = df.copy()
+        out["keep"] = [score[str(v)] >= self.cfg.threshold for v in df[column_name]]
+        out["score"] = [score[str(v)] for v in df[column_name]]
+        self._save(out)
+        return out
+
+    def _parse_entities(self, raw: Any) -> set:
+        obj = safe_json(raw)
+        if not isinstance(obj, dict):
+            return set()
+        meeting = obj.get("entities meeting condition")
+        if not isinstance(meeting, list):
+            return set()
+        return {str(item) for item in meeting}
+
+    async def _execute(self, prompts, ids, *, reset_files, **kwargs):
+        from ..engine.batch import batch_execute
+
+        return await batch_execute(
+            prompts,
+            ids,
+            client=self._get_client(),
+            model=self.cfg.model,
+            json_mode=True,
+            n_parallels=self.cfg.n_parallels,
+            save_path=os.path.join(
+                self.cfg.save_dir, f"{self._base_name()}_raw_responses.csv"
+            ),
+            reset_files=reset_files,
+            **kwargs,
+        )
+
+    def _save(self, out: pd.DataFrame) -> None:
+        out_path = os.path.join(self.cfg.save_dir, f"{self._base_name()}_cleaned.csv")
+        try:
+            out.to_csv(out_path, index=False)
+        except Exception:
+            pass

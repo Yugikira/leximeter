@@ -3,7 +3,9 @@
 from .base import AttributeTask, Task
 from .classify import Classify, ClassifyConfig
 from .extract import Extract, ExtractConfig
+from .filter import Filter, FilterConfig
 from .rate import Rate, RateConfig
+from .whatever import Whatever, WhateverConfig
 
 __all__ = [
     "Task",
@@ -14,4 +16,8 @@ __all__ = [
     "ClassifyConfig",
     "Extract",
     "ExtractConfig",
+    "Filter",
+    "FilterConfig",
+    "Whatever",
+    "WhateverConfig",
 ]
