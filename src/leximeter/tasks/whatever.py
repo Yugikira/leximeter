@@ -1,16 +1,26 @@
-"""Whatever task: run arbitrary prompts through the provider-agnostic engine."""
+"""Whatever task: run arbitrary prompts through the provider-agnostic engine.
+
+Mirrors GABRIEL's ``whatever`` surface: ``web_search`` / ``web_search_filters`` /
+``search_context_size`` are forwarded as retrieval options.  When web search is
+enabled, each prompt is first expanded with retrieved context (via the injected
+``search_tool``), then passed to :func:`leximeter.engine.batch_execute`.
+"""
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import os
 from dataclasses import dataclass
-from typing import Any, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 import pandas as pd
 
 from ..utils.parsing import safe_json
 from . import _common
 from .base import Task
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -20,6 +30,9 @@ class WhateverConfig:
     model: str = "gpt-5.4-mini"
     json_mode: bool = False
     n_parallels: int = 50
+    web_search: Optional[bool] = None
+    web_search_filters: Optional[Dict[str, Any]] = None
+    search_context_size: str = "medium"
 
 
 class Whatever(Task):
@@ -41,6 +54,12 @@ class Whatever(Task):
             identifiers=identifiers, identifier_column=identifier_column,
         )
 
+        web_search_flag = self.cfg.web_search
+        if web_search_flag is None:
+            web_search_flag = bool(self.cfg.web_search_filters)
+        if web_search_flag:
+            prompts_list = await self._augment_with_search(prompts_list)
+
         from ..engine.batch import batch_execute
 
         resp_df = await batch_execute(
@@ -60,6 +79,53 @@ class Whatever(Task):
             resp_df["Response JSON"] = resp_df["Response"].apply(safe_json)
             cols.append("Response JSON")
         return resp_df[cols].reset_index(drop=True)
+
+    # ------------------------------------------------------------------
+    # Web-search augmentation (GABRIEL's ``whatever`` web_search mode)
+    # ------------------------------------------------------------------
+    def _get_search_tool(self) -> Optional[Any]:
+        """Resolve the search tool, forwarding GABRIEL-style config knobs."""
+        if self._search_tool is None:
+            from ..client.resolve import resolve_search_tool
+
+            self._search_tool = resolve_search_tool(
+                search_context_size=self.cfg.search_context_size,
+                web_search_filters=self.cfg.web_search_filters,
+            )
+        return self._search_tool
+
+    async def _augment_with_search(
+        self, prompts: List[str]
+    ) -> List[str]:
+        """Prepend retrieved context to each prompt when a search tool is available.
+
+        A prompt is used verbatim when retrieval yields nothing (no tool
+        configured, empty result, or a failed call) — search augments but never
+        drops a prompt.  Concurrency is capped by ``n_parallels``.
+        """
+        tool = self._get_search_tool()
+        if tool is None:
+            logger.warning(
+                "web_search is enabled but no search tool is configured; "
+                "running prompts without retrieval."
+            )
+            return prompts
+
+        sem = asyncio.Semaphore(max(1, self.cfg.n_parallels))
+
+        async def search_one(prompt: str) -> str:
+            async with sem:
+                try:
+                    return await tool.search(prompt)
+                except Exception as exc:  # noqa: BLE001 - provider errors
+                    logger.warning("web search failed for %r: %s", prompt, exc)
+                    return ""
+
+        contexts = await asyncio.gather(*(search_one(p) for p in prompts))
+        return [
+            f"{ctx.strip()}\n\n{prompt}" if ctx and ctx.strip() else prompt
+            for ctx, prompt in zip(contexts, prompts)
+        ]
 
     def _normalize(
         self,

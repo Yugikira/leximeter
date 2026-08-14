@@ -81,7 +81,7 @@
 
 **嵌入预筛**：
 
-- `deduplicate` 用嵌入相似度贪心聚类（阈值 0.85）后再 LLM 去重；`merge` 对每个左项取 top-k 右候选再 LLM 匹配；嵌入不可用时优雅回退纯 LLM。
+- `deduplicate` 用嵌入相似度贪心聚类（阈值 0.85）后再 LLM 去重；`merge` 按 GABRIEL 契约走 kmeans2 聚类 + 簇内分段 + 窗口候选再 LLM 匹配（`use_embeddings` 需 long 表 ≥ 256 项才启用，否则纯 LLM 路径）；嵌入不可用时优雅回退。
 
 **API 形态**：
 
@@ -92,18 +92,50 @@
 - **测外部行为**：只断言返回的 DataFrame（列名、值、行数），不测内部实现细节。
 - **单一接缝**：所有测试通过 `client=` / `embedding_client=` / `search_tool=` 注入假 provider（`DictClient` / `TextClient` / `CountingClient` / `DummyEmbeddingClient`）。这是全库唯一需要的测试接缝。
 - **零网络零密钥**：`DummyClient` 返回确定性假响应，测试可离线、可复现。
-- **覆盖**：19 个用例覆盖每个任务的端到端行为 + 检查点续跑（`CountingClient` 断言无重复调用）+ 嵌入/纯 LLM 两条路径。
+- **覆盖**：32 个测试覆盖每个任务的端到端行为 + 检查点续跑（`CountingClient` 断言无重复调用）+ 嵌入/纯 LLM 两条路径 + fit_ols HC3 数值性质。
 - **运行**：`uv run pytest`，pytest 配置 `pythonpath=["src"]`。
 
 ## Out of Scope
 
 - 多模态（image / audio / pdf / 原生 web_search）。
-- `view` 图形 UI。
+- `view` 图形 UI（见 Backlog）。
 - token 用量 / 成本估算（接口已预留，未实现）。
-- bucket 多轮投票、codify 补全循环、paraphrase 递归校验（现为单遍）。
-- rank 的完整 BT MLE + 标准误（现为 Zermelo 拟合）、debias 的 statsmodels 稳健回归（现为 `np.linalg.lstsq`）。
-- discover 的 paired classification `net_pct` 汇总（现只到 compare → bucket）。
-- extract 多实体展开、merge 的 kmeans2 聚类（现为贪心 top-k）。
+
+## 已恢复功能（2026-08-15）
+
+> 上一轮重构把下列 GABRIEL 功能简化了；本轮按 GABRIEL 源码逐项恢复，identifier 格式、输出列、落盘文件均严格对齐上游。引擎沿用 leximeter 的 `batch_execute` + provider 注入（`client=` / `embedding_client=` / `search_tool=`），不做逐字复制。
+
+| 功能 | 恢复内容 | 契约要点 |
+|---|---|---|
+| `extract` 多实体 | 独立 Task 重写 | 嵌套 dict 按 entity 展开多行 + `entity_name` 列；聚合取首个非 "unknown"；`types` 强转（int→`Int64`、datetime→`pd.to_datetime`）并落 `{base}_cleaned_coerced.csv`；`n_runs>1` 落 `_full_disaggregated.csv` |
+| `rank` BT MLE + 标准误 | `bt.py` 补 `bt_standard_errors` | `fit_bt(return_info=True)` 输出 `n_ij/p_ij`；SE 经信息阵投影 + 岭正则（失败 `nan_to_num` 重试）；每轮用**全部历史 outcomes** 重拟合；输出 `{attr}` / `{attr}_raw` / `{attr}_se` 三列；每轮落 `{base}_round{rnd}.csv`，断点续跑按 round CSV 数推断 |
+| `bucket` 多轮投票 | 三阶段重写 | 生成（repeat_bucketing=5）→ 归约（投票 tally 降序 + `keep=max(bucket_count, len·next_round_frac)`）→ 终选（`top_k_per_round` 补足）；`terms_signature`（sha1）变化清空 state；全程 `bucket_state.json` 续跑；落 `bucket_definitions.csv` |
+| `codify` 补全循环 | dynamic_mode + `n_rounds>1` 补全 | 静态模式**每类别一列**（snippet 列表），动态 `coded_passages` 单列；补全循环用 Classify 判「残留可编码」，strip 已提取片段后只补 flagged 类别；snippet 经 word_matching 在原文逐字定位；最终落 `coded_passages.csv` |
+| `paraphrase` 递归校验 | `n_rounds>1` 走 `_recursive_validate` | 候选 `round{r}_cand{c}`（后续轮 × `later_round_run_multiplier`）；Classify 判 `instructions_followed`；输出 `{base_col}`（+多 run `_{i}`）+ `{base_col}_approved`；轮数耗尽随机取末轮候选 |
+| `discover` net_pct 汇总 | 完整链路（single→Codify / pair→Compare→Bucket→分类） | pair 时 `build_combined_metadata`（`{lab}_actual`/`{lab}_inverted`，swap_cs 整词互换）；summary 列 `label, actual_true, inverted_true, total, actual_pct, inverted_pct, net_pct`；返回 8 键；落 `discover_results_snapshot.json` + `discover_results_export.zip` |
+| `merge` kmeans2 聚类 | kmeans2 + attempts 循环 | `use_embeddings = cfg.use_embeddings and len(long_uniques) >= 256`；kmeans2(`minit="points"`) 簇内分段 + 窗口候选；`max_attempts=4`（short_len 16→8→4→2）；自动匹配 `sims>=0.75`；identifier `merge_{attempt:02d}_{idx:05d}`；组文件 `merge_groups_attempt{attempt}.json` 断点续跑；`merge_progress.csv` |
+| `debias` 稳健回归 | 完整 Debias 任务 | `fit_ols` 移植（statsmodels HC3 → HC1 回退 → `np.linalg.lstsq` 兜底，`robust_regression` 只影响 SE 不影响系数）；两步去偏 `{attr} (debiased) = y - s + δ·r` + 差异列 `{attr} (raw - stripped)`；`_strip_passages` 确定性 RNG（seed `f"{random_seed}:{row_idx}:{pct_strip}:{n_total}"`）；落 `debias_results.csv` + `debias_metadata.json` |
+
+### 已知偏离与代价
+
+- **identifier 格式变化破坏旧检查点**：extract / rank / bucket / codify / paraphrase / merge 的 identifier 已改为 GABRIEL 格式，旧版检查点（CSV / `bucket_state.json` / `merge_groups_attempt*.json` / `attributes.json`）无法续用。属版本演进，接受；`reset_files=True` 或删除 `save_dir` 即可重跑。
+- **merge embedding 检查点为 JSON 而非二进制序列化**：GABRIEL 用 `short_embeddings.pkl` / `long_embeddings.pkl`；leximeter 因安全 hook 禁止该类序列化落盘，改用 `short_embeddings.json` / `long_embeddings.json`。存在即读、按文本命中缓存，语义完全一致。
+- **debias 不移植 tqdm**（普通 for 循环，进度信息仍打印）；**绘图 PDF 不生成**（`_regress_against_original` 直接回归不画图，见 Backlog）。
+- **`response_fn` / `get_all_responses_fn` / `template_path` / `use_dummy`**：GABRIEL 的引擎回调参数不从 kwargs 透传——leximeter 用 `client=` 注入 provider、子任务构造时显式 `client=self._get_client()`。
+
+## Backlog（待办）
+
+> 已确认本次不做、留待后续的事项。to-tickets skill 不可用，故以本表形式发布；如接入 issue tracker 可再逐条转录。
+
+| # | 事项 | 说明 |
+|---|---|---|
+| B1 | 引擎自适应并发 | GABRIEL 的斜坡启动（ramp-up）、滚动限流、动态超时、风暴保护（storm guard）；当前 `batch_execute` 为固定 `n_parallels` + 指数退避重试 |
+| B2 | `view` 图形 UI | GABRIEL 的 view.py（可视化测量结果），文本任务之外的工具 |
+| B3 | rank 递归模式 / primer / `initial_rating_pass` | BT 拟合的进阶选项，配对策略本次只移植 `_pairs_info_gain` 核心 |
+| B4 | debias 绘图 PDF | `_regress_against_original` 的 matplotlib 出图（当前直接回归）；可挂载 `fpdf`/`matplotlib` 后补 |
+| B5 | debias rank mode 的 `id_column` 对齐 | rank 子任务目前不传 `id_column`，索引对齐用兜底（`result.index = df.index`） |
+| B6 | `clean_json_df` 接线 | `utils/parsing.py` 已实现函数本体，任务层尚未接入 |
+| B7 | token 用量 / 成本估算 | `estimate_tokens` / `estimate_cost` 为预留抽象方法，v1 未实现 |
 
 ## Further Notes
 

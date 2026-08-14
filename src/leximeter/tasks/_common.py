@@ -1,7 +1,6 @@
 """Shared, provider-agnostic helpers used by task implementations.
 
-Ported from GABRIEL's ``_run_utils`` / ``_attribute_utils`` and simplified for
-a fresh fork (no legacy checkpoint compatibility to preserve).
+Ported from GABRIEL's ``_run_utils`` / ``_attribute_utils``.
 """
 
 from __future__ import annotations
@@ -9,7 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from typing import Any, Dict, List, Optional, Sequence, Tuple, TypeVar
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, TypeVar
 
 T = TypeVar("T")
 
@@ -69,35 +68,67 @@ def load_persisted_attributes(
     reset_files: bool,
     task_name: str,
     item_name: str = "attributes",
+    legacy_filename: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Load attributes from disk for reproducibility; write on first run."""
-    path = os.path.join(save_dir, "attributes.json")
-    if reset_files and os.path.exists(path):
-        try:
-            os.remove(path)
-        except Exception:
-            pass
+    """Load attributes/labels from disk for reproducibility.
 
-    if os.path.exists(path):
+    Preference order:
+    1) ``attributes.json`` in ``save_dir``
+    2) ``legacy_filename`` (e.g., ``ratings_attrs.json``) in ``save_dir``
+    When neither exists, ``incoming`` is written to both paths (when
+    applicable) for future runs.
+    """
+    primary_path = os.path.join(save_dir, "attributes.json")
+    legacy_path = os.path.join(save_dir, legacy_filename) if legacy_filename else None
+    candidate_paths = [primary_path] + ([legacy_path] if legacy_path else [])
+
+    if reset_files:
+        for path in candidate_paths:
+            if path and os.path.exists(path):
+                try:
+                    os.remove(path)
+                except Exception:
+                    pass
+
+    loaded: Optional[Dict[str, Any]] = None
+    source_path: Optional[str] = None
+    for path in candidate_paths:
+        if not path or not os.path.exists(path):
+            continue
         try:
             with open(path, encoding="utf-8") as f:
                 loaded = json.load(f)
+            source_path = path
+            break
         except Exception:
-            loaded = None
-        if loaded is not None:
-            if loaded != incoming:
-                print(
-                    f"[{task_name}] Using saved {item_name} for consistency. "
-                    "Set reset_files=True or use a new save_dir to update them."
-                )
-            return loaded
+            continue
+
+    if loaded is not None:
+        message = (
+            f"[{task_name}] Found saved {item_name} in {source_path}. "
+            "Using them for consistency."
+        )
+        if loaded != incoming:
+            message += (
+                " The provided attributes differ; set reset_files=True or "
+                "use a new save_dir to update them."
+            )
+        print(message)
+        return loaded
 
     try:
         os.makedirs(save_dir, exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(incoming, f, indent=2)
     except Exception:
         pass
+    for path in candidate_paths:
+        if not path:
+            continue
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(incoming, f, indent=2)
+        except Exception:
+            pass
+
     return incoming
 
 
@@ -150,3 +181,40 @@ def resolve_attribute_batches(
         )
 
     return chunk_items(items, requested_n), requested_n
+
+
+def _coerce_json_obj(raw: Any) -> Any:
+    """Coerce ``raw`` to a JSON object, unwrapping single-element lists/strings.
+
+    ``safe_json`` alone is not enough: a response may be a one-element list
+    wrapping the real object, or a string that itself contains JSON.
+    """
+
+    from ..utils.parsing import safe_json
+
+    obj = safe_json(raw)
+    if isinstance(obj, list) and len(obj) == 1:
+        obj = safe_json(obj[0])
+    if isinstance(obj, str):
+        obj = safe_json(obj)
+    return obj
+
+
+def _collect_attribute_keys(obj: Any, lookup: Dict[str, str]) -> Set[str]:
+    """Recursively collect attribute keys (case-insensitive) present in ``obj``.
+
+    ``lookup`` maps lower-cased attribute names to their canonical names.
+    """
+
+    found: Set[str] = set()
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            norm = str(key).strip().lower()
+            if norm in lookup:
+                found.add(lookup[norm])
+            if isinstance(value, (dict, list)):
+                found.update(_collect_attribute_keys(value, lookup))
+    elif isinstance(obj, list):
+        for item in obj:
+            found.update(_collect_attribute_keys(item, lookup))
+    return found

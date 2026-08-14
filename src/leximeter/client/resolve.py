@@ -12,7 +12,7 @@ Environment variables (all optional)::
 from __future__ import annotations
 
 import os
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from .base import LLMClient
 from .dummy import DummyClient
@@ -73,11 +73,16 @@ def resolve_search_tool(
     *,
     provider: Optional[str] = None,
     search_tool: Optional[SearchTool] = None,
+    search_context_size: str = "medium",
+    web_search_filters: Optional[Dict[str, Any]] = None,
 ) -> Optional[SearchTool]:
     """Return a search tool, or ``None`` when none is configured.
 
     ``None`` means "search is unavailable": callers should warn and skip the
-    search step rather than failing.
+    search step rather than failing.  ``search_context_size`` /
+    ``web_search_filters`` (GABRIEL's web-search knobs) are forwarded to the
+    provider that supports them — matching ``resolve_embedding_client``'s
+    ``model`` forwarding.
     """
     if search_tool is not None:
         return search_tool
@@ -86,9 +91,12 @@ def resolve_search_tool(
     if provider in ("", "none"):
         return None
     if provider == "tavily":
-        from .search_tavily import TavilySearchTool  # deferred to a later milestone
+        from .search_tavily import TavilySearchTool
 
-        return TavilySearchTool()
+        return TavilySearchTool(
+            search_context_size=search_context_size,
+            web_search_filters=web_search_filters,
+        )
     raise ValueError(
         f"Unknown LEXIMETER_SEARCH_PROVIDER {provider!r}; expected 'tavily' or 'none'."
     )

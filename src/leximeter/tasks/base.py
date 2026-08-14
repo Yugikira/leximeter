@@ -197,11 +197,11 @@ class AttributeTask(Task):
         resp_lookup = dict(zip(resp_df["Identifier"], resp_df["Response"]))
 
         # 6. parse each response into per-run records
-        records = await self._parse_all(meta, ids, resp_lookup, batches)
+        records = await self._parse_all(meta, ids, resp_lookup, batches, id_to_text)
 
         # 7. aggregate + merge back onto the input frame
         result = self.aggregate(records, df_proc)
-        self._save(result)
+        self._save(result, records)
         return result
 
     # ---- internal steps ---------------------------------------------
@@ -235,17 +235,39 @@ class AttributeTask(Task):
         ids: List[str],
         resp_lookup: Dict[str, Any],
         batches: Sequence[Sequence[Tuple[str, Any]]],
+        id_to_text: Optional[Dict[str, str]] = None,
     ) -> pd.DataFrame:
         records: List[Dict[str, Any]] = []
         for (base_id, batch_idx, run_idx), ident in zip(meta, ids):
             names = [name for name, _ in batches[batch_idx]]
             parsed = await self.parse_response(resp_lookup.get(ident), names)
-            records.append({"id": base_id, "run": run_idx, **parsed})
+            records.append(
+                {
+                    "id": base_id,
+                    "run": run_idx,
+                    "text": (id_to_text or {}).get(base_id, ""),
+                    **parsed,
+                }
+            )
         return pd.DataFrame(records)
 
-    def _save(self, result: pd.DataFrame) -> None:
+    def _save(
+        self, result: pd.DataFrame, records: Optional[pd.DataFrame] = None
+    ) -> None:
+        from ..utils.file_utils import save_dataframe_with_fallback
+
+        label = self.__class__.__name__
         out_path = os.path.join(self.cfg.save_dir, f"{self._base_name()}_cleaned.csv")
-        try:
-            result.to_csv(out_path, index=False)
-        except Exception:
-            pass
+        save_dataframe_with_fallback(result, out_path, index=False, label=label)
+
+        # Keep the disaggregated (id, run) level when n_runs > 1 for later
+        # reliability analysis.
+        n_runs = max(1, int(getattr(self.cfg, "n_runs", 1)))
+        if records is not None and n_runs > 1 and len(records):
+            full_df = records.set_index(["id", "run"])
+            disagg_path = os.path.join(
+                self.cfg.save_dir, f"{self._base_name()}_full_disaggregated.csv"
+            )
+            save_dataframe_with_fallback(
+                full_df, disagg_path, index=True, label=label
+            )

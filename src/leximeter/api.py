@@ -9,7 +9,7 @@ keyword arguments are forwarded to the engine / model call (e.g.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
@@ -20,7 +20,7 @@ from .tasks.bucket import Bucket, BucketConfig
 from .tasks.classify import Classify, ClassifyConfig
 from .tasks.codify import Codify, CodifyConfig
 from .tasks.compare import Compare, CompareConfig
-from .tasks.debias import Debias, DebiasConfig
+from .tasks.debias import Debias, DebiasConfig, DebiasResult
 from .tasks.deduplicate import Deduplicate, DeduplicateConfig
 from .tasks.deidentify import Deidentify, DeidentifyConfig
 from .tasks.discover import Discover, DiscoverConfig
@@ -230,6 +230,9 @@ async def whatever(
     save_dir: str = "whatever",
     model: str = "gpt-5.4-mini",
     json_mode: bool = False,
+    web_search: Optional[bool] = None,
+    web_search_filters: Optional[Dict[str, Any]] = None,
+    search_context_size: str = "medium",
     n_parallels: int = 50,
     file_name: str = "custom_prompt_responses.csv",
     reset_files: bool = False,
@@ -240,6 +243,10 @@ async def whatever(
 ) -> pd.DataFrame:
     """Run arbitrary prompts, reusing concurrency and checkpointing.
 
+    When ``web_search`` is enabled (or ``web_search_filters`` is provided), each
+    prompt is first expanded with retrieved context from ``search_tool`` (or the
+    configured ``LEXIMETER_SEARCH_PROVIDER``) before being sent to the model.
+
     Returns a DataFrame with ``Identifier`` and ``Response`` columns (plus
     ``Response JSON`` when ``json_mode=True``).
     """
@@ -248,6 +255,9 @@ async def whatever(
         file_name=file_name,
         model=model,
         json_mode=json_mode,
+        web_search=web_search,
+        web_search_filters=web_search_filters,
+        search_context_size=search_context_size,
         n_parallels=n_parallels,
     )
     task = Whatever(
@@ -324,6 +334,11 @@ async def paraphrase(
     json_mode: bool = False,
     revised_column_name: Optional[str] = None,
     file_name: str = "paraphrase_responses.csv",
+    n_rounds: int = 1,
+    n_runs: int = 1,
+    later_round_run_multiplier: int = 5,
+    use_modified_source: bool = False,
+    validation_attribute: Optional[Dict[str, str]] = None,
     reset_files: bool = False,
     client: Optional[LLMClient] = None,
     embedding_client: Optional[EmbeddingClient] = None,
@@ -332,8 +347,12 @@ async def paraphrase(
 ) -> pd.DataFrame:
     """Rewrite each item per ``instructions``.
 
-    Returns ``df`` with a new paraphrased column (``revised_column_name`` or
-    ``<column_name>_paraphrased``).
+    Returns ``df`` with new paraphrased columns (``revised_column_name`` or
+    ``<column_name>_revised``; suffixed ``_1.._n`` when ``n_runs > 1``) plus
+    a ``<col>_approved`` column per output.  With ``n_rounds > 1`` a
+    recursive validation loop re-generates failed candidates (classifier
+    compares original vs. modified text) until they pass or the round
+    budget runs out (unapproved candidates then get a random fallback).
     """
     cfg = ParaphraseConfig(
         instructions=instructions,
@@ -344,6 +363,11 @@ async def paraphrase(
         modality=modality,
         json_mode=json_mode,
         revised_column_name=revised_column_name,
+        n_rounds=n_rounds,
+        n_runs=n_runs,
+        later_round_run_multiplier=later_round_run_multiplier,
+        use_modified_source=use_modified_source,
+        validation_attribute=validation_attribute,
     )
     task = Paraphrase(
         cfg,
@@ -461,10 +485,17 @@ async def merge(
     how: str = "left",
     model: str = "gpt-5.4-nano",
     n_parallels: int = 50,
+    n_runs: int = 1,
     additional_instructions: Optional[str] = None,
     short_list_len: int = 16,
     long_list_len: int = 256,
     use_embeddings: bool = True,
+    max_attempts: int = 4,
+    short_list_multiplier: float = 0.5,
+    auto_match_threshold: float = 0.75,
+    use_best_auto_match: bool = False,
+    candidate_scan_chunks: int = 5,
+    verbose: bool = True,
     file_name: str = "merge_responses.csv",
     reset_files: bool = False,
     client: Optional[LLMClient] = None,
@@ -472,7 +503,16 @@ async def merge(
     search_tool: Optional[SearchTool] = None,
     **engine_kwargs: Any,
 ) -> pd.DataFrame:
-    """Fuzzy-join two tables via LLM matching (pure-LLM path in v1).
+    """Fuzzy-join two tables via LLM matching.
+
+    Short-side keys are matched against the long side in ``max_attempts``
+    rounds (short-list size shrinks 16 → 8 → 4 → 2); remaining keys are
+    clustered with kmeans2 (embedding mode) or alphabetically, and each
+    cluster is matched against the best candidate window.  Embedding
+    auto-matches above ``auto_match_threshold`` are applied directly when
+    unambiguous.  Group plans are checkpointed per attempt
+    (``merge_groups_attempt{n}.json``) and progress appended to
+    ``merge_progress.csv``.
 
     Returns ``df_left`` merged with ``df_right`` on the matched key.
     """
@@ -481,10 +521,17 @@ async def merge(
         file_name=file_name,
         model=model,
         n_parallels=n_parallels,
+        n_runs=n_runs,
         additional_instructions=additional_instructions,
         short_list_len=short_list_len,
         long_list_len=long_list_len,
         use_embeddings=use_embeddings,
+        max_attempts=max_attempts,
+        short_list_multiplier=short_list_multiplier,
+        auto_match_threshold=auto_match_threshold,
+        use_best_auto_match=use_best_auto_match,
+        candidate_scan_chunks=candidate_scan_chunks,
+        verbose=verbose,
     )
     task = Merge(
         cfg,
@@ -556,7 +603,13 @@ async def bucket(
     model: str = "gpt-5.4-mini",
     n_parallels: int = 50,
     additional_instructions: Optional[str] = None,
+    differentiate: bool = False,
     n_terms_per_prompt: int = 250,
+    repeat_bucketing: int = 5,
+    repeat_voting: int = 25,
+    next_round_frac: float = 0.25,
+    top_k_per_round: int = 1,
+    raw_term_definitions: bool = True,
     file_name: str = "bucket_definitions.csv",
     reset_files: bool = False,
     client: Optional[LLMClient] = None,
@@ -566,7 +619,10 @@ async def bucket(
 ) -> pd.DataFrame:
     """Propose ``bucket_count`` buckets that group the input terms.
 
-    Returns a DataFrame with ``bucket`` and ``definition`` columns.
+    Three-stage voting pipeline (generate → reduce → finalize), fully
+    checkpointed to ``bucket_generation.csv`` / ``vote_reduce*.csv`` /
+    ``vote_final*.csv`` / ``bucket_state.json``.  Returns a DataFrame with
+    ``bucket`` and ``definition`` columns.
     """
     cfg = BucketConfig(
         bucket_count=bucket_count,
@@ -575,7 +631,13 @@ async def bucket(
         model=model,
         n_parallels=n_parallels,
         additional_instructions=additional_instructions,
+        differentiate=differentiate,
         n_terms_per_prompt=n_terms_per_prompt,
+        repeat_bucketing=repeat_bucketing,
+        repeat_voting=repeat_voting,
+        next_round_frac=next_round_frac,
+        top_k_per_round=top_k_per_round,
+        raw_term_definitions=raw_term_definitions,
     )
     task = Bucket(
         cfg,
@@ -597,6 +659,11 @@ async def codify(
     n_parallels: int = 50,
     modality: str = "text",
     file_name: str = "coding_results.csv",
+    n_rounds: int = 2,
+    max_words_per_call: int = 1000,
+    max_categories_per_call: int = 8,
+    debug_print: bool = False,
+    completion_classifier_instructions: Optional[str] = None,
     reset_files: bool = False,
     client: Optional[LLMClient] = None,
     embedding_client: Optional[EmbeddingClient] = None,
@@ -605,16 +672,25 @@ async def codify(
 ) -> pd.DataFrame:
     """Mark snippets matching each qualitative code.
 
-    Returns ``df`` with a ``coded_passages`` column (parsed JSON per item).
+    Static mode (``categories`` provided) returns one column per category
+    holding the list of verbatim snippets found in each row; dynamic mode
+    (``categories=None`` + ``additional_instructions``) returns a single
+    ``coded_passages`` column mapping discovered labels to snippet lists.
+    When ``n_rounds > 1`` a completion loop re-codes remaining text until
+    nothing new is found.  The final frame is always written to
+    ``coded_passages.csv``.
     """
     cfg = CodifyConfig(
-        categories=categories,
         save_dir=save_dir,
         file_name=file_name,
         model=model,
         n_parallels=n_parallels,
-        additional_instructions=additional_instructions,
         modality=modality,
+        n_rounds=n_rounds,
+        max_words_per_call=max_words_per_call,
+        max_categories_per_call=max_categories_per_call,
+        debug_print=debug_print,
+        completion_classifier_instructions=completion_classifier_instructions,
     )
     task = Codify(
         cfg,
@@ -645,6 +721,8 @@ async def rank(
     n_parallels: int = 50,
     additional_instructions: Optional[str] = None,
     modality: str = "text",
+    n_attributes_per_run: Optional[int] = None,
+    circle_first: Optional[bool] = None,
     file_name: str = "rankings",
     reset_files: bool = False,
     client: Optional[LLMClient] = None,
@@ -652,9 +730,12 @@ async def rank(
     search_tool: Optional[SearchTool] = None,
     **engine_kwargs: Any,
 ) -> pd.DataFrame:
-    """Compare items pairwise and output centered Bradley–Terry z-scores.
+    """Run pairwise tournaments and fit Bradley–Terry ratings per attribute.
 
-    Returns ``df`` with one column per attribute (centered log-strength).
+    Returns ``df`` with, per attribute, a z-score column ``{attr}``, the
+    centred Bradley–Terry estimate ``{attr}_raw`` and its standard error
+    ``{attr}_se``.  Each round is checkpointed to ``{stem}_round{r}.csv``
+    (Batch/Pair/IdA/IdB columns); interrupted runs resume and replay them.
     """
     cfg = RankConfig(
         attributes=attributes,
@@ -667,6 +748,8 @@ async def rank(
         n_parallels=n_parallels,
         additional_instructions=additional_instructions,
         modality=modality,
+        n_attributes_per_run=n_attributes_per_run,
+        circle_first=circle_first,
     )
     task = Rank(
         cfg,
@@ -687,7 +770,18 @@ async def discover(
     bucket_count: int = 10,
     model: str = "gpt-5.4-mini",
     n_parallels: int = 50,
+    n_runs: int = 1,
+    min_frequency: float = 0.6,
     additional_instructions: Optional[str] = None,
+    max_words_per_call: int = 1000,
+    max_categories_per_call: int = 8,
+    modality: str = "text",
+    n_terms_per_prompt: int = 250,
+    repeat_bucketing: int = 5,
+    repeat_voting: int = 25,
+    next_round_frac: float = 0.25,
+    top_k_per_round: int = 1,
+    raw_term_definitions: bool = True,
     reset_files: bool = False,
     client: Optional[LLMClient] = None,
     embedding_client: Optional[EmbeddingClient] = None,
@@ -696,14 +790,31 @@ async def discover(
 ) -> Dict[str, Any]:
     """Contrast two columns (or mine one) and bucket distinguishing features.
 
-    Returns ``{"candidates": DataFrame, "buckets": DataFrame}``.
+    Pipeline: candidate discovery (dynamic :func:`codify` for a single
+    column, :func:`compare` for a circle/square pair) → :func:`bucket`
+    taxonomy → :func:`classify` back onto the data.  For pairs the result
+    includes a per-label ``summary`` DataFrame with ``actual_pct``,
+    ``inverted_pct`` and ``net_pct`` (actual − inverted, percentage
+    points).  Results are persisted to ``discover_results_snapshot.json``
+    and ``discover_results_export.zip``.
     """
     cfg = DiscoverConfig(
         save_dir=save_dir,
         model=model,
         n_parallels=n_parallels,
+        n_runs=n_runs,
+        min_frequency=min_frequency,
         bucket_count=bucket_count,
         additional_instructions=additional_instructions,
+        max_words_per_call=max_words_per_call,
+        max_categories_per_call=max_categories_per_call,
+        modality=modality,
+        n_terms_per_prompt=n_terms_per_prompt,
+        repeat_bucketing=repeat_bucketing,
+        repeat_voting=repeat_voting,
+        next_round_frac=next_round_frac,
+        top_k_per_round=top_k_per_round,
+        raw_term_definitions=raw_term_definitions,
     )
     task = Discover(
         cfg,
@@ -816,26 +927,68 @@ async def debias(
     df: pd.DataFrame,
     column_name: str,
     *,
-    save_dir: str,
-    measurement_attribute: str,
-    removal_attribute: str,
+    save_dir: str = "debias",
+    mode: str = "rate",
+    measurement_attribute: Optional[str] = None,
+    removal_attribute: Optional[str] = None,
     attributes: Dict[str, str],
+    signal_dictionary: Dict[str, str],
+    removal_method: str = "codify",
+    remaining_signal: bool = True,
+    remaining_signal_attribute: Optional[str] = None,
+    remaining_signal_description: Optional[str] = None,
+    run_name: Optional[str] = None,
+    strip_percentages: Optional[List[int]] = None,
+    categories_to_strip: Optional[List[str]] = None,
     model: str = "gpt-5.4-mini",
     n_parallels: int = 50,
+    measurement_kwargs: Optional[Dict[str, Any]] = None,
+    removal_kwargs: Optional[Dict[str, Any]] = None,
+    robust_regression: bool = True,
+    random_seed: int = 12345,
+    verbose: bool = True,
     reset_files: bool = False,
     client: Optional[LLMClient] = None,
     embedding_client: Optional[EmbeddingClient] = None,
     search_tool: Optional[SearchTool] = None,
     **engine_kwargs: Any,
-) -> Dict[str, Any]:
-    """Measure a signal, strip a confounder, re-measure, and regress out bias."""
+) -> DebiasResult:
+    """Measure a signal, strip a confounder, re-measure, and regress out bias.
+
+    The pipeline measures ``measurement_attribute`` on the original text,
+    removes the confounding signal (``removal_method``: ``"codify"`` strips
+    snippets deterministically across ``strip_percentages``; ``"paraphrase"``
+    rewrites), re-measures the variants, optionally measures the remaining
+    signal, and computes simple-difference and two-step debiased columns
+    ``"{attr} (raw - stripped)"`` / ``"{attr} (debiased)"``.  Regression
+    diagnostics use robust HC3 standard errors (HC1 fallback) via
+    :mod:`leximeter.utils.regression`.
+
+    Returns a :class:`DebiasResult` with ``results``, ``metadata`` and
+    ``regression``; results are saved under ``save_dir/run_name`` as
+    ``debias_results.csv`` + ``debias_metadata.json``.
+    """
     cfg = DebiasConfig(
         save_dir=save_dir,
-        model=model,
-        n_parallels=n_parallels,
+        mode=mode,
         measurement_attribute=measurement_attribute,
         removal_attribute=removal_attribute,
         attributes=attributes,
+        signal_dictionary=signal_dictionary,
+        removal_method=removal_method,
+        remaining_signal=remaining_signal,
+        remaining_signal_attribute=remaining_signal_attribute,
+        remaining_signal_description=remaining_signal_description,
+        run_name=run_name,
+        strip_percentages=strip_percentages,
+        categories_to_strip=categories_to_strip,
+        model=model,
+        n_parallels=n_parallels,
+        measurement_kwargs=measurement_kwargs or {},
+        removal_kwargs=removal_kwargs or {},
+        robust_regression=robust_regression,
+        random_seed=random_seed,
+        verbose=verbose,
     )
     task = Debias(
         cfg,

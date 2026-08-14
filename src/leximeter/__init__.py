@@ -3,6 +3,12 @@
 Forked from openai/GABRIEL and refactored for maintainability. See PLAN.md.
 """
 
+from .config import load_env
+
+# Read a local `.env` file (project root) into the environment before anything
+# else runs, so provider defaults can be configured without shell exports.
+load_env()
+
 from .api import (
     bucket,
     classify,
