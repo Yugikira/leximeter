@@ -46,36 +46,19 @@ from scipy.cluster.vq import kmeans2
 
 from ..templates import load_prompt
 from ..utils.parsing import safe_json, safest_json
+from . import _common
 from .base import Task
 
 
-def _load_json_cache(save_path: str) -> dict | None:
-    """Read a JSON checkpoint; return None when missing or malformed."""
-    if not os.path.exists(save_path):
-        return None
-    try:
-        with open(save_path, "r", encoding="utf-8") as f:
-            cache = json.load(f)
-    except (OSError, ValueError):
-        return None
-    return cache if isinstance(cache, dict) else None
-
-
 def _write_group_file(group_path: str, clusters: Any, candidates: Any) -> None:
-    """Persist merge group checkpoints (sync; run via ``asyncio.to_thread``)."""
+    """Persist merge group checkpoints (sync; run via ``asyncio.to_thread``).
+
+    Unlike the embedding cache, a failed group write raises: an inconsistent
+    checkpoint must not silently pass as progress.
+    """
     os.makedirs(os.path.dirname(group_path), exist_ok=True)
     with open(group_path, "w", encoding="utf-8") as f:
         json.dump({"clusters": clusters, "candidates": candidates}, f)
-
-
-def _write_embedding_cache(save_path: str, payload: dict) -> None:
-    """Best-effort JSON embedding-cache write (never raises)."""
-    try:
-        os.makedirs(os.path.dirname(save_path), exist_ok=True)
-        with open(save_path, "w", encoding="utf-8") as f:
-            json.dump(payload, f)
-    except (OSError, TypeError):
-        pass
 
 
 @dataclass
@@ -150,7 +133,7 @@ class Merge(Task):
         the event loop.
         """
         if not reset_file:
-            cached = await asyncio.to_thread(_load_json_cache, save_path)
+            cached = await asyncio.to_thread(_common.load_json_cache, save_path)
             if cached is not None:
                 return {str(k): v for k, v in cached.items()}
         client = self._get_embedding_client()
@@ -158,7 +141,7 @@ class Merge(Task):
             return {}
         vectors = await client.embed(list(texts))
         mapping = {str(t): list(map(float, v)) for t, v in zip(texts, vectors)}
-        await asyncio.to_thread(_write_embedding_cache, save_path, mapping)
+        await asyncio.to_thread(_common.write_json_cache, save_path, mapping)
         return mapping
 
     # ------------------------------------------------------------------
@@ -362,7 +345,7 @@ class Merge(Task):
             cur_short_len = max(1, int(self.cfg.short_list_len * (self.cfg.short_list_multiplier ** attempt)))
             group_path = os.path.join(self.cfg.save_dir, f"merge_groups_attempt{attempt}.json")
             if os.path.exists(group_path) and not reset_files:
-                data = await asyncio.to_thread(_load_json_cache, group_path)
+                data = await asyncio.to_thread(_common.load_json_cache, group_path)
                 clusters = (data or {}).get("clusters", [])
                 candidates = (data or {}).get("candidates", [])
             else:
