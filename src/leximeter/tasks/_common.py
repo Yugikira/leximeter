@@ -62,6 +62,28 @@ def update_run_metadata(save_dir: str, base_name: str, **updates: Any) -> None:
         pass
 
 
+def load_json_cache(path: str) -> dict[str, Any] | None:
+    """Read a JSON object checkpoint; ``None`` when missing or malformed."""
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def write_json_cache(path: str, payload: dict[str, Any]) -> None:
+    """Best-effort JSON checkpoint write (never raises)."""
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(payload, f)
+    except (OSError, TypeError):
+        pass
+
+
 def load_persisted_attributes(
     save_dir: str,
     incoming: dict[str, Any],

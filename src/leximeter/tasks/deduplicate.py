@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from dataclasses import dataclass
 from typing import Any
@@ -10,6 +11,7 @@ import numpy as np
 import pandas as pd
 from scipy.cluster.vq import kmeans2
 
+from ..client import EmbeddingClient
 from ..templates import load_prompt
 from ..utils.parsing import safe_json
 from . import _common
@@ -45,7 +47,7 @@ class Deduplicate(Task):
     ) -> pd.DataFrame:
         values = [str(v) for v in df[column_name].tolist()]
         unique = list(dict.fromkeys(values))
-        groups = await self._group_terms(unique)
+        groups = await self._group_terms(unique, reset_files=reset_files)
 
         mapping: dict[str, str] = {}
         prompts, ids, groups_meta = [], [], []
@@ -79,13 +81,46 @@ class Deduplicate(Task):
         self._save(out)
         return out
 
-    async def _group_terms(self, unique: list[str]) -> list[list[str]]:
+    async def _embed_with_cache(
+        self, texts: list[str], client: EmbeddingClient, *, reset_files: bool
+    ) -> dict[str, list[float]]:
+        """Embed ``texts`` keyed by text, checkpointing to a JSON cache.
+
+        Mirrors GABRIEL's ``get_all_embeddings`` checkpoint contract
+        (``openai_utils.py:2688``): on resume only texts missing from the
+        cache are re-embedded.  The cache lives at
+        ``{save_dir}/deduplicate_embeddings.json`` and file IO runs in a
+        worker thread so it does not block the event loop.
+        """
+        cache_path = os.path.join(self.cfg.save_dir, "deduplicate_embeddings.json")
+        vectors: dict[str, list[float]] = {}
+        if not reset_files:
+            cached = await asyncio.to_thread(_common.load_json_cache, cache_path)
+            if cached:
+                vectors = {
+                    str(k): [float(x) for x in v]
+                    for k, v in cached.items()
+                    if isinstance(v, list)
+                }
+        missing = [t for t in texts if t not in vectors]
+        if missing:
+            embedded = await client.embed(missing)
+            vectors.update(
+                {str(t): [float(x) for x in v] for t, v in zip(missing, embedded)}
+            )
+        await asyncio.to_thread(_common.write_json_cache, cache_path, vectors)
+        return vectors
+
+    async def _group_terms(
+        self, unique: list[str], *, reset_files: bool
+    ) -> list[list[str]]:
         """Split unique terms into LLM-sized groups.
 
         With embeddings enabled and ``len(unique) >= group_size``, terms are
         clustered with ``kmeans2`` (``k = ceil(n / group_size)``) then
         re-chunked to ``group_size`` per group — GABRIEL's contract
-        (deduplicate.py:145-164).  Otherwise (or when the embedding client is
+        (deduplicate.py:145-164).  Vectors are checkpointed per term (see
+        ``_embed_with_cache``).  Otherwise (or when the embedding client is
         unavailable) fall back to plain chunking.
         """
         client = self._get_embedding_client()
@@ -95,8 +130,10 @@ class Deduplicate(Task):
             and len(unique) >= self.cfg.group_size
         ):
             try:
-                emb = await client.embed(unique)
-                arr = np.array(emb, dtype=float)
+                emb = await self._embed_with_cache(
+                    unique, client, reset_files=reset_files
+                )
+                arr = np.array([emb[t] for t in unique], dtype=float)
                 k = max(1, int(np.ceil(len(unique) / self.cfg.group_size)))
                 _, labels = kmeans2(arr, k, minit="points")
                 clusters: list[list[str]] = [[] for _ in range(k)]

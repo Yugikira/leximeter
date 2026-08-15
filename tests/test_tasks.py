@@ -416,6 +416,32 @@ def test_deduplicate_embeddings_kmeans(tmp_path):
     assert list(res["mapped_tech"]) == terms  # empty payload: identity mapping
 
 
+@pytest.mark.filterwarnings("ignore:One of the clusters is empty:UserWarning")
+def test_deduplicate_embeddings_checkpoint(tmp_path):
+    """Embedding vectors are checkpointed: rerun hits the cache, reset recomputes."""
+    terms = [f"term_{i:03d}" for i in range(600)]
+    df = pd.DataFrame({"tech": terms})
+    save = str(tmp_path / "d4")
+    client = CountingClient({})
+    emb_client = CountingEmbeddingClient()
+    run(deduplicate(df, "tech", save_dir=save, client=client, embedding_client=emb_client))
+    assert emb_client.calls == 1
+    assert (tmp_path / "d4" / "deduplicate_embeddings.json").exists()
+    run(deduplicate(df, "tech", save_dir=save, client=client, embedding_client=emb_client))
+    assert emb_client.calls == 1  # cache hit: no re-embedding
+    run(
+        deduplicate(
+            df,
+            "tech",
+            save_dir=save,
+            client=client,
+            embedding_client=emb_client,
+            reset_files=True,
+        )
+    )
+    assert emb_client.calls == 2  # reset_files: recompute
+
+
 def test_bucket(tmp_path):
     df = pd.DataFrame({"tech": ["iPhone", "iPad"]})
     client = DictClient({"mobile device": "a definition"})
