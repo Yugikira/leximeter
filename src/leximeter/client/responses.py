@@ -7,7 +7,7 @@ recent Responses support) by pointing ``base_url`` at it.
 from __future__ import annotations
 
 import os
-from typing import Any, Optional
+from typing import Any
 
 from .base import LLMClient
 
@@ -16,8 +16,8 @@ class ResponsesClient(LLMClient):
     def __init__(
         self,
         *,
-        api_key: Optional[str] = None,
-        base_url: Optional[str] = None,
+        api_key: str | None = None,
+        base_url: str | None = None,
     ) -> None:
         from openai import AsyncOpenAI
 

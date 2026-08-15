@@ -1413,6 +1413,11 @@ search = [
     { name = "tavily-python" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "ruff" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.7.0" },
@@ -1436,6 +1441,9 @@ requires-dist = [
     { name = "tavily-python", marker = "extra == 'search'", specifier = ">=0.3.0" },
     { name = "tqdm", specifier = ">=4.40.0" },
 ]
+
+[package.metadata.requires-dev]
+dev = [{ name = "ruff", specifier = ">=0.16.3" }]
 
 [[package]]
 name = "librt"

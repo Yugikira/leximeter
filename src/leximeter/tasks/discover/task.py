@@ -29,8 +29,7 @@ import re
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any
 
 import pandas as pd
 
@@ -51,7 +50,7 @@ class DiscoverConfig:
     n_runs: int = 1
     min_frequency: float = 0.6
     bucket_count: int = 10
-    additional_instructions: Optional[str] = None
+    additional_instructions: str | None = None
     differentiate: bool = True
     max_words_per_call: int = 1000
     max_categories_per_call: int = 8
@@ -95,13 +94,13 @@ class Discover(Task):
         try:
             if pd.isna(value):  # type: ignore[arg-type]
                 return None
-        except Exception:
+        except (TypeError, ValueError):
             pass
         if isinstance(value, (pd.Timestamp, pd.Timedelta)):
             return value.isoformat()
         return value
 
-    def _persist_result_snapshot(self, result: Dict[str, Any]) -> None:
+    def _persist_result_snapshot(self, result: dict[str, Any]) -> None:
         payload = {
             "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "results": {k: self._to_serializable(v) for k, v in result.items()},
@@ -110,10 +109,10 @@ class Discover(Task):
         try:
             with open(out_path, "w", encoding="utf-8") as f:
                 json.dump(payload, f, ensure_ascii=False, indent=2)
-        except Exception:
+        except (OSError, TypeError):
             pass
 
-    def _value_to_dataframe(self, name: str, value: Any) -> Optional[pd.DataFrame]:
+    def _value_to_dataframe(self, name: str, value: Any) -> pd.DataFrame | None:
         if isinstance(value, pd.DataFrame):
             return value.copy()
         if isinstance(value, pd.Series):
@@ -132,8 +131,8 @@ class Discover(Task):
             return pd.DataFrame({"value": value})
         return None
 
-    def _export_result_archive(self, result: Dict[str, Any]) -> None:
-        tables: Dict[str, pd.DataFrame] = {}
+    def _export_result_archive(self, result: dict[str, Any]) -> None:
+        tables: dict[str, pd.DataFrame] = {}
         for key, value in result.items():
             df = self._value_to_dataframe(key, value)
             if df is not None:
@@ -143,7 +142,7 @@ class Discover(Task):
         archive_path = os.path.join(self.cfg.save_dir, "discover_results_export.zip")
         try:
             with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-                name_counts: Dict[str, int] = {}
+                name_counts: dict[str, int] = {}
                 for key, df in tables.items():
                     csv_buffer = io.StringIO()
                     df.to_csv(csv_buffer, index=False)
@@ -154,19 +153,19 @@ class Discover(Task):
                         safe = f"{safe}_{count}"
                     filename = f"{safe}.csv"
                     zf.writestr(filename, csv_buffer.getvalue())
-        except Exception:
+        except (OSError, TypeError):
             pass
 
     async def run(
         self,
         df: pd.DataFrame,
         *,
-        column_name: Optional[str] = None,
-        circle_column_name: Optional[str] = None,
-        square_column_name: Optional[str] = None,
+        column_name: str | None = None,
+        circle_column_name: str | None = None,
+        square_column_name: str | None = None,
         reset_files: bool = False,
         **kwargs: Any,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Execute the discovery pipeline.
 
         Args:
@@ -199,8 +198,8 @@ class Discover(Task):
         elif pair:
             self.cfg.differentiate = True
 
-        compare_df: Optional[pd.DataFrame] = None
-        codify_df: Optional[pd.DataFrame] = None
+        compare_df: pd.DataFrame | None = None
+        codify_df: pd.DataFrame | None = None
 
         # ── 1. candidate discovery ─────────────────────────────────────
         if single:
@@ -221,7 +220,7 @@ class Discover(Task):
                 reset_files=reset_files,
                 **kwargs,
             )
-            term_defs: Dict[str, str] = {}
+            term_defs: dict[str, str] = {}
             if "coded_passages" in codify_df:
                 for entry in codify_df["coded_passages"].dropna():
                     if isinstance(entry, dict):
@@ -306,7 +305,7 @@ class Discover(Task):
 
         # ── 3. classification ──────────────────────────────────────────
         classify_result: pd.DataFrame
-        summary_df: Optional[pd.DataFrame] = None
+        summary_df: pd.DataFrame | None = None
         if not labels:
             classify_result = df.reset_index(drop=True).copy()
         elif pair:
@@ -328,10 +327,10 @@ class Discover(Task):
                 return re.sub(r"(?i)circle|square", repl, text)
 
             def build_combined_metadata(
-                base_labels: Dict[str, str]
-            ) -> Tuple[Dict[str, str], Dict[str, str]]:
-                combined_local: Dict[str, str] = {}
-                rename_local: Dict[str, str] = {}
+                base_labels: dict[str, str]
+            ) -> tuple[dict[str, str], dict[str, str]]:
+                combined_local: dict[str, str] = {}
+                rename_local: dict[str, str] = {}
                 for lab, desc in base_labels.items():
                     actual_key = lab
                     swapped_lab = swap_cs(lab)
@@ -344,16 +343,16 @@ class Discover(Task):
                 return combined_local, rename_local
 
             def derive_base_from_combined(
-                combined_local: Dict[str, str]
-            ) -> Tuple[Dict[str, str], Dict[str, str]]:
-                base_local: Dict[str, str] = {}
-                rename_local: Dict[str, str] = {}
-                processed: Set[str] = set()
+                combined_local: dict[str, str]
+            ) -> tuple[dict[str, str], dict[str, str]]:
+                base_local: dict[str, str] = {}
+                rename_local: dict[str, str] = {}
+                processed: set[str] = set()
                 for key, desc in combined_local.items():
                     if key in processed:
                         continue
                     swapped_key = swap_cs(key)
-                    inverted_key: Optional[str] = None
+                    inverted_key: str | None = None
                     if swapped_key != key and swapped_key in combined_local:
                         inverted_key = swapped_key
                     else:
@@ -412,8 +411,8 @@ class Discover(Task):
 
             classify_result = combined_df.rename(columns=rename_map)
 
-            available: Dict[str, str] = {}
-            missing: List[str] = []
+            available: dict[str, str] = {}
+            missing: list[str] = []
             for lab, desc in labels.items():
                 actual_col = f"{lab}_actual"
                 inverted_col = f"{lab}_inverted"
@@ -434,7 +433,7 @@ class Discover(Task):
                     bucket_df = bucket_df[bucket_df["bucket"].isin(available.keys())]
             labels = available
 
-            summary_records: List[Dict[str, Any]] = []
+            summary_records: list[dict[str, Any]] = []
             for lab in labels:
                 actual_col = f"{lab}_actual"
                 inverted_col = f"{lab}_inverted"
@@ -503,7 +502,7 @@ class Discover(Task):
             else:
                 labels = actual_labels
 
-        result: Dict[str, Any] = {
+        result: dict[str, Any] = {
             "candidates": candidate_df,
             "buckets": labels,
             "classification": classify_result,

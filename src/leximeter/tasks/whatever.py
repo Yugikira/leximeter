@@ -12,7 +12,7 @@ import asyncio
 import logging
 import os
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 import pandas as pd
 
@@ -30,8 +30,8 @@ class WhateverConfig:
     model: str = "gpt-5.4-mini"
     json_mode: bool = False
     n_parallels: int = 50
-    web_search: Optional[bool] = None
-    web_search_filters: Optional[Dict[str, Any]] = None
+    web_search: bool | None = None
+    web_search_filters: dict[str, Any] | None = None
     search_context_size: str = "medium"
 
 
@@ -40,12 +40,12 @@ class Whatever(Task):
 
     async def run(
         self,
-        prompts: Optional[Union[str, List[str]]] = None,
+        prompts: str | list[str] | None = None,
         *,
-        df: Optional[pd.DataFrame] = None,
-        column_name: Optional[str] = None,
-        identifiers: Optional[List[str]] = None,
-        identifier_column: Optional[str] = None,
+        df: pd.DataFrame | None = None,
+        column_name: str | None = None,
+        identifiers: list[str] | None = None,
+        identifier_column: str | None = None,
         reset_files: bool = False,
         **kwargs: Any,
     ) -> pd.DataFrame:
@@ -83,7 +83,7 @@ class Whatever(Task):
     # ------------------------------------------------------------------
     # Web-search augmentation (GABRIEL's ``whatever`` web_search mode)
     # ------------------------------------------------------------------
-    def _get_search_tool(self) -> Optional[Any]:
+    def _get_search_tool(self) -> Any | None:
         """Resolve the search tool, forwarding GABRIEL-style config knobs."""
         if self._search_tool is None:
             from ..client.resolve import resolve_search_tool
@@ -95,8 +95,8 @@ class Whatever(Task):
         return self._search_tool
 
     async def _augment_with_search(
-        self, prompts: List[str]
-    ) -> List[str]:
+        self, prompts: list[str]
+    ) -> list[str]:
         """Prepend retrieved context to each prompt when a search tool is available.
 
         A prompt is used verbatim when retrieval yields nothing (no tool
@@ -129,13 +129,13 @@ class Whatever(Task):
 
     def _normalize(
         self,
-        prompts: Optional[Union[str, List[str]]],
+        prompts: str | list[str] | None,
         *,
-        df: Optional[pd.DataFrame],
-        column_name: Optional[str],
-        identifiers: Optional[List[str]],
-        identifier_column: Optional[str],
-    ) -> tuple[List[str], List[str]]:
+        df: pd.DataFrame | None,
+        column_name: str | None,
+        identifiers: list[str] | None,
+        identifier_column: str | None,
+    ) -> tuple[list[str], list[str]]:
         if df is not None:
             if column_name is None or column_name not in df.columns:
                 raise ValueError("column_name must name a column in df")

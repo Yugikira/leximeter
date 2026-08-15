@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from typing import Optional
 
 
 def normalize_whitespace(text: str) -> str:
@@ -53,10 +52,8 @@ def normalize_text_aggressive(text: str) -> str:
         # Unicode quotes and apostrophes
         '’': "'", '‘': "'", '“': '"', '”': '"',
         '–': '-', '—': '-', '…': '...',
-        # Common variations
-        ''': "'", ''': "'", '"': '"', '"': '"',
         # Remove zero-width characters
-        '​': '', '‌': '', '‍': '', '﻿': '',
+        '\u200b': '', '‌': '', '‍': '', '﻿': '',
     }
 
     for old, new in unicode_fixes.items():
@@ -72,7 +69,7 @@ def normalize_text_aggressive(text: str) -> str:
             text = re.sub(r"[''‚Äô]+ve\b", "'ve", text)
             text = re.sub(r"[''‚Äô]+ll\b", "'ll", text)
             text = re.sub(r"[''‚Äô]+d\b", "'d", text)
-        except Exception:
+        except (re.error, TypeError):
             # If regex fails, just continue without this cleanup
             pass
 
@@ -90,7 +87,7 @@ def letters_only(text: str) -> str:
     return re.sub(r'[^a-z]', '', text.lower())
 
 
-def robust_find_improved(text: str, excerpt: str) -> Optional[str]:
+def robust_find_improved(text: str, excerpt: str) -> str | None:
     """Fast and robust text matching using letters-only approach with fallbacks."""
     if not excerpt.strip():
         return None
@@ -125,9 +122,13 @@ def robust_find_improved(text: str, excerpt: str) -> Optional[str]:
     if 10 <= len(excerpt_letters) < 20:
         excerpt_first_half = excerpt_letters[:len(excerpt_letters)//2]
         excerpt_second_half = excerpt_letters[len(excerpt_letters)//2:]
-        if len(excerpt_first_half) >= 5 and len(excerpt_second_half) >= 5:
-            if excerpt_first_half in text_letters and excerpt_second_half in text_letters:
-                return excerpt
+        if (
+            len(excerpt_first_half) >= 5
+            and len(excerpt_second_half) >= 5
+            and excerpt_first_half in text_letters
+            and excerpt_second_half in text_letters
+        ):
+            return excerpt
 
     # Fallback 5: Very short excerpts (< 10 letters): try normalized approach
     if len(excerpt_letters) < 10:
@@ -160,17 +161,14 @@ def strict_find(text: str, excerpt: str) -> bool:
     # Strategy 3: Letters-only matching (most basic level)
     text_letters = letters_only(text)
     excerpt_letters = letters_only(excerpt)
-    if excerpt_letters and excerpt_letters in text_letters:
-        return True
-
-    return False
+    return bool(excerpt_letters and excerpt_letters in text_letters)
 
 
 __all__ = [
-    "normalize_whitespace",
-    "normalize_text_generous",
-    "normalize_text_aggressive",
     "letters_only",
+    "normalize_text_aggressive",
+    "normalize_text_generous",
+    "normalize_whitespace",
     "robust_find_improved",
     "strict_find",
 ]

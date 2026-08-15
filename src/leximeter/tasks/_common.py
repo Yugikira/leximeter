@@ -8,7 +8,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, TypeVar
+from collections.abc import Sequence
+from typing import Any, TypeVar
 
 T = TypeVar("T")
 
@@ -24,52 +25,52 @@ def run_metadata_path(save_dir: str, base_name: str) -> str:
     return os.path.join(save_dir, f"{base_name}_run_metadata.json")
 
 
-def load_run_metadata(save_dir: str, base_name: str, *, reset_files: bool) -> Dict[str, Any]:
+def load_run_metadata(save_dir: str, base_name: str, *, reset_files: bool) -> dict[str, Any]:
     path = run_metadata_path(save_dir, base_name)
     if reset_files:
         try:
             if os.path.exists(path):
                 os.remove(path)
-        except Exception:
+        except OSError:
             pass
         return {}
     try:
         with open(path, encoding="utf-8") as f:
             payload = json.load(f)
-    except Exception:
+    except (OSError, ValueError):
         return {}
     return payload if isinstance(payload, dict) else {}
 
 
 def update_run_metadata(save_dir: str, base_name: str, **updates: Any) -> None:
     path = run_metadata_path(save_dir, base_name)
-    payload: Dict[str, Any] = {}
+    payload: dict[str, Any] = {}
     try:
         if os.path.exists(path):
             with open(path, encoding="utf-8") as f:
                 loaded = json.load(f)
             if isinstance(loaded, dict):
                 payload.update(loaded)
-    except Exception:
+    except (OSError, ValueError):
         payload = {}
     payload.update(updates)
     try:
         os.makedirs(save_dir, exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2)
-    except Exception:
+    except (OSError, TypeError):
         pass
 
 
 def load_persisted_attributes(
     save_dir: str,
-    incoming: Dict[str, Any],
+    incoming: dict[str, Any],
     *,
     reset_files: bool,
     task_name: str,
     item_name: str = "attributes",
-    legacy_filename: Optional[str] = None,
-) -> Dict[str, Any]:
+    legacy_filename: str | None = None,
+) -> dict[str, Any]:
     """Load attributes/labels from disk for reproducibility.
 
     Preference order:
@@ -87,11 +88,11 @@ def load_persisted_attributes(
             if path and os.path.exists(path):
                 try:
                     os.remove(path)
-                except Exception:
+                except OSError:
                     pass
 
-    loaded: Optional[Dict[str, Any]] = None
-    source_path: Optional[str] = None
+    loaded: dict[str, Any] | None = None
+    source_path: str | None = None
     for path in candidate_paths:
         if not path or not os.path.exists(path):
             continue
@@ -100,7 +101,7 @@ def load_persisted_attributes(
                 loaded = json.load(f)
             source_path = path
             break
-        except Exception:
+        except (OSError, ValueError):
             continue
 
     if loaded is not None:
@@ -118,7 +119,7 @@ def load_persisted_attributes(
 
     try:
         os.makedirs(save_dir, exist_ok=True)
-    except Exception:
+    except OSError:
         pass
     for path in candidate_paths:
         if not path:
@@ -126,13 +127,13 @@ def load_persisted_attributes(
         try:
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(incoming, f, indent=2)
-        except Exception:
+        except (OSError, TypeError):
             pass
 
     return incoming
 
 
-def chunk_items(items: Sequence[T], n: Optional[int]) -> List[List[T]]:
+def chunk_items(items: Sequence[T], n: int | None) -> list[list[T]]:
     if not items:
         return []
     if n is None:
@@ -141,12 +142,12 @@ def chunk_items(items: Sequence[T], n: Optional[int]) -> List[List[T]]:
 
 
 def resolve_attribute_batches(
-    items: Sequence[Tuple[str, T]],
+    items: Sequence[tuple[str, T]],
     *,
-    requested_n: Optional[int],
-    metadata: Dict[str, Any],
+    requested_n: int | None,
+    metadata: dict[str, Any],
     reset_files: bool,
-) -> Tuple[List[List[Tuple[str, T]]], Optional[int]]:
+) -> tuple[list[list[tuple[str, T]]], int | None]:
     """Split attribute items into prompt batches, reusing any saved plan.
 
     ``requested_n`` is the max attributes per prompt (``None`` = one batch).
@@ -159,7 +160,7 @@ def resolve_attribute_batches(
     # Reuse a previously-persisted batch plan so resuming lines up with cache.
     if not reset_files and isinstance(metadata.get("attribute_batches"), list):
         lookup = {name: value for name, value in items}
-        batches: List[List[Tuple[str, T]]] = []
+        batches: list[list[tuple[str, T]]] = []
         valid = True
         for batch in metadata["attribute_batches"]:
             if not isinstance(batch, list):
@@ -200,13 +201,13 @@ def _coerce_json_obj(raw: Any) -> Any:
     return obj
 
 
-def _collect_attribute_keys(obj: Any, lookup: Dict[str, str]) -> Set[str]:
+def _collect_attribute_keys(obj: Any, lookup: dict[str, str]) -> set[str]:
     """Recursively collect attribute keys (case-insensitive) present in ``obj``.
 
     ``lookup`` maps lower-cased attribute names to their canonical names.
     """
 
-    found: Set[str] = set()
+    found: set[str] = set()
     if isinstance(obj, dict):
         for key, value in obj.items():
             norm = str(key).strip().lower()

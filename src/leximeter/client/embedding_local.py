@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from typing import List, Optional
 
 from .embedding import EmbeddingClient
 
@@ -16,7 +15,7 @@ class LocalBgeClient(EmbeddingClient):
     does not block the event loop.
     """
 
-    def __init__(self, *, model: Optional[str] = None, device: str = "cpu") -> None:
+    def __init__(self, *, model: str | None = None, device: str = "cpu") -> None:
         self._model_name = model or "BAAI/bge-m3"
         self._device = device
         self._model = None
@@ -27,7 +26,7 @@ class LocalBgeClient(EmbeddingClient):
 
             self._model = SentenceTransformer(self._model_name, device=self._device)
 
-    async def embed(self, texts: List[str]) -> List[List[float]]:
+    async def embed(self, texts: list[str]) -> list[list[float]]:
         self._load()
         vecs = await asyncio.to_thread(
             self._model.encode, texts, normalize_embeddings=True

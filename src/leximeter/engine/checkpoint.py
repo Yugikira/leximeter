@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, Iterable, List
+from typing import Any
 
 import pandas as pd
 
@@ -32,7 +32,7 @@ def completed_identifiers(checkpoint: pd.DataFrame) -> set:
     return set(checkpoint.loc[mask, "Identifier"].astype(str))
 
 
-def append_rows(path: str, rows: List[Dict[str, Any]]) -> None:
+def append_rows(path: str, rows: list[dict[str, Any]]) -> None:
     """Append ``rows`` to the checkpoint CSV, creating it if needed."""
     if not rows:
         return
@@ -41,7 +41,7 @@ def append_rows(path: str, rows: List[Dict[str, Any]]) -> None:
     frame.to_csv(path, mode="a", header=header, index=False)
 
 
-def merge_with_checkpoint(checkpoint: pd.DataFrame, rows: List[Dict[str, Any]]) -> pd.DataFrame:
+def merge_with_checkpoint(checkpoint: pd.DataFrame, rows: list[dict[str, Any]]) -> pd.DataFrame:
     """Return the checkpoint plus new rows as a single frame."""
     new_frame = pd.DataFrame(rows, columns=COLUMNS)
     if checkpoint.empty:

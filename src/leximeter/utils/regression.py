@@ -9,7 +9,7 @@ classical standard errors so the debiasing pipeline keeps working.
 from __future__ import annotations
 
 import warnings
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -18,7 +18,7 @@ try:  # statsmodels is optional; fall back to a lightweight solver if missing
     import statsmodels.api as sm
 
     _HAS_STATSMODELS = True
-except Exception:  # pragma: no cover - fallback exercised when statsmodels absent
+except ImportError:  # pragma: no cover - fallback exercised when statsmodels absent
     sm = None  # type: ignore[assignment]
     _HAS_STATSMODELS = False
 
@@ -36,8 +36,8 @@ def fit_ols(
     X: np.ndarray,
     *,
     robust: bool = True,
-    varnames: Optional[List[str]] = None,
-) -> Dict[str, Any]:
+    varnames: list[str] | None = None,
+) -> dict[str, Any]:
     """Fit an OLS regression using statsmodels and return a dictionary of results.
 
     When ``varnames`` is supplied and its length matches the number of columns
@@ -86,7 +86,7 @@ def fit_ols(
     if robust:
         try:
             use = res.get_robustcov_results(cov_type="HC3")
-        except Exception:
+        except Exception:  # noqa: BLE001 - statsmodels cov_type failures are untyped
             use = res.get_robustcov_results(cov_type="HC1")
     else:
         use = res
@@ -99,7 +99,7 @@ def fit_ols(
         if varnames is None:
             try:
                 varnames = list(res.model.exog_names)
-            except Exception:  # pragma: no cover - very unlikely branch
+            except Exception:  # noqa: BLE001 - pragma: no cover - very unlikely branch
                 varnames = [f"x{i}" for i in range(params.shape[0])]
         params = pd.Series(params, index=varnames)
         bse = pd.Series(np.asarray(bse), index=varnames)
@@ -135,9 +135,9 @@ def _fit_ols_fallback(
     y: np.ndarray,
     X: np.ndarray,
     *,
-    robust: bool = True,  # noqa: ARG001 - signature parity with primary implementation
-    varnames: Optional[List[str]] = None,  # noqa: ARG001
-) -> Dict[str, Any]:
+    robust: bool = True,
+    varnames: list[str] | None = None,
+) -> dict[str, Any]:
     """Minimal OLS routine used when :mod:`statsmodels` is unavailable.
 
     The implementation mirrors the API of :func:`fit_ols` closely enough for
@@ -208,8 +208,8 @@ def _safe_fit_ols(
     X: np.ndarray,
     *,
     robust: bool,
-    varnames: Optional[List[str]] = None,
-) -> Dict[str, Any]:
+    varnames: list[str] | None = None,
+) -> dict[str, Any]:
     """Attempt statsmodels-backed fitting, falling back to NumPy OLS when needed."""
 
     try:
@@ -224,4 +224,4 @@ def _safe_fit_ols(
         return _fit_ols_fallback(y, X, robust=False, varnames=varnames)
 
 
-__all__ = ["fit_ols", "_fit_ols_fallback", "_safe_fit_ols"]
+__all__ = ["_fit_ols_fallback", "_safe_fit_ols", "fit_ols"]

@@ -38,7 +38,7 @@ import math
 import os
 import unicodedata
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -47,6 +47,35 @@ from scipy.cluster.vq import kmeans2
 from ..templates import load_prompt
 from ..utils.parsing import safe_json, safest_json
 from .base import Task
+
+
+def _load_json_cache(save_path: str) -> dict | None:
+    """Read a JSON checkpoint; return None when missing or malformed."""
+    if not os.path.exists(save_path):
+        return None
+    try:
+        with open(save_path, "r", encoding="utf-8") as f:
+            cache = json.load(f)
+    except (OSError, ValueError):
+        return None
+    return cache if isinstance(cache, dict) else None
+
+
+def _write_group_file(group_path: str, clusters: Any, candidates: Any) -> None:
+    """Persist merge group checkpoints (sync; run via ``asyncio.to_thread``)."""
+    os.makedirs(os.path.dirname(group_path), exist_ok=True)
+    with open(group_path, "w", encoding="utf-8") as f:
+        json.dump({"clusters": clusters, "candidates": candidates}, f)
+
+
+def _write_embedding_cache(save_path: str, payload: dict) -> None:
+    """Best-effort JSON embedding-cache write (never raises)."""
+    try:
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        with open(save_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f)
+    except (OSError, TypeError):
+        pass
 
 
 @dataclass
@@ -58,7 +87,7 @@ class MergeConfig:
     model: str = "gpt-5.4-nano"
     n_parallels: int = 50
     n_runs: int = 1
-    additional_instructions: Optional[str] = None
+    additional_instructions: str | None = None
     use_embeddings: bool = True
     short_list_len: int = 16
     long_list_len: int = 256
@@ -94,10 +123,10 @@ class Merge(Task):
     @classmethod
     def _deduplicate(
         cls, series: pd.Series
-    ) -> Tuple[List[str], Dict[str, List[str]], Dict[str, str]]:
+    ) -> tuple[list[str], dict[str, list[str]], dict[str, str]]:
         """Return (unique_values, rep_to_group, norm_to_rep) for a Series."""
-        norm_map: Dict[str, str] = {}
-        groups: Dict[str, List[str]] = {}
+        norm_map: dict[str, str] = {}
+        groups: dict[str, list[str]] = {}
         for val in series.dropna().astype(str):
             norm = cls._normalize(val)
             if norm in norm_map:
@@ -111,33 +140,25 @@ class Merge(Task):
 
     # ------------------------------------------------------------------
     async def _get_all_embeddings(
-        self, texts: List[str], save_path: str, *, reset_file: bool
-    ) -> Dict[str, List[float]]:
+        self, texts: list[str], save_path: str, *, reset_file: bool
+    ) -> dict[str, list[float]]:
         """Compute embeddings for ``texts``, checkpointing to a JSON cache.
 
         When ``save_path`` exists and ``reset_file`` is False the cached
-        mapping is returned as-is (checkpoint resume).  GABRIEL uses a pickle
-        cache here; leximeter stores the same mapping as JSON.
+        mapping is returned as-is (checkpoint resume); leximeter stores the
+        mapping as JSON.  File IO runs in a worker thread so it does not block
+        the event loop.
         """
-        if not reset_file and os.path.exists(save_path):
-            try:
-                with open(save_path, "r", encoding="utf-8") as f:
-                    cache = json.load(f)
-                if isinstance(cache, dict):
-                    return {str(k): v for k, v in cache.items()}
-            except Exception:
-                pass
+        if not reset_file:
+            cached = await asyncio.to_thread(_load_json_cache, save_path)
+            if cached is not None:
+                return {str(k): v for k, v in cached.items()}
         client = self._get_embedding_client()
         if client is None:
             return {}
         vectors = await client.embed(list(texts))
         mapping = {str(t): list(map(float, v)) for t, v in zip(texts, vectors)}
-        try:
-            os.makedirs(os.path.dirname(save_path), exist_ok=True)
-            with open(save_path, "w", encoding="utf-8") as f:
-                json.dump(mapping, f)
-        except Exception:
-            pass
+        await asyncio.to_thread(_write_embedding_cache, save_path, mapping)
         return mapping
 
     # ------------------------------------------------------------------
@@ -146,9 +167,9 @@ class Merge(Task):
         df_left: pd.DataFrame,
         df_right: pd.DataFrame,
         *,
-        on: Optional[str] = None,
-        left_on: Optional[str] = None,
-        right_on: Optional[str] = None,
+        on: str | None = None,
+        left_on: str | None = None,
+        right_on: str | None = None,
         how: str = "left",
         reset_files: bool = False,
         **kwargs: Any,
@@ -175,7 +196,7 @@ class Merge(Task):
             short_key, long_key = right_key, left_key
 
         # Deduplicate keys and track normalized maps
-        short_uniques, short_groups, short_norm_map = self._deduplicate(short_df[short_key])
+        short_uniques, short_groups, _ = self._deduplicate(short_df[short_key])
         long_uniques, long_groups, long_norm_map = self._deduplicate(long_df[long_key])
 
         # Build a global norm→representative map for the left-hand keys.
@@ -193,8 +214,8 @@ class Merge(Task):
                     except OSError:
                         pass
 
-        short_emb: Dict[str, List[float]] = {}
-        long_emb: Dict[str, List[float]] = {}
+        short_emb: dict[str, list[float]] = {}
+        long_emb: dict[str, list[float]] = {}
         if use_embeddings:
             short_emb = await self._get_all_embeddings(
                 texts=short_uniques,
@@ -207,7 +228,7 @@ class Merge(Task):
                 reset_file=reset_files,
             )
 
-        matches: Dict[str, str] = {}
+        matches: dict[str, str] = {}
         remaining = short_uniques[:]
         if use_embeddings and short_emb and long_emb and self.cfg.auto_match_threshold > 0:
             short_matrix = np.array([short_emb[s] for s in remaining], dtype=float)
@@ -226,15 +247,15 @@ class Merge(Task):
             remaining = [s for s in remaining if s not in matches]
 
         def _build_groups(
-            remaining_short: List[str], short_len: int, extra_scans: int = 1
-        ) -> Tuple[List[List[str]], List[List[str]]]:
-            clusters_out: List[List[str]] = []
-            candidates: List[List[str]] = []
+            remaining_short: list[str], short_len: int, extra_scans: int = 1
+        ) -> tuple[list[list[str]], list[list[str]]]:
+            clusters_out: list[list[str]] = []
+            candidates: list[list[str]] = []
             if use_embeddings and short_emb:
                 arr = np.array([short_emb[s] for s in remaining_short], dtype=float)
                 k = max(1, int(np.ceil(len(remaining_short) / short_len)))
                 _, labels = kmeans2(arr, k, minit="points")
-                cluster_sets: List[List[str]] = []
+                cluster_sets: list[list[str]] = []
                 for cluster_id in range(k):
                     members = [remaining_short[i] for i, lbl in enumerate(labels) if lbl == cluster_id]
                     if not members:
@@ -248,8 +269,8 @@ class Merge(Task):
                 for subset in cluster_sets:
                     short_vecs = [np.array(short_emb[s], dtype=float) for s in subset]
                     short_norms = [np.linalg.norm(vec) + 1e-8 for vec in short_vecs]
-                    orders: List[np.ndarray] = []
-                    sims_list: List[np.ndarray] = []
+                    orders: list[np.ndarray] = []
+                    sims_list: list[np.ndarray] = []
                     for vec, norm in zip(short_vecs, short_norms):
                         sims = long_matrix @ vec / (long_norms * norm)
                         order = np.argsort(sims)[::-1]
@@ -258,7 +279,7 @@ class Merge(Task):
 
                     per_term = max(1, math.ceil(self.cfg.long_list_len / len(subset)))
                     for scan in range(extra_scans):
-                        combined: Dict[int, float] = {}
+                        combined: dict[int, float] = {}
                         start = scan * per_term
                         end = start + per_term
                         for order, sims in zip(orders, sims_list):
@@ -304,10 +325,10 @@ class Merge(Task):
                             candidates.append(list(long_sorted[scan_start:scan_end]))
             return clusters_out, candidates
 
-        def _parse_response(res: Any) -> Dict[str, str]:
+        def _parse_response(res: Any) -> dict[str, str]:
             """Normalize raw model output into a dictionary."""
             if isinstance(res, list):
-                combined: Dict[str, str] = {}
+                combined: dict[str, str] = {}
                 for item in res:
                     if isinstance(item, dict):
                         for k, v in item.items():
@@ -341,20 +362,19 @@ class Merge(Task):
             cur_short_len = max(1, int(self.cfg.short_list_len * (self.cfg.short_list_multiplier ** attempt)))
             group_path = os.path.join(self.cfg.save_dir, f"merge_groups_attempt{attempt}.json")
             if os.path.exists(group_path) and not reset_files:
-                with open(group_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                clusters = data.get("clusters", [])
-                candidates = data.get("candidates", [])
+                data = await asyncio.to_thread(_load_json_cache, group_path)
+                clusters = (data or {}).get("clusters", [])
+                candidates = (data or {}).get("candidates", [])
             else:
                 extra = self.cfg.candidate_scan_chunks if attempt >= 1 else 1
                 clusters, candidates = _build_groups(remaining, cur_short_len, extra)
-                os.makedirs(self.cfg.save_dir, exist_ok=True)
-                with open(group_path, "w", encoding="utf-8") as f:
-                    json.dump({"clusters": clusters, "candidates": candidates}, f)
+                await asyncio.to_thread(
+                    _write_group_file, group_path, clusters, candidates
+                )
 
-            prompts: List[str] = []
-            identifiers: List[str] = []
-            base_ids: List[str] = []
+            prompts: list[str] = []
+            identifiers: list[str] = []
+            base_ids: list[str] = []
             for idx, (short_terms, long_terms) in enumerate(zip(clusters, candidates)):
                 short_dict = {s: "" for s in short_terms}
                 prompt = self._template.render(
@@ -392,7 +412,7 @@ class Merge(Task):
                 *[safest_json(resp_map.get(i, "")) for i in identifiers]
             )
 
-            responses_by_base: Dict[str, List[Dict[str, str]]] = {bid: [] for bid in base_ids}
+            responses_by_base: dict[str, list[dict[str, str]]] = {bid: [] for bid in base_ids}
             for ident, res in zip(identifiers, parsed):
                 base_id = ident.rsplit("_run", 1)[0] if self.cfg.n_runs > 1 else ident
                 responses_by_base.setdefault(base_id, []).append(_parse_response(res))
@@ -408,7 +428,7 @@ class Merge(Task):
                     for res in results
                 ]
                 for s in clus:
-                    counts: Dict[str, int] = {}
+                    counts: dict[str, int] = {}
                     s_norm = self._normalize(s)
                     for res_map in normalized_results:
                         val = res_map.get(s_norm)
@@ -418,13 +438,13 @@ class Merge(Task):
                         continue
                     max_count = max(counts.values())
                     top_candidates = [v for v, c in counts.items() if c == max_count]
-                    chosen: Optional[str] = None
+                    chosen: str | None = None
                     if len(top_candidates) == 1:
                         chosen = top_candidates[0]
                     elif use_embeddings and short_emb and long_emb:
                         s_vec = np.array(short_emb.get(s, []), dtype=float)
                         if s_vec.size:
-                            sims: Dict[str, float] = {}
+                            sims: dict[str, float] = {}
                             s_norm_val = np.linalg.norm(s_vec) + 1e-8
                             for cand in top_candidates:
                                 l_vec = np.array(long_emb.get(cand, []), dtype=float)
@@ -467,7 +487,7 @@ class Merge(Task):
                 index=False,
             )
 
-        records: List[Dict[str, str]] = []
+        records: list[dict[str, str]] = []
         if short_key == long_key:
             temp_col = f"{long_key}_match"
             for short_rep, long_rep in matches.items():

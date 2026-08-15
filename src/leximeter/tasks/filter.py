@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import random
 from dataclasses import dataclass
-from typing import Any, List, Optional
+from typing import Any
 
 import pandas as pd
 
@@ -27,7 +27,7 @@ class FilterConfig:
     random_seed: int = 42
     n_runs: int = 1
     threshold: float = 0.5
-    additional_instructions: Optional[str] = None
+    additional_instructions: str | None = None
 
 
 class Filter(Task):
@@ -60,9 +60,9 @@ class Filter(Task):
 
         # 3. jobs: batch x run
         n_runs = max(1, int(self.cfg.n_runs))
-        prompts: List[str] = []
-        ids: List[str] = []
-        meta: List[tuple[int, int]] = []
+        prompts: list[str] = []
+        ids: list[str] = []
+        meta: list[tuple[int, int]] = []
         for batch_idx, batch in enumerate(batches):
             batch_id = _common.hash_identifier("\x1f".join(sorted(batch)))
             prompt = self._template.render(
@@ -125,5 +125,5 @@ class Filter(Task):
         out_path = os.path.join(self.cfg.save_dir, f"{self._base_name()}_cleaned.csv")
         try:
             out.to_csv(out_path, index=False)
-        except Exception:
+        except OSError:
             pass

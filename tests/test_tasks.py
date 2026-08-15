@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+from typing import ClassVar
 
 import numpy as np
 import pandas as pd
 import pytest
+from conftest import CountingClient, DictClient, TextClient
 
 from leximeter import (
     bucket,
@@ -29,8 +31,6 @@ from leximeter import (
     seed,
     whatever,
 )
-
-from conftest import CountingClient, DictClient, TextClient
 from leximeter.client import DummyEmbeddingClient
 
 
@@ -83,8 +83,8 @@ def test_classify_min_frequency(tmp_path):
         )
     )
     assert res["world"].dtype == bool
-    assert (res["world"] == True).all()  # noqa: E712
-    assert (res["sports"] == False).all()  # noqa: E712
+    assert (res["world"] == True).all()
+    assert (res["sports"] == False).all()
 
 
 def test_extract_flattens_entity_and_coerces(tmp_path):
@@ -244,7 +244,7 @@ def test_paraphrase(tmp_path):
     assert "text_revised" in res.columns
     assert "text_revised_approved" in res.columns
     assert list(res["text_revised"]) == ["REWRITTEN", "REWRITTEN"]
-    assert (res["text_revised_approved"] == True).all()  # noqa: E712
+    assert (res["text_revised_approved"] == True).all()
 
 
 def test_paraphrase_recursive_validation(tmp_path):
@@ -264,7 +264,7 @@ def test_paraphrase_recursive_validation(tmp_path):
         )
     )
     assert res["text_revised"].iloc[0] == '{"instructions_followed": true}'
-    assert res["text_revised_approved"].iloc[0] == True  # noqa: E712
+    assert res["text_revised_approved"].iloc[0] == True
     # round-0 generation checkpoint landed on disk
     assert (tmp_path / "p2" / "paraphrase_responses_round0.csv").exists()
 
@@ -290,7 +290,7 @@ def test_paraphrase_validation_exhausts_rounds(tmp_path):
         )
     )
     assert res["text_revised"].iloc[0] == '{"instructions_followed": false}'
-    assert res["text_revised_approved"].iloc[0] == False  # noqa: E712
+    assert res["text_revised_approved"].iloc[0] == False
     # both rounds were generated and checkpointed
     assert (tmp_path / "p3" / "paraphrase_responses_round0.csv").exists()
     assert (tmp_path / "p3" / "paraphrase_responses_round1.csv").exists()
@@ -508,8 +508,10 @@ def test_codify_completion_loop(tmp_path):
     df = pd.DataFrame(
         {
             "text": [
-                "This is a long passage. Hello world. "
-                "There is much more content here that remains uncoded."
+                (
+                    "This is a long passage. Hello world. "
+                    "There is much more content here that remains uncoded."
+                )
             ]
         }
     )
@@ -691,8 +693,10 @@ def test_discover_single_codify_pipeline(tmp_path):
     df = pd.DataFrame(
         {
             "text": [
-                "This is a long passage. Hello world. "
-                "There is much more content here that remains uncoded."
+                (
+                    "This is a long passage. Hello world. "
+                    "There is much more content here that remains uncoded."
+                )
             ]
         }
     )
@@ -721,7 +725,7 @@ def test_discover_single_codify_pipeline(tmp_path):
     assert res["buckets"] == {"feature code": "a distinguishing feature"}
     assert "codify" in res
     assert "summary" not in res
-    assert (res["classification"]["feature code"] == True).all()  # noqa: E712
+    assert (res["classification"]["feature code"] == True).all()
 
 
 class DebiasClient(DictClient):
@@ -733,15 +737,15 @@ class DebiasClient(DictClient):
     measurements return different numeric values.
     """
 
-    _SNIPPETS = {
+    _SNIPPETS: ClassVar[dict[str, str]] = {
         "John": "CEO John leads the firm.",
         "Mary": "CEO Mary runs the show.",
         "Alex": "CEO Alex drives the plan.",
         "Sam": "CEO Sam owns the market.",
     }
-    _ORIG = {"John": 70, "Mary": 75, "Alex": 80, "Sam": 85}
-    _STRIPPED = {"Alpha": 40, "Beta": 45, "Gamma": 50, "Delta": 55}
-    _REMAINING = {"Alpha": 50, "Beta": 45, "Gamma": 40, "Delta": 35}
+    _ORIG: ClassVar[dict[str, int]] = {"John": 70, "Mary": 75, "Alex": 80, "Sam": 85}
+    _STRIPPED: ClassVar[dict[str, int]] = {"Alpha": 40, "Beta": 45, "Gamma": 50, "Delta": 55}
+    _REMAINING: ClassVar[dict[str, int]] = {"Alpha": 50, "Beta": 45, "Gamma": 40, "Delta": 35}
 
     def __init__(self):
         super().__init__({})

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -22,7 +22,7 @@ class DeduplicateConfig:
     file_name: str = "deduplicate_responses.csv"
     model: str = "gpt-5.4-mini"
     n_parallels: int = 50
-    additional_instructions: Optional[str] = None
+    additional_instructions: str | None = None
     group_size: int = 500
     modality: str = "entity"
     use_embeddings: bool = True
@@ -47,7 +47,7 @@ class Deduplicate(Task):
         unique = list(dict.fromkeys(values))
         groups = await self._group_terms(unique)
 
-        mapping: Dict[str, str] = {}
+        mapping: dict[str, str] = {}
         prompts, ids, groups_meta = [], [], []
         for group in groups:
             ids.append(_common.hash_identifier("\x1f".join(sorted(group))))
@@ -79,7 +79,7 @@ class Deduplicate(Task):
         self._save(out)
         return out
 
-    async def _group_terms(self, unique: List[str]) -> List[List[str]]:
+    async def _group_terms(self, unique: list[str]) -> list[list[str]]:
         """Split unique terms into LLM-sized groups.
 
         With embeddings enabled and ``len(unique) >= group_size``, terms are
@@ -99,11 +99,11 @@ class Deduplicate(Task):
                 arr = np.array(emb, dtype=float)
                 k = max(1, int(np.ceil(len(unique) / self.cfg.group_size)))
                 _, labels = kmeans2(arr, k, minit="points")
-                clusters: List[List[str]] = [[] for _ in range(k)]
+                clusters: list[list[str]] = [[] for _ in range(k)]
                 for term, lbl in zip(unique, labels):
                     clusters[int(lbl)].append(term)
-                groups: List[List[str]] = []
-                current: List[str] = []
+                groups: list[list[str]] = []
+                current: list[str] = []
                 for cluster in clusters:
                     for term in cluster:
                         current.append(term)
@@ -143,5 +143,5 @@ class Deduplicate(Task):
         out_path = os.path.join(self.cfg.save_dir, f"{self._base_name()}_cleaned.csv")
         try:
             out.to_csv(out_path, index=False)
-        except Exception:
+        except OSError:
             pass

@@ -5,10 +5,11 @@ from __future__ import annotations
 import json
 import random
 from collections import OrderedDict
-from typing import Any, Dict, Iterable, List, Optional
+from collections.abc import Iterable
+from typing import Any
 
 
-def shuffled(it: Iterable[Any], seed: Optional[int] = None) -> List[Any]:
+def shuffled(it: Iterable[Any], seed: int | None = None) -> list[Any]:
     """Return a new list with the same elements, shuffled."""
     seq = list(it)
     rnd = random.Random(seed) if seed is not None else random
@@ -16,7 +17,7 @@ def shuffled(it: Iterable[Any], seed: Optional[int] = None) -> List[Any]:
     return seq
 
 
-def shuffled_dict(d: Dict[str, Any], seed: Optional[int] = None) -> str:
+def shuffled_dict(d: dict[str, Any], seed: int | None = None) -> str:
     """Return a JSON-formatted dict string with items shuffled."""
     items = list(d.items())
     rnd = random.Random(seed) if seed is not None else random

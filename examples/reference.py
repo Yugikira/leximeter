@@ -63,7 +63,7 @@ async def main() -> None:
             reset_files=True,
         )
         print(df_loaded[["name", "text"]].head().to_string(index=False))
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - demo: skip when data folder absent
         print(f"  (跳过：没有 examples/data 文件夹 —— {exc})")
 
     # ── 2. classify：新闻标题分类（notebook cell 65）─────────────────

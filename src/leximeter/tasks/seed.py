@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import random
 from dataclasses import dataclass
-from typing import Any, List, Optional
+from typing import Any
 
 import pandas as pd
 
@@ -37,12 +37,12 @@ class Seed(Task):
 
     async def run(
         self,
-        existing_entities: Optional[List[str]] = None,
+        existing_entities: list[str] | None = None,
         *,
         reset_files: bool = False,
         **kwargs: Any,
     ) -> pd.DataFrame:
-        entities: List[str] = list(existing_entities or [])
+        entities: list[str] = list(existing_entities or [])
         rng = random.Random(self.cfg.deduplicate_sample_seed)
 
         batch_idx = 0
@@ -77,7 +77,7 @@ class Seed(Task):
         return out
 
     @staticmethod
-    def _parse(raw: Any) -> List[str]:
+    def _parse(raw: Any) -> list[str]:
         obj = safe_json(raw)
         if isinstance(obj, dict):
             return [str(v) for v in obj.values() if str(v).strip()]
@@ -87,5 +87,5 @@ class Seed(Task):
         path = os.path.join(self.cfg.save_dir, self.cfg.file_name)
         try:
             out.to_csv(path, index=False)
-        except Exception:
+        except OSError:
             pass

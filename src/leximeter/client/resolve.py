@@ -18,20 +18,19 @@ Environment variables (all optional)::
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, Optional
+from typing import Any
 
 from .base import LLMClient
-from .dummy import DummyClient
 from .embedding import EmbeddingClient
 from .search import SearchTool
 
 
 def resolve_client(
     *,
-    protocol: Optional[str] = None,
-    base_url: Optional[str] = None,
-    api_key: Optional[str] = None,
-    client: Optional[LLMClient] = None,
+    protocol: str | None = None,
+    base_url: str | None = None,
+    api_key: str | None = None,
+    client: LLMClient | None = None,
 ) -> LLMClient:
     """Return an LLM client from an explicit ``client`` or environment defaults."""
     if client is not None:
@@ -53,12 +52,12 @@ def resolve_client(
 
 def resolve_embedding_client(
     *,
-    provider: Optional[str] = None,
-    model: Optional[str] = None,
-    base_url: Optional[str] = None,
-    api_key: Optional[str] = None,
-    embedding_client: Optional[EmbeddingClient] = None,
-) -> Optional[EmbeddingClient]:
+    provider: str | None = None,
+    model: str | None = None,
+    base_url: str | None = None,
+    api_key: str | None = None,
+    embedding_client: EmbeddingClient | None = None,
+) -> EmbeddingClient | None:
     """Return an embedding client from an explicit instance or env defaults.
 
     ``None`` (provider "none") means "embeddings are disabled": callers
@@ -91,11 +90,11 @@ def resolve_embedding_client(
 
 def resolve_search_tool(
     *,
-    provider: Optional[str] = None,
-    search_tool: Optional[SearchTool] = None,
+    provider: str | None = None,
+    search_tool: SearchTool | None = None,
     search_context_size: str = "medium",
-    web_search_filters: Optional[Dict[str, Any]] = None,
-) -> Optional[SearchTool]:
+    web_search_filters: dict[str, Any] | None = None,
+) -> SearchTool | None:
     """Return a search tool, or ``None`` when none is configured.
 
     ``None`` means "search is unavailable": callers should warn and skip the

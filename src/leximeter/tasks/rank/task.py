@@ -19,9 +19,9 @@ from __future__ import annotations
 
 import os
 import random
+from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -39,12 +39,12 @@ def _is_missing_scalar(value: Any) -> bool:
         return True
     try:
         result = pd.isna(value)
-    except Exception:
+    except (TypeError, ValueError):
         return False
     return bool(result) if isinstance(result, (bool, np.bool_)) else False
 
 
-def _hash_text_identifier(value: Any, *, strict: bool) -> Optional[str]:
+def _hash_text_identifier(value: Any, *, strict: bool) -> str | None:
     """Stable identifier for one passage; ``None`` when the value is missing."""
     if _is_missing_scalar(value):
         return None
@@ -62,7 +62,7 @@ def _hash_text_identifier(value: Any, *, strict: bool) -> Optional[str]:
     return _common.hash_identifier(text)
 
 
-async def _coerce_dict(raw: Any) -> Dict[str, Any]:
+async def _coerce_dict(raw: Any) -> dict[str, Any]:
     """Coerce a raw completion into a JSON object (unwrap one level)."""
     obj = await safest_json(raw)
     if isinstance(obj, dict):
@@ -79,11 +79,11 @@ async def _coerce_dict(raw: Any) -> Dict[str, Any]:
 
 
 def _record_outcomes(
-    safe_obj: Dict[str, Any],
-    batch_attrs: List[str],
+    safe_obj: dict[str, Any],
+    batch_attrs: list[str],
     id_a: str,
     id_b: str,
-    history_pairs: Dict[str, List[Tuple[str, str]]],
+    history_pairs: dict[str, list[tuple[str, str]]],
 ) -> None:
     """Translate one adjudication into pairwise outcomes in ``history_pairs``.
 
@@ -108,7 +108,7 @@ def _record_outcomes(
             history_pairs[real_attr].append((id_a, id_b))
         elif v.startswith(("squ", "b", "right", "text b")):
             history_pairs[real_attr].append((id_b, id_a))
-        elif v.startswith("draw") or v.startswith("insufficient"):
+        elif v.startswith(("draw", "insufficient")):
             history_pairs[real_attr].append((id_a, id_b))
             history_pairs[real_attr].append((id_b, id_a))
         else:
@@ -117,7 +117,7 @@ def _record_outcomes(
 
 @dataclass
 class RankConfig:
-    attributes: Dict[str, str]
+    attributes: dict[str, str]
     save_dir: str = "rank"
     file_name: str = "rankings"
     model: str = "gpt-5.4-mini"
@@ -125,10 +125,10 @@ class RankConfig:
     n_rounds: int = 5
     matches_per_round: int = 3
     learning_rate: float = 0.1
-    additional_instructions: Optional[str] = None
+    additional_instructions: str | None = None
     modality: str = "text"
-    n_attributes_per_run: Optional[int] = None
-    circle_first: Optional[bool] = None
+    n_attributes_per_run: int | None = None
+    circle_first: bool | None = None
 
     def __post_init__(self) -> None:
         if self.additional_instructions is not None:
@@ -145,7 +145,7 @@ class Rank(Task):
         # random state; intentionally unseeded (reproducibility of pair order
         # and circle-first assignment is not guaranteed, matching GABRIEL).
         self.rng = random.Random()
-        self._last_se_agg: Optional[Dict[str, float]] = None
+        self._last_se_agg: dict[str, float] | None = None
 
         # Internal pairing/BT hyperparameters (mirrors GABRIEL; deliberately
         # not part of the public config).
@@ -166,20 +166,20 @@ class Rank(Task):
     # ------------------------------------------------------------------
     def _refit_all(
         self,
-        attr_keys: List[str],
-        item_ids: List[str],
-        history_pairs: Dict[str, List[Tuple[str, str]]],
-        ratings: Dict[str, Dict[str, float]],
-        se_store: Dict[str, Dict[str, float]],
-    ) -> Dict[str, float]:
+        attr_keys: list[str],
+        item_ids: list[str],
+        history_pairs: dict[str, list[tuple[str, str]]],
+        ratings: dict[str, dict[str, float]],
+        se_store: dict[str, dict[str, float]],
+    ) -> dict[str, float]:
         """Refit every attribute on its full outcome history.
 
         Updates ``ratings`` and ``se_store`` in place and returns the
         per-item SE averaged across attributes (the pairing signal for the
         next round); items without comparisons get SE 1.0.
         """
-        se_agg_next: Dict[str, float] = {i: 0.0 for i in item_ids}
-        se_agg_counts: Dict[str, int] = {i: 0 for i in item_ids}
+        se_agg_next: dict[str, float] = {i: 0.0 for i in item_ids}
+        se_agg_counts: dict[str, int] = {i: 0 for i in item_ids}
         for attr in attr_keys:
             outcomes = history_pairs[attr]
             if len(outcomes) == 0:
@@ -214,9 +214,9 @@ class Rank(Task):
 
     @staticmethod
     def _center_ratings(
-        attr_keys: List[str],
-        item_ids: List[str],
-        ratings: Dict[str, Dict[str, float]],
+        attr_keys: list[str],
+        item_ids: list[str],
+        ratings: dict[str, dict[str, float]],
     ) -> None:
         """Centre each attribute's ratings to zero mean (identifiability)."""
         for attr in attr_keys:
@@ -230,12 +230,12 @@ class Rank(Task):
     # ------------------------------------------------------------------
     def _pairs_info_gain(
         self,
-        item_ids: List[str],
-        texts_by_id: Dict[str, str],
-        current_ratings: Dict[str, float],
-        se_agg: Dict[str, float],
+        item_ids: list[str],
+        texts_by_id: dict[str, str],
+        current_ratings: dict[str, float],
+        se_agg: dict[str, float],
         mpr: int,
-    ) -> List[Tuple[Tuple[str, str], Tuple[str, str]]]:
+    ) -> list[tuple[tuple[str, str], tuple[str, str]]]:
         """Select pairs by maximising expected information gain.
 
         A bounded candidate set is built from the current rating ranking
@@ -268,7 +268,7 @@ class Rank(Task):
         high_se_ids = sorted(
             item_ids, key=lambda i: se_agg.get(i, 1.0), reverse=True
         )[:num_high_se]
-        candidate_pairs_set: Set[Tuple[str, str]] = set()
+        candidate_pairs_set: set[tuple[str, str]] = set()
         for i_id in item_ids:
             pos = idx_of[i_id]
             lower = max(0, pos - candidate_neighbors)
@@ -310,7 +310,7 @@ class Rank(Task):
                 else:
                     partners_count[i_id] += 1
                     partners_count[j] += 1
-        scored_pairs: List[Tuple[float, str, str]] = []
+        scored_pairs: list[tuple[float, str, str]] = []
         for a, b in candidate_pairs_set:
             diff = current_ratings[a] - current_ratings[b]
             p = logistic_clip(diff)
@@ -324,9 +324,9 @@ class Rank(Task):
             score = outcome_var * param_unc * closeness
             scored_pairs.append((score, a, b))
         scored_pairs.sort(key=lambda x: x[0], reverse=True)
-        needed: Dict[str, int] = {i: mpr for i in item_ids}
-        pairs_selected: List[Tuple[str, str]] = []
-        pairs_seen: Set[Tuple[str, str]] = set()
+        needed: dict[str, int] = {i: mpr for i in item_ids}
+        pairs_selected: list[tuple[str, str]] = []
+        pairs_seen: set[tuple[str, str]] = set()
         for score, a, b in scored_pairs:
             if needed[a] > 0 and needed[b] > 0:
                 tup = (a, b) if a < b else (b, a)
@@ -353,11 +353,11 @@ class Rank(Task):
 
     def _generate_pairs(
         self,
-        item_ids: List[str],
-        texts_by_id: Dict[str, str],
-        current_ratings: Optional[Dict[str, float]],
-        se_agg: Optional[Dict[str, float]],
-    ) -> List[Tuple[Tuple[str, str], Tuple[str, str]]]:
+        item_ids: list[str],
+        texts_by_id: dict[str, str],
+        current_ratings: dict[str, float] | None,
+        se_agg: dict[str, float] | None,
+    ) -> list[tuple[tuple[str, str], tuple[str, str]]]:
         """Dispatch to the pairing strategy (always info-gain)."""
         mpr = max(1, self.cfg.matches_per_round)
         if current_ratings is None:
@@ -375,15 +375,15 @@ class Rank(Task):
     # ------------------------------------------------------------------
     async def _catch_up_existing_rounds(
         self,
-        new_ids: List[str],
-        round_indices: List[int],
-        item_ids: List[str],
-        texts_by_id: Dict[str, str],
-        attr_batches: List[List[str]],
-        attr_keys: List[str],
-        history_pairs: Dict[str, List[Tuple[str, str]]],
-        ratings: Dict[str, Dict[str, float]],
-        se_store: Dict[str, Dict[str, float]],
+        new_ids: list[str],
+        round_indices: list[int],
+        item_ids: list[str],
+        texts_by_id: dict[str, str],
+        attr_batches: list[list[str]],
+        attr_keys: list[str],
+        history_pairs: dict[str, list[tuple[str, str]]],
+        ratings: dict[str, dict[str, float]],
+        se_store: dict[str, dict[str, float]],
         base_name: str,
         _write_checkpoint: Callable[[], None],
         reset_files: bool,
@@ -398,9 +398,9 @@ class Rank(Task):
                 continue
             try:
                 df_round = pd.read_csv(round_path)
-            except Exception:
+            except (OSError, ValueError):
                 continue
-            counts: Dict[str, int] = {}
+            counts: dict[str, int] = {}
             if {"IdA", "IdB"}.issubset(df_round.columns):
                 for a, b in zip(df_round["IdA"], df_round["IdB"]):
                     counts[str(a)] = counts.get(str(a), 0) + 1
@@ -413,7 +413,7 @@ class Rank(Task):
                     _, _, _, id_a, id_b = parts
                     counts[id_a] = counts.get(id_a, 0) + 1
                     counts[id_b] = counts.get(id_b, 0) + 1
-            pairs_needed: List[Tuple[str, str]] = []
+            pairs_needed: list[tuple[str, str]] = []
             for nid in new_ids:
                 needed = self.cfg.matches_per_round - counts.get(nid, 0)
                 if needed <= 0:
@@ -424,9 +424,9 @@ class Rank(Task):
                     pairs_needed.append((nid, opp))
             if not pairs_needed:
                 continue
-            prompts: List[str] = []
-            ids: List[str] = []
-            meta_map: Dict[str, Tuple[int, int, str, str]] = {}
+            prompts: list[str] = []
+            ids: list[str] = []
+            meta_map: dict[str, tuple[int, int, str, str]] = {}
             for batch_idx, batch in enumerate(attr_batches):
                 attr_def_map = (
                     {a: self.cfg.attributes[a] for a in batch}
@@ -470,16 +470,16 @@ class Rank(Task):
                 **kwargs,
             )
             resp_df["Batch"] = resp_df.Identifier.map(
-                lambda x: meta_map.get(str(x), (np.nan, np.nan, "", ""))[0]
+                lambda x, m=meta_map: m.get(str(x), (np.nan, np.nan, "", ""))[0]
             )
             resp_df["Pair"] = resp_df.Identifier.map(
-                lambda x: meta_map.get(str(x), (np.nan, np.nan, "", ""))[1]
+                lambda x, m=meta_map: m.get(str(x), (np.nan, np.nan, "", ""))[1]
             )
             resp_df["IdA"] = resp_df.Identifier.map(
-                lambda x: meta_map.get(str(x), (np.nan, np.nan, "", ""))[2]
+                lambda x, m=meta_map: m.get(str(x), (np.nan, np.nan, "", ""))[2]
             )
             resp_df["IdB"] = resp_df.Identifier.map(
-                lambda x: meta_map.get(str(x), (np.nan, np.nan, "", ""))[3]
+                lambda x, m=meta_map: m.get(str(x), (np.nan, np.nan, "", ""))[3]
             )
             resp_df.to_csv(round_path, index=False)
 
@@ -508,7 +508,7 @@ class Rank(Task):
         column_name: str,
         *,
         reset_files: bool = False,
-        n_runs: Optional[int] = None,
+        n_runs: int | None = None,
         **kwargs: Any,
     ) -> pd.DataFrame:
         """Execute the ranking procedure.
@@ -538,10 +538,6 @@ class Rank(Task):
             ``save_dir``.
         """
         base_name = self._base_name()
-        checkpoint_paths = [
-            str(path)
-            for path in Path(self.cfg.save_dir).glob(f"{base_name}_round*.csv")
-        ]
         run_metadata = _common.load_run_metadata(
             self.cfg.save_dir, base_name, reset_files=reset_files
         )
@@ -595,7 +591,7 @@ class Rank(Task):
         # final checkpoint exists for the last round and covers all items,
         # reuse it; otherwise resume from the next incomplete round.
         start_round = 0
-        existing_rounds: List[int] = []
+        existing_rounds: list[int] = []
         if not reset_files:
             try:
                 for fname in os.listdir(self.cfg.save_dir):
@@ -605,9 +601,9 @@ class Rank(Task):
                         try:
                             idx_str = fname[len(base_name) + 6 : -4]
                             existing_rounds.append(int(idx_str))
-                        except Exception:
+                        except ValueError:
                             continue
-            except Exception:
+            except OSError:
                 existing_rounds = []
         if existing_rounds:
             last_completed = max(existing_rounds)
@@ -631,7 +627,7 @@ class Rank(Task):
                         and set(df_proc["_id"]) <= final_ids
                     ):
                         return final_df
-                except Exception:
+                except (OSError, ValueError):
                     pass
             start_round = last_completed + 1
 
@@ -644,11 +640,11 @@ class Rank(Task):
         else:
             attr_keys = list(self.cfg.attributes)
 
-        ratings: Dict[str, Dict[str, float]] = {
+        ratings: dict[str, dict[str, float]] = {
             i: {a: 0.0 for a in attr_keys} for i in item_ids
         }
-        history_pairs: Dict[str, List[Tuple[str, str]]] = {a: [] for a in attr_keys}
-        se_store: Dict[str, Dict[str, float]] = {
+        history_pairs: dict[str, list[tuple[str, str]]] = {a: [] for a in attr_keys}
+        se_store: dict[str, dict[str, float]] = {
             a: {i: np.nan for i in item_ids} for a in attr_keys
         }
 
@@ -662,7 +658,7 @@ class Rank(Task):
                 reset_files=reset_files,
             )
         )
-        attr_batches: List[List[str]] = [
+        attr_batches: list[list[str]] = [
             [name for name, _ in batch] for batch in attr_batch_items
         ]
         attr_count = len(attr_keys)
@@ -690,7 +686,7 @@ class Rank(Task):
         # Write the current ratings/se/z-scores to the final CSV.  The z-score
         # normalises the centred BT scores across items for each attribute.
         def _write_checkpoint() -> None:
-            zscores_local: Dict[str, Dict[str, float]] = {}
+            zscores_local: dict[str, dict[str, float]] = {}
             for attr in attr_keys:
                 vals = np.array([ratings[i][attr] for i in item_ids])
                 mean = vals.mean()
@@ -711,7 +707,7 @@ class Rank(Task):
 
             # Original user columns first, then per attribute: z-score, raw, se.
             original_cols = [c for c in df.columns]
-            new_cols: List[str] = []
+            new_cols: list[str] = []
             for attr in attr_keys:
                 new_cols.append(attr)
                 new_cols.append(f"{attr}_raw")
@@ -736,7 +732,7 @@ class Rank(Task):
                     df_round["Response"] = df_round["Response"].apply(
                         lambda x: None if pd.isna(x) else x
                     )
-                except Exception:
+                except (OSError, ValueError):
                     continue
                 if {"Batch", "IdA", "IdB"}.issubset(df_round.columns):
                     for batch_idx_raw, id_a, id_b, resp_raw in zip(
@@ -791,7 +787,7 @@ class Rank(Task):
                 _write_checkpoint()
 
         # New items added on resume need to catch up on completed rounds.
-        seen_ids: Set[str] = set()
+        seen_ids: set[str] = set()
         for pair_list in history_pairs.values():
             for a, b in pair_list:
                 seen_ids.add(a)
@@ -836,9 +832,9 @@ class Rank(Task):
             )
             if not pairs:
                 break
-            prompts: List[str] = []
-            ids: List[str] = []
-            meta_map: Dict[str, Tuple[int, int, str, str]] = {}
+            prompts: list[str] = []
+            ids: list[str] = []
+            meta_map: dict[str, tuple[int, int, str, str]] = {}
             for batch_idx, batch in enumerate(attr_batches):
                 attr_def_map = (
                     {a: self.cfg.attributes[a] for a in batch}
@@ -882,16 +878,16 @@ class Rank(Task):
             )
             # attach metadata columns and overwrite the round CSV
             resp_df["Batch"] = resp_df.Identifier.map(
-                lambda x: meta_map.get(str(x), (np.nan, np.nan, "", ""))[0]
+                lambda x, m=meta_map: m.get(str(x), (np.nan, np.nan, "", ""))[0]
             )
             resp_df["Pair"] = resp_df.Identifier.map(
-                lambda x: meta_map.get(str(x), (np.nan, np.nan, "", ""))[1]
+                lambda x, m=meta_map: m.get(str(x), (np.nan, np.nan, "", ""))[1]
             )
             resp_df["IdA"] = resp_df.Identifier.map(
-                lambda x: meta_map.get(str(x), (np.nan, np.nan, "", ""))[2]
+                lambda x, m=meta_map: m.get(str(x), (np.nan, np.nan, "", ""))[2]
             )
             resp_df["IdB"] = resp_df.Identifier.map(
-                lambda x: meta_map.get(str(x), (np.nan, np.nan, "", ""))[3]
+                lambda x, m=meta_map: m.get(str(x), (np.nan, np.nan, "", ""))[3]
             )
             resp_df.to_csv(round_path, index=False)
 

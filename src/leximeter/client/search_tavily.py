@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Dict, Optional
+from typing import Any
 
 from .search import SearchTool
 
@@ -26,7 +26,7 @@ _CONTEXT_ALIASES = {"small": "low", "large": "high"}
 _VALID_CONTEXT = set(_CONTEXT_TO_DEPTH)
 
 
-def _normalise_search_context_size(value: Optional[str]) -> str:
+def _normalise_search_context_size(value: str | None) -> str:
     """Clamp search-context size to GABRIEL's low/medium/high vocabulary."""
     if value is None:
         return "medium"
@@ -40,7 +40,7 @@ def _normalise_search_context_size(value: Optional[str]) -> str:
     return resolved
 
 
-def _clean_domains(value: Any) -> Optional[list]:
+def _clean_domains(value: Any) -> list | None:
     """Normalise ``allowed_domains`` to a list of non-empty strings."""
     if not value:
         return None
@@ -54,7 +54,7 @@ def _clean_domains(value: Any) -> Optional[list]:
     return domains or None
 
 
-def _clean_country(filters: Dict[str, Any]) -> Optional[str]:
+def _clean_country(filters: dict[str, Any]) -> str | None:
     """Map a location hint onto Tavily's ``country`` (its only location param)."""
     for key in ("country", "city", "region"):
         if filters.get(key):
@@ -73,10 +73,10 @@ class TavilySearchTool(SearchTool):
     def __init__(
         self,
         *,
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         max_results: int = 5,
         search_context_size: str = "medium",
-        web_search_filters: Optional[Dict[str, Any]] = None,
+        web_search_filters: dict[str, Any] | None = None,
     ) -> None:
         self._api_key = api_key or os.getenv("TAVILY_API_KEY")
         self._max_results = max_results
@@ -118,7 +118,7 @@ class TavilySearchTool(SearchTool):
                 country=self._country,
                 include_answer=True,
             )
-        except Exception as exc:  # auth / quota / network failures
+        except Exception as exc:  # noqa: BLE001 - auth / quota / network failures
             logger.warning("Tavily search failed: %s", exc)
             return ""
         lines = []

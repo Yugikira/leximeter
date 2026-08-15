@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Any, List, Optional
+from typing import Any
 
 import pandas as pd
 
@@ -21,9 +21,9 @@ class CompareConfig:
     model: str = "gpt-5.4-mini"
     n_parallels: int = 50
     differentiate: bool = True
-    additional_instructions: Optional[str] = None
+    additional_instructions: str | None = None
     modality: str = "text"
-    circle_first: Optional[bool] = None
+    circle_first: bool | None = None
 
 
 class Compare(Task):
@@ -42,7 +42,7 @@ class Compare(Task):
         reset_files: bool = False,
         **kwargs: Any,
     ) -> pd.DataFrame:
-        pairs: List[tuple[str, str]] = []
+        pairs: list[tuple[str, str]] = []
         for circle, square in zip(df[circle_column_name], df[square_column_name]):
             if pd.isna(circle) or pd.isna(square):
                 continue
@@ -51,8 +51,8 @@ class Compare(Task):
         # dedup identical pairs (same pair -> same comparison)
         unique = list(dict.fromkeys(pairs))
 
-        prompts: List[str] = []
-        ids: List[str] = []
+        prompts: list[str] = []
+        ids: list[str] = []
         for circle, square in unique:
             ident = _common.hash_identifier(f"{circle}\x1f{square}")
             ids.append(ident)
@@ -70,7 +70,7 @@ class Compare(Task):
         resp_df = await self._execute(prompts, ids, reset_files=reset_files, **kwargs)
         resp_lookup = dict(zip(resp_df["Identifier"], resp_df["Response"]))
 
-        rows: List[dict] = []
+        rows: list[dict] = []
         for (circle, square), ident in zip(unique, ids):
             obj = safe_json(resp_lookup.get(ident))
             if isinstance(obj, dict):

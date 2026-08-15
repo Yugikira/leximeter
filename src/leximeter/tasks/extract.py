@@ -11,7 +11,7 @@ from __future__ import annotations
 import os
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Any, DefaultDict, Dict, List, Optional, Set, Tuple
+from typing import Any
 
 import pandas as pd
 
@@ -24,16 +24,16 @@ from .base import Task
 
 @dataclass
 class ExtractConfig:
-    attributes: Dict[str, str]
+    attributes: dict[str, str]
     save_dir: str = "extraction"
     file_name: str = "extraction.csv"
     model: str = "gpt-5.4-mini"
     n_parallels: int = 50
     n_runs: int = 1
-    n_attributes_per_run: Optional[int] = None
-    additional_instructions: Optional[str] = None
+    n_attributes_per_run: int | None = None
+    additional_instructions: str | None = None
     modality: str = "entity"
-    types: Optional[Dict[str, Any]] = None
+    types: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if self.additional_instructions is not None:
@@ -48,7 +48,7 @@ class Extract(Task):
         super().__init__(cfg, **kwargs)
         self._template = load_prompt("extraction_prompt.jinja2")
 
-    def render_prompt(self, text: str, attributes: Dict[str, str]) -> str:
+    def render_prompt(self, text: str, attributes: dict[str, str]) -> str:
         return self._template.render(
             text=text,
             attributes=attributes,
@@ -60,15 +60,15 @@ class Extract(Task):
     # Parsing: a response may name several entities; each becomes a row.
     # ------------------------------------------------------------------
     async def _parse(
-        self, raw: Any, attrs: List[str]
-    ) -> List[Tuple[Optional[str], Dict[str, str]]]:
+        self, raw: Any, attrs: list[str]
+    ) -> list[tuple[str | None, dict[str, str]]]:
         obj = await safest_json(raw)
         attr_names = list(attrs)
 
-        def _default_attr_map() -> Dict[str, str]:
+        def _default_attr_map() -> dict[str, str]:
             return {attr: "unknown" for attr in attr_names}
 
-        def _clean_name(name: Any) -> Optional[str]:
+        def _clean_name(name: Any) -> str | None:
             if isinstance(name, str):
                 cleaned = name.strip()
                 return cleaned or None
@@ -78,8 +78,8 @@ class Extract(Task):
             return text or None
 
         def _build_entry(
-            entity_name: Optional[str], payload: Optional[Dict[str, Any]]
-        ) -> Tuple[Optional[str], Dict[str, str]]:
+            entity_name: str | None, payload: dict[str, Any] | None
+        ) -> tuple[str | None, dict[str, str]]:
             values = _default_attr_map()
             if isinstance(payload, dict):
                 for attr in attr_names:
@@ -87,7 +87,7 @@ class Extract(Task):
                     values[attr] = str(val) if val is not None else "unknown"
             return (_clean_name(entity_name), values)
 
-        entries: List[Tuple[Optional[str], Dict[str, str]]] = []
+        entries: list[tuple[str | None, dict[str, str]]] = []
 
         if isinstance(obj, dict):
             attr_keys = set(attr_names)
@@ -109,7 +109,7 @@ class Extract(Task):
             for item in obj:
                 if not isinstance(item, dict):
                     continue
-                attr_payload: Optional[Dict[str, Any]] = None
+                attr_payload: dict[str, Any] | None = None
                 if isinstance(item.get("attributes"), dict):
                     attr_payload = item.get("attributes")  # type: ignore[assignment]
                 else:
@@ -132,7 +132,7 @@ class Extract(Task):
         column_name: str,
         *,
         reset_files: bool = False,
-        types: Optional[Dict[str, Any]] = None,
+        types: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> pd.DataFrame:
         from ..engine.batch import batch_execute
@@ -160,11 +160,11 @@ class Extract(Task):
         values = df_proc[column_name].tolist()
         texts = [str(v) for v in values]
 
-        base_ids: List[str] = []
-        id_to_rows: DefaultDict[str, List[int]] = defaultdict(list)
-        id_to_val: Dict[str, Any] = {}
-        prompt_texts: Dict[str, str] = {}
-        row_ids: List[str] = []
+        base_ids: list[str] = []
+        id_to_rows: defaultdict[str, list[int]] = defaultdict(list)
+        id_to_val: dict[str, Any] = {}
+        prompt_texts: dict[str, str] = {}
+        row_ids: list[str] = []
 
         for row, (passage, orig) in enumerate(zip(texts, values)):
             ident = _common.hash_identifier(passage)
@@ -182,7 +182,7 @@ class Extract(Task):
             out_path = os.path.join(self.cfg.save_dir, f"{base_name}_cleaned.csv")
             result = df_proc.drop(columns=["_gid"])
             result["entity_name"] = pd.NA
-            for attr in self.cfg.attributes.keys():
+            for attr in self.cfg.attributes:
                 result[attr] = pd.NA
             save_dataframe_with_fallback(result, out_path, index=False, label="Extract")
             return result
@@ -196,7 +196,7 @@ class Extract(Task):
                 reset_files=reset_files,
             )
         )
-        attr_batches: List[Dict[str, str]] = [dict(batch) for batch in attr_batch_items]
+        attr_batches: list[dict[str, str]] = [dict(batch) for batch in attr_batch_items]
         attr_count = len(attr_items)
         if (
             effective_n_attributes_per_run is not None
@@ -217,8 +217,8 @@ class Extract(Task):
             attribute_batches=[[name for name, _ in b] for b in attr_batch_items],
         )
 
-        prompts: List[str] = []
-        ids: List[str] = []
+        prompts: list[str] = []
+        ids: list[str] = []
         for batch_idx, batch_attrs in enumerate(attr_batches):
             for ident in base_ids:
                 prompts.append(self.render_prompt(prompt_texts[ident], batch_attrs))
@@ -227,17 +227,17 @@ class Extract(Task):
         if not isinstance(self.cfg.n_runs, int) or self.cfg.n_runs < 1:
             raise ValueError("n_runs must be an integer >= 1")
 
-        existing_ids: Set[str] = set()
+        existing_ids: set[str] = set()
         if not reset_files and os.path.exists(csv_path):
             try:
                 existing_df = pd.read_csv(csv_path, usecols=["Identifier"])
                 existing_ids = set(existing_df["Identifier"].astype(str))
-            except Exception:
+            except (OSError, ValueError):
                 existing_ids = set()
 
-        run_identifier_lists: List[List[str]] = []
+        run_identifier_lists: list[list[str]] = []
         for run_idx in range(1, self.cfg.n_runs + 1):
-            run_ids: List[str] = []
+            run_ids: list[str] = []
             for ident in ids:
                 if run_idx == 1:
                     legacy_ident = f"{ident}_run1"
@@ -246,8 +246,8 @@ class Extract(Task):
                     run_ids.append(f"{ident}_run{run_idx}")
             run_identifier_lists.append(run_ids)
 
-        prompts_all: List[str] = []
-        ids_all: List[str] = []
+        prompts_all: list[str] = []
+        ids_all: list[str] = []
         for run_ids in run_identifier_lists:
             prompts_all.extend(prompts)
             ids_all.extend(run_ids)
@@ -271,10 +271,10 @@ class Extract(Task):
             sub.Identifier = sub.Identifier.str.replace(suffix + "$", "", regex=True)
             df_resps.append(sub)
 
-        full_records: List[Dict[str, Any]] = []
+        full_records: list[dict[str, Any]] = []
         base_attrs = list(self.cfg.attributes.keys())
         for run_idx, df_resp in enumerate(df_resps, start=1):
-            id_to_entity_vals: Dict[str, Dict[Optional[str], Dict[str, str]]] = {
+            id_to_entity_vals: dict[str, dict[str | None, dict[str, str]]] = {
                 ident: {} for ident in base_ids
             }
             for ident_batch, raw in zip(df_resp.Identifier, df_resp.Response):
@@ -296,7 +296,7 @@ class Extract(Task):
                     None: {attr: "unknown" for attr in base_attrs}
                 }
                 for entity_name, attr_values in entity_map.items():
-                    rec: Dict[str, Any] = {
+                    rec: dict[str, Any] = {
                         "id": ident,
                         "entity_name": entity_name,
                         "text": id_to_val[ident],
@@ -346,7 +346,7 @@ class Extract(Task):
             result = result.drop(columns=drop_cols)
 
         original_cols = [col for col in df_proc.columns if col != "_gid"]
-        final_order: List[str] = []
+        final_order: list[str] = []
         for col in original_cols:
             if col in result.columns:
                 final_order.append(col)
@@ -368,7 +368,7 @@ class Extract(Task):
 
         if types:
             coerced = result.copy()
-            fail_logs: Dict[str, int] = {}
+            fail_logs: dict[str, int] = {}
             for col, typ in types.items():
                 if col not in coerced:
                     continue

@@ -27,13 +27,12 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-import math
 import os
 import random
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime
-from typing import Any, Dict, List, Optional, Set, Tuple
+from datetime import datetime, timezone
+from typing import Any
 
 import pandas as pd
 
@@ -49,7 +48,7 @@ class BucketConfig:
     file_name: str = "bucket_definitions.csv"
     model: str = "gpt-5.4-mini"
     n_parallels: int = 50
-    additional_instructions: Optional[str] = None
+    additional_instructions: str | None = None
     differentiate: bool = False
     n_terms_per_prompt: int = 250
     repeat_bucketing: int = 5
@@ -77,7 +76,7 @@ class Bucket(Task):
     def _state_path(self) -> str:
         return os.path.join(self.cfg.save_dir, "bucket_state.json")
 
-    def _read_state(self) -> Dict[str, Any]:
+    def _read_state(self) -> dict[str, Any]:
         path = self._state_path()
         try:
             with open(path, "r", encoding="utf-8") as fh:
@@ -86,21 +85,21 @@ class Bucket(Task):
                 return data
         except FileNotFoundError:
             return {}
-        except Exception:
+        except (OSError, ValueError):
             return {}
         return {}
 
-    def _write_state(self, state: Dict[str, Any]) -> None:
+    def _write_state(self, state: dict[str, Any]) -> None:
         path = self._state_path()
         payload = dict(state)
-        payload["updated_at"] = datetime.utcnow().isoformat() + "Z"
+        payload["updated_at"] = datetime.now(timezone.utc).isoformat()
         try:
             with open(path, "w", encoding="utf-8") as fh:
                 json.dump(payload, fh, ensure_ascii=False, indent=2)
-        except Exception:
+        except (OSError, TypeError):
             pass
 
-    def _terms_signature(self, terms: List[str], term_map: Dict[str, str]) -> str:
+    def _terms_signature(self, terms: list[str], term_map: dict[str, str]) -> str:
         if self.cfg.raw_term_definitions:
             entries = [f"{t}::{term_map.get(t, '')}" for t in sorted(terms)]
         else:
@@ -108,7 +107,7 @@ class Bucket(Task):
         joined = "||".join(entries)
         return hashlib.sha1(joined.encode("utf-8")).hexdigest()
 
-    async def _parse(self, raw: Any) -> Dict[str, str]:
+    async def _parse(self, raw: Any) -> dict[str, str]:
         obj = await safest_json(raw)
         if isinstance(obj, list) and obj:
             obj = obj[0]
@@ -134,7 +133,7 @@ class Bucket(Task):
         if reset_files and os.path.exists(state_path):
             try:
                 os.remove(state_path)
-            except Exception:
+            except OSError:
                 pass
         if not reset_files and os.path.exists(cache_path):
             try:
@@ -142,17 +141,17 @@ class Bucket(Task):
                 if {"bucket", "definition"}.issubset(cached.columns):
                     cols = ["bucket", "definition"]
                     return cached[cols]
-            except Exception:
+            except (OSError, ValueError):
                 pass
 
-        state: Dict[str, Any] = {} if reset_files else self._read_state()
+        state: dict[str, Any] = {} if reset_files else self._read_state()
 
         df_proc = df.reset_index(drop=True).copy()
         raw_entries = df_proc[column_name].dropna().tolist()
 
-        seen: Set[str] = set()
-        terms: List[str] = []
-        term_map: Dict[str, str] = {}
+        seen: set[str] = set()
+        terms: list[str] = []
+        term_map: dict[str, str] = {}
         for entry in raw_entries:
             if isinstance(entry, dict):
                 for k, v in entry.items():
@@ -197,7 +196,7 @@ class Bucket(Task):
             if not final_df.empty and not os.path.exists(cache_path):
                 try:
                     final_df.to_csv(cache_path, index=False)
-                except Exception:
+                except OSError:
                     pass
             if not final_df.empty:
                 cols = ["bucket", "definition"]
@@ -205,8 +204,8 @@ class Bucket(Task):
             return pd.DataFrame(columns=["bucket", "definition"])
 
         # ── 1: generate bucket candidates ───────────────────────────────
-        candidate_defs: Dict[str, str] = {}
-        candidates: List[str] = []
+        candidate_defs: dict[str, str] = {}
+        candidates: list[str] = []
         if state.get("candidate_defs") and isinstance(state["candidate_defs"], dict):
             cached_defs = {
                 str(k): str(v) if v is not None else ""
@@ -219,11 +218,8 @@ class Bucket(Task):
                 if c in candidate_defs
             ]
         if not candidate_defs:
-            prompts: List[str] = []
-            ids: List[str] = []
-            chunks_per_rep = max(
-                1, math.ceil(len(terms) / self.cfg.n_terms_per_prompt)
-            )
+            prompts: list[str] = []
+            ids: list[str] = []
             for rep in range(self.cfg.repeat_bucketing):
                 random.shuffle(terms)
                 chunks = [
@@ -280,13 +276,10 @@ class Bucket(Task):
 
         # helper to build voting prompts
         def _vote_prompts(
-            opts: List[str], selected: List[str], tag: str
-        ) -> Tuple[List[str], List[str]]:
-            pr: List[str] = []
-            idn: List[str] = []
-            chunks_per_rep = max(
-                1, math.ceil(len(opts) / self.cfg.n_terms_per_prompt)
-            )
+            opts: list[str], selected: list[str], tag: str
+        ) -> tuple[list[str], list[str]]:
+            pr: list[str] = []
+            idn: list[str] = []
             for rep in range(self.cfg.repeat_voting):
                 random.shuffle(opts)
                 chunks = [
@@ -349,9 +342,9 @@ class Bucket(Task):
             parsed_votes = await asyncio.gather(
                 *[self._parse(vote_map.get(i, "")) for i in idn]
             )
-            tallies: Dict[str, int] = defaultdict(int)
+            tallies: dict[str, int] = defaultdict(int)
             for res in parsed_votes:
-                for b in res.keys():
+                for b in res:
                     tallies[b] += 1
             current.sort(
                 key=lambda x: (tallies.get(x, 0), random.random()), reverse=True
@@ -366,7 +359,7 @@ class Bucket(Task):
             persist_state()
 
         # ── 3: final selection ─────────────────────────────────────────
-        selected: List[str] = [
+        selected: list[str] = [
             c for c in state.get("selected", []) if c in candidate_defs
         ]
         remaining = [o for o in current if o not in selected]
@@ -397,7 +390,7 @@ class Bucket(Task):
             )
             tallies = defaultdict(int)
             for res in parsed_votes:
-                for b in res.keys():
+                for b in res:
                     if b not in selected:
                         tallies[b] += 1
             remaining = [o for o in remaining if o not in selected]

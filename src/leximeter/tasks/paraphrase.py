@@ -28,7 +28,7 @@ import os
 import random
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import pandas as pd
 
@@ -46,7 +46,7 @@ class ParaphraseConfig:
     instructions: str
     # Optional name for the revised column in the output DataFrame.  If
     # unspecified, ``f"{column_name}_revised"`` will be used.
-    revised_column_name: Optional[str] = None
+    revised_column_name: str | None = None
     # Maximum number of paraphrase/validation rounds to run.  A value of
     # ``1`` preserves the historical behaviour of a single paraphrase
     # generation pass with no recursive validation.  Values greater than
@@ -73,7 +73,7 @@ class ParaphraseConfig:
     use_modified_source: bool = False
     # Optional override for the classifier label used during validation.
     # If multiple entries are provided, the first is used.
-    validation_attribute: Optional[Dict[str, str]] = None
+    validation_attribute: dict[str, str] | None = None
     # Directory where all paraphrase responses and intermediate files are
     # persisted.
     save_dir: str = "paraphrase"
@@ -97,8 +97,7 @@ class ParaphraseConfig:
             rounds = int(self.n_rounds)
         except (TypeError, ValueError):
             rounds = 1
-        if rounds < 1:
-            rounds = 1
+        rounds = max(rounds, 1)
 
         self.n_rounds = rounds
 
@@ -133,7 +132,7 @@ class Paraphrase(Task):
         # values to strings so that non-string columns (e.g. numbers) are
         # handled gracefully.
         values = df_proc[column_name].tolist()
-        texts: List[str] = [str(v) for v in values]
+        texts: list[str] = [str(v) for v in values]
         # Determine the base name for the revised column(s).
         base_col = self.cfg.revised_column_name or f"{column_name}_revised"
         # Determine how many paraphrases to produce per passage.  A value
@@ -149,13 +148,12 @@ class Paraphrase(Task):
             max_rounds = int(requested_rounds)
         except (TypeError, ValueError):
             max_rounds = self.cfg.n_rounds
-        if max_rounds < 1:
-            max_rounds = 1
+        max_rounds = max(max_rounds, 1)
 
         # Track whether each run ultimately received validation
         # approval.  In the non-recursive case every output is treated as
         # approved.
-        approval_map: Dict[Tuple[int, int], bool] = {}
+        approval_map: dict[tuple[int, int], bool] = {}
 
         # When recursive validation is disabled (or limited to a single
         # round), follow the original behaviour: generate a single
@@ -165,8 +163,8 @@ class Paraphrase(Task):
         if max_rounds <= 1:
             from ..engine.batch import batch_execute
 
-            prompts: List[str] = []
-            identifiers: List[str] = []
+            prompts: list[str] = []
+            identifiers: list[str] = []
             for idx, text in enumerate(texts):
                 prompt_text = (
                     text
@@ -195,7 +193,7 @@ class Paraphrase(Task):
                 reset_files=reset_files,
                 **kwargs,
             )
-            resp_map: Dict[Tuple[int, int], str] = {}
+            resp_map: dict[tuple[int, int], str] = {}
             for ident, resp in zip(resp_df["Identifier"], resp_df["Response"]):
                 main = resp[0] if isinstance(resp, list) and resp else resp
                 m = re.match(r"row_(\d+)_rev(\d+)", ident)
@@ -246,10 +244,10 @@ class Paraphrase(Task):
 
     async def _recursive_validate(
         self,
-        original_texts: List[str],
-        original_values: List[Any],
-        resp_map: Dict[Tuple[int, int], str],
-        approval_map: Dict[Tuple[int, int], bool],
+        original_texts: list[str],
+        original_values: list[Any],
+        resp_map: dict[tuple[int, int], str],
+        approval_map: dict[tuple[int, int], bool],
         *,
         reset_files: bool = False,
         max_rounds: int,
@@ -278,7 +276,7 @@ class Paraphrase(Task):
         n_revs = self.cfg.n_runs if self.cfg.n_runs and self.cfg.n_runs > 0 else 1
         # Build a list of keys for every passage/run pair.  Keys
         # encode the row index and zero-based run index.
-        all_keys: List[Tuple[int, int]] = [
+        all_keys: list[tuple[int, int]] = [
             (row_idx, rev_idx)
             for row_idx in range(len(original_texts))
             for rev_idx in range(n_revs)
@@ -287,7 +285,7 @@ class Paraphrase(Task):
         # We'll use this list to track which keys still require
         # validation in each round.  Initially, all keys are awaiting
         # generation and validation.
-        to_check: List[Tuple[int, int]] = list(all_keys)
+        to_check: list[tuple[int, int]] = list(all_keys)
         round_number = 0
 
         # Create the classifier configuration once.  A dedicated
@@ -333,7 +331,7 @@ class Paraphrase(Task):
 
         # Continue looping until there are no passages left to validate
         # or until we hit the round limit.
-        last_candidate_map: Dict[Tuple[int, int], List[str]] = {}
+        last_candidate_map: dict[tuple[int, int], list[str]] = {}
         while to_check and round_number < max_rounds:
             # Determine how many candidate paraphrases to generate per
             # passage for this round.  The first round uses ``n_runs``;
@@ -348,8 +346,8 @@ class Paraphrase(Task):
 
             # Build paraphrase prompts for every key still requiring
             # validation.  Each key may produce multiple candidates.
-            prompts: List[str] = []
-            identifiers: List[str] = []
+            prompts: list[str] = []
+            identifiers: list[str] = []
             for key in to_check:
                 row_idx, rev_idx = key
                 # Choose the base text according to whether we reuse
@@ -416,7 +414,7 @@ class Paraphrase(Task):
             # Organise API responses by (row, run) so that
             # classification can be performed in bulk.  Each key
             # corresponds to a list of candidate paraphrases.
-            candidate_map: Dict[Tuple[int, int], List[str]] = {
+            candidate_map: dict[tuple[int, int], list[str]] = {
                 key: [] for key in to_check
             }
             for ident, resp in zip(new_resp_df["Identifier"], new_resp_df["Response"]):
@@ -433,8 +431,8 @@ class Paraphrase(Task):
             # Build classification prompts for every candidate across all
             # keys.  We keep a parallel list of (row, run, candidate
             # index) so we can map results back after classification.
-            cand_prompts: List[str] = []
-            cand_keys: List[Tuple[int, int, int]] = []
+            cand_prompts: list[str] = []
+            cand_keys: list[tuple[int, int, int]] = []
             for key in to_check:
                 row_idx, rev_idx = key
                 orig_text = original_texts[row_idx]
@@ -477,7 +475,7 @@ class Paraphrase(Task):
             # candidate passes if the classifier returns True or None.  A
             # None value indicates uncertainty but is treated as a pass
             # here to reduce the false rejection rate.
-            cand_results_map: Dict[Tuple[int, int], List[bool]] = {
+            cand_results_map: dict[tuple[int, int], list[bool]] = {
                 key: [False] * len(candidate_map.get(key, [])) for key in to_check
             }
             for idx, (row_idx, rev_idx, cand_index) in enumerate(cand_keys):
@@ -494,12 +492,12 @@ class Paraphrase(Task):
             # first passing candidate is chosen.  If no candidate passed,
             # the first candidate is chosen as a fallback and the key
             # remains scheduled for another round.
-            next_to_check: List[Tuple[int, int]] = []
+            next_to_check: list[tuple[int, int]] = []
             for key in to_check:
                 row_idx, rev_idx = key
                 candidates = candidate_map.get(key, [])
                 results = cand_results_map.get(key, [])
-                chosen_text: Optional[str] = None
+                chosen_text: str | None = None
                 passed_flag = False
                 for cand_text, passed in zip(candidates, results):
                     if passed:

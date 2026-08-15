@@ -9,20 +9,20 @@ a covariance matrix that respects the sum-to-zero identifiability constraint.
 
 from __future__ import annotations
 
-from typing import Dict, List, Sequence, Tuple, Union
+from collections.abc import Sequence
 
 import numpy as np
 
 
 def fit_bt(
     item_ids: Sequence[str],
-    outcomes: Sequence[Tuple[str, str]],
+    outcomes: Sequence[tuple[str, str]],
     *,
     pseudo: float = 0.1,
     max_iter: int = 1000,
     tol: float = 1e-6,
     return_info: bool = False,
-) -> Union[Dict[str, float], Tuple[Dict[str, float], np.ndarray, np.ndarray]]:
+) -> dict[str, float] | tuple[dict[str, float], np.ndarray, np.ndarray]:
     """Fit a Bradley–Terry model to pairwise ``(winner, loser)`` outcomes.
 
     Parameters

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from typing import Any, List, Optional
+from typing import Any
 
 import pandas as pd
 
@@ -17,8 +17,8 @@ from ..base import Task
 
 @dataclass
 class PollConfig:
-    population_description: Optional[str] = None
-    questions: List[str] = field(default_factory=list)
+    population_description: str | None = None
+    questions: list[str] = field(default_factory=list)
     save_dir: str = "poll"
     file_name: str = "poll_results.csv"
     seed_model: str = "gpt-5.5"
@@ -38,15 +38,15 @@ class Poll(Task):
 
     async def run(
         self,
-        df: Optional[pd.DataFrame] = None,
-        column_name: Optional[str] = None,
+        df: pd.DataFrame | None = None,
+        column_name: str | None = None,
         *,
-        population_description: Optional[str] = None,
-        questions: Optional[Any] = None,
+        population_description: str | None = None,
+        questions: Any | None = None,
         reset_files: bool = False,
         **kwargs: Any,
     ) -> pd.DataFrame:
-        qs: List[str] = (
+        qs: list[str] = (
             [questions]
             if isinstance(questions, str)
             else list(questions or self.cfg.questions)
@@ -133,7 +133,7 @@ class Poll(Task):
         return distribution
 
     @staticmethod
-    def _seed_instructions(desc: Optional[str]) -> str:
+    def _seed_instructions(desc: str | None) -> str:
         return (
             f"Generate representative people matching this population: {desc}"
             if desc
@@ -144,5 +144,5 @@ class Poll(Task):
         out_path = os.path.join(self.cfg.save_dir, self.cfg.file_name)
         try:
             out.to_csv(out_path, index=False)
-        except Exception:
+        except OSError:
             pass

@@ -22,17 +22,20 @@ the binned-scatter PDF plots are skipped (returning ``None``).
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import random
 import re
 import warnings
 from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
 
+from ...utils.file_utils import save_dataframe_with_fallback
+from ...utils.regression import _safe_fit_ols
 from ..base import Task
 from ..classify import Classify, ClassifyConfig
 from ..codify import Codify, CodifyConfig
@@ -40,11 +43,15 @@ from ..extract import Extract, ExtractConfig
 from ..paraphrase import Paraphrase, ParaphraseConfig
 from ..rank import Rank, RankConfig
 from ..rate import Rate, RateConfig
-from ...utils.file_utils import save_dataframe_with_fallback
-from ...utils.regression import _safe_fit_ols
 
 RemovalMethod = Literal["codify", "paraphrase"]
 MeasurementMode = Literal["rate", "classify", "extract", "rank"]
+
+
+def _dump_json(path: str, payload: dict, *, indent: int | None = None) -> None:
+    """Write JSON to disk (sync; run via ``asyncio.to_thread``)."""
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=indent)
 
 
 @dataclass
@@ -53,18 +60,18 @@ class DebiasRegressionResult:
 
     variant: str
     display_name: str
-    strip_percentage: Optional[int]
-    correlation: Optional[float]
-    mean_original: Optional[float]
-    mean_stripped: Optional[float]
-    attenuation_pct: Optional[float] = None
-    diff_regression: Optional[Dict[str, Any]] = None
-    twostep_regression: Optional[Dict[str, Any]] = None
-    stage1_regression: Optional[Dict[str, Any]] = None
-    stage1_delta: Optional[float] = None
-    debiased_columns: Dict[str, str] = field(default_factory=dict)
+    strip_percentage: int | None
+    correlation: float | None
+    mean_original: float | None
+    mean_stripped: float | None
+    attenuation_pct: float | None = None
+    diff_regression: dict[str, Any] | None = None
+    twostep_regression: dict[str, Any] | None = None
+    stage1_regression: dict[str, Any] | None = None
+    stage1_delta: float | None = None
+    debiased_columns: dict[str, str] = field(default_factory=dict)
 
-    def as_dict(self) -> Dict[str, Any]:
+    def as_dict(self) -> dict[str, Any]:
         """Return a JSON serialisable representation of the result."""
 
         def _convert(value: Any) -> Any:
@@ -97,22 +104,22 @@ class DebiasConfig:
     """Configuration for :class:`Debias`."""
 
     mode: MeasurementMode = "rate"
-    measurement_attribute: Optional[str] = None
-    removal_attribute: Optional[str] = None
-    attributes: Dict[str, str] = field(default_factory=dict)
-    signal_dictionary: Dict[str, str] = field(default_factory=dict)
+    measurement_attribute: str | None = None
+    removal_attribute: str | None = None
+    attributes: dict[str, str] = field(default_factory=dict)
+    signal_dictionary: dict[str, str] = field(default_factory=dict)
     removal_method: RemovalMethod = "codify"
     remaining_signal: bool = True
-    remaining_signal_attribute: Optional[str] = None
-    remaining_signal_description: Optional[str] = None
+    remaining_signal_attribute: str | None = None
+    remaining_signal_description: str | None = None
     save_dir: str = "debias"
-    run_name: Optional[str] = None
-    strip_percentages: Optional[List[int]] = None
-    categories_to_strip: Optional[List[str]] = None
+    run_name: str | None = None
+    strip_percentages: list[int] | None = None
+    categories_to_strip: list[str] | None = None
     model: str = "gpt-5.4-mini"
     n_parallels: int = 50
-    measurement_kwargs: Dict[str, Any] = field(default_factory=dict)
-    removal_kwargs: Dict[str, Any] = field(default_factory=dict)
+    measurement_kwargs: dict[str, Any] = field(default_factory=dict)
+    removal_kwargs: dict[str, Any] = field(default_factory=dict)
     robust_regression: bool = True
     random_seed: int = 12345
     verbose: bool = True
@@ -123,10 +130,10 @@ class DebiasResult:
     """Return object for :func:`leximeter.debias`."""
 
     results: pd.DataFrame
-    metadata: Dict[str, Any]
-    regression: Dict[str, DebiasRegressionResult]
+    metadata: dict[str, Any]
+    regression: dict[str, DebiasRegressionResult]
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Serialise the result metadata for convenient inspection."""
 
         return {
@@ -245,7 +252,7 @@ class Debias(Task):
             else:
                 self.cfg.categories_to_strip = []
         else:
-            categories: List[str] = []
+            categories: list[str] = []
             for name in self.cfg.categories_to_strip:
                 if name in self.cfg.signal_dictionary and name not in categories:
                     categories.append(name)
@@ -256,13 +263,13 @@ class Debias(Task):
             self.cfg.categories_to_strip = categories
 
         if self.cfg.strip_percentages is None:
-            percentages: List[int] = [100]
+            percentages: list[int] = [100]
         else:
             percentages = []
             for pct in self.cfg.strip_percentages:
                 try:
                     val = int(pct)
-                except Exception as exc:  # pragma: no cover - defensive
+                except (TypeError, ValueError) as exc:  # pragma: no cover - defensive
                     raise ValueError(f"Invalid strip percentage: {pct!r}") from exc
                 val = max(0, min(100, val))
                 if val not in percentages:
@@ -380,7 +387,7 @@ class Debias(Task):
                 display_name=info["display"],
             )
 
-        regression_info: Dict[str, DebiasRegressionResult] = {}
+        regression_info: dict[str, DebiasRegressionResult] = {}
         for key, info in variant_info.items():
             stripped_column = info["measurement_columns"].get(
                 self.cfg.measurement_attribute
@@ -412,8 +419,7 @@ class Debias(Task):
             "result_path": os.path.join(self.run_dir, "debias_results.csv"),
         }
         metadata_path = os.path.join(self.run_dir, "debias_metadata.json")
-        with open(metadata_path, "w", encoding="utf-8") as f:
-            json.dump(metadata, f, indent=2)
+        await asyncio.to_thread(_dump_json, metadata_path, metadata, indent=2)
         metadata["metadata_path"] = metadata_path
 
         results_df = df_master.reset_index(drop=True)
@@ -436,8 +442,8 @@ class Debias(Task):
         column_name: str,
         mode: MeasurementMode,
         save_label: str,
-        attributes: Optional[Dict[str, str]],
-        extra_kwargs: Optional[Dict[str, Any]],
+        attributes: dict[str, str] | None,
+        extra_kwargs: dict[str, Any] | None,
         default_model: str,
         reset_files: bool,
     ) -> pd.DataFrame:
@@ -524,12 +530,12 @@ class Debias(Task):
         self,
         df_master: pd.DataFrame,
         measurement_df: pd.DataFrame,
-        attributes: List[str],
+        attributes: list[str],
         *,
         variant_key: str,
         display_name: str,
-    ) -> Dict[str, str]:
-        column_map: Dict[str, str] = {}
+    ) -> dict[str, str]:
+        column_map: dict[str, str] = {}
         for attr in attributes:
             if attr not in measurement_df.columns:
                 continue
@@ -542,7 +548,7 @@ class Debias(Task):
         return column_map
 
     # ------------------------------------------------------------------
-    def _remaining_signal_attributes(self) -> Dict[str, str]:
+    def _remaining_signal_attributes(self) -> dict[str, str]:
         if not self.cfg.remaining_signal_attribute:
             return {}
         return {
@@ -554,11 +560,11 @@ class Debias(Task):
         self,
         df_master: pd.DataFrame,
         *,
-        info: Dict[str, Any],
+        info: dict[str, Any],
         save_label: str,
         label_suffix: str,
         reset_files: bool,
-    ) -> Optional[str]:
+    ) -> str | None:
         attrs = self._remaining_signal_attributes()
         if not attrs:
             return None
@@ -597,7 +603,7 @@ class Debias(Task):
         return column_map.get(measurement_attr, target_column)
 
     # ------------------------------------------------------------------
-    def _variant_label_suffix(self, info: Dict[str, Any], variant_count: int) -> str:
+    def _variant_label_suffix(self, info: dict[str, Any], variant_count: int) -> str:
         pct = info.get("strip_percentage")
         if pct is None:
             return "stripped"
@@ -612,7 +618,7 @@ class Debias(Task):
         column_name: str,
         *,
         reset_files: bool,
-    ) -> Dict[str, Dict[str, Any]]:
+    ) -> dict[str, dict[str, Any]]:
         kwargs = dict(self.cfg.removal_kwargs or {})
         kwargs.pop("response_fn", None)
         kwargs.pop("get_all_responses_fn", None)
@@ -637,7 +643,7 @@ class Debias(Task):
             additional_instructions=additional_instructions,
             reset_files=reset_files_local,
         )
-        variants: Dict[str, Dict[str, Any]] = {}
+        variants: dict[str, dict[str, Any]] = {}
         categories = self.cfg.categories_to_strip or []
         for pct in self.cfg.strip_percentages:
             if pct <= 0:
@@ -670,7 +676,7 @@ class Debias(Task):
         column_name: str,
         *,
         reset_files: bool,
-    ) -> Dict[str, Dict[str, Any]]:
+    ) -> dict[str, dict[str, Any]]:
         kwargs = dict(self.cfg.removal_kwargs or {})
         kwargs.pop("response_fn", None)
         kwargs.pop("get_all_responses_fn", None)
@@ -681,7 +687,7 @@ class Debias(Task):
         os.makedirs(save_dir, exist_ok=True)
         revised_name = f"{column_name} (stripped)"
         instructions = kwargs.pop("instructions", None) or self._build_paraphrase_instructions()
-        response_kwargs: Dict[str, Any] = {}
+        response_kwargs: dict[str, Any] = {}
         if "n_rounds" in kwargs:
             response_kwargs["n_rounds"] = kwargs.pop("n_rounds")
         if "completion_max_rounds" in kwargs and "n_rounds" not in response_kwargs:
@@ -735,9 +741,9 @@ class Debias(Task):
         self,
         codify_df: pd.DataFrame,
         row_idx: int,
-        categories: List[str],
-    ) -> List[str]:
-        snippets: List[str] = []
+        categories: list[str],
+    ) -> list[str]:
+        snippets: list[str] = []
         for cat in categories:
             if cat not in codify_df.columns:
                 continue
@@ -749,7 +755,7 @@ class Debias(Task):
                     parsed = json.loads(raw)
                     if isinstance(parsed, list):
                         snippets.extend(str(s) for s in parsed if s)
-                except Exception:
+                except Exception:  # noqa: BLE001 - malformed output falls back to raw
                     if raw:
                         snippets.append(str(raw))
         return snippets
@@ -759,13 +765,13 @@ class Debias(Task):
         self,
         *,
         original_text: str,
-        snippets: List[str],
+        snippets: list[str],
         pct_strip: int,
         row_idx: int,
     ) -> str:
         if pct_strip <= 0 or not snippets:
             return self._normalise_ws(original_text)
-        unique: List[str] = []
+        unique: list[str] = []
         seen = set()
         for snippet in snippets:
             snippet = snippet.strip()
@@ -777,7 +783,7 @@ class Debias(Task):
         if not unique:
             return self._normalise_ws(original_text)
         n_total = len(unique)
-        n_remove = max(0, min(n_total, int(round(n_total * (pct_strip / 100.0)))))
+        n_remove = max(0, min(n_total, round(n_total * (pct_strip / 100.0))))
         if n_remove == 0:
             return self._normalise_ws(original_text)
         seed_val = f"{self.cfg.random_seed}:{row_idx}:{pct_strip}:{n_total}"
@@ -796,10 +802,10 @@ class Debias(Task):
         original_column: str,
         stripped_column: str,
         *,
-        remaining_signal_column: Optional[str],
+        remaining_signal_column: str | None,
         variant_key: str,
         display_name: str,
-        strip_percentage: Optional[int],
+        strip_percentage: int | None,
         label_suffix: str,
     ) -> DebiasRegressionResult:
         cols = [original_column, stripped_column]
@@ -877,8 +883,8 @@ class Debias(Task):
             else f"{measurement_attr} (debiased, {label_suffix})"
         )
         pretty_twostep_col = twostep_col
-        stage1_reg: Optional[Dict[str, Any]] = None
-        delta: Optional[float] = None
+        stage1_reg: dict[str, Any] | None = None
+        delta: float | None = None
         if remaining_signal_column and remaining_signal_column in df.columns:
             stage1_reg, delta = self._stage1_remaining_signal_regression(
                 df,
@@ -911,7 +917,7 @@ class Debias(Task):
                     f"column was available for variant '{display_name}'."
                 )
 
-        twostep_reg: Optional[Dict[str, Any]] = None
+        twostep_reg: dict[str, Any] | None = None
         if twostep_col in df.columns and df[twostep_col].notna().sum() >= 3:
             twostep_reg = self._regress_against_original(
                 df,
@@ -948,7 +954,7 @@ class Debias(Task):
         original_column: str,
         stripped_column: str,
         remaining_signal_column: str,
-    ) -> Tuple[pd.Index, pd.Series, pd.Series, pd.Series]:
+    ) -> tuple[pd.Index, pd.Series, pd.Series, pd.Series]:
         tmp = df[[original_column, stripped_column, remaining_signal_column]].apply(
             pd.to_numeric,
             errors="coerce",
@@ -965,15 +971,15 @@ class Debias(Task):
     def _print_average_attenuation(
         self,
         df: pd.DataFrame,
-        attributes: List[str],
-        column_map: Dict[str, str],
+        attributes: list[str],
+        column_map: dict[str, str],
         *,
         label_suffix: str,
         display_name: str,
     ) -> None:
         if not self.cfg.verbose:
             return
-        attenuations: List[float] = []
+        attenuations: list[float] = []
         for attr in attributes:
             stripped_col = column_map.get(attr)
             if not stripped_col or attr not in df.columns:
@@ -1006,7 +1012,7 @@ class Debias(Task):
         self,
         original: pd.Series,
         stripped: pd.Series,
-    ) -> Optional[float]:
+    ) -> float | None:
         mean_original = float(pd.to_numeric(original, errors="coerce").mean())
         mean_stripped = float(pd.to_numeric(stripped, errors="coerce").mean())
         if np.isclose(mean_original, 0.0):
@@ -1018,7 +1024,7 @@ class Debias(Task):
         self,
         raw: pd.Series,
         debiased: pd.Series,
-    ) -> Tuple[float, float]:
+    ) -> tuple[float, float]:
         raw_num = pd.to_numeric(raw, errors="coerce")
         deb_num = pd.to_numeric(debiased, errors="coerce")
         pct = (deb_num - raw_num) / raw_num * 100.0
@@ -1034,7 +1040,7 @@ class Debias(Task):
         stripped_column: str,
         remaining_signal_column: str,
         display_name: str,
-    ) -> Tuple[Optional[Dict[str, Any]], Optional[float]]:
+    ) -> tuple[dict[str, Any] | None, float | None]:
         stage1_df = df[[stripped_column, remaining_signal_column]].apply(
             pd.to_numeric,
             errors="coerce",
@@ -1083,7 +1089,7 @@ class Debias(Task):
         original_column: str,
         debiased_column: str,
         title: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         reg_df = df[[original_column, debiased_column]].apply(
             pd.to_numeric,
             errors="coerce",
@@ -1110,9 +1116,9 @@ class Debias(Task):
     # ------------------------------------------------------------------
     def _print_generic_regression_table(
         self,
-        result: Dict[str, Any],
+        result: dict[str, Any],
         *,
-        names: List[str],
+        names: list[str],
         title: str,
     ) -> None:
         table = pd.DataFrame(
@@ -1133,9 +1139,9 @@ class Debias(Task):
     # ------------------------------------------------------------------
     def _regression_dict(
         self,
-        result: Optional[Dict[str, Any]],
-        names: List[str],
-    ) -> Optional[Dict[str, Any]]:
+        result: dict[str, Any] | None,
+        names: list[str],
+    ) -> dict[str, Any] | None:
         if result is None:
             return None
         return {
@@ -1149,7 +1155,7 @@ class Debias(Task):
         }
 
     # ------------------------------------------------------------------
-    def _serialise_config(self) -> Dict[str, Any]:
+    def _serialise_config(self) -> dict[str, Any]:
         def _convert(value: Any) -> Any:
             if isinstance(value, dict):
                 return {k: _convert(v) for k, v in value.items()}

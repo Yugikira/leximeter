@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict
+from typing import Any
 
 from leximeter.client.base import LLMClient
 
@@ -11,7 +11,7 @@ from leximeter.client.base import LLMClient
 class DictClient(LLMClient):
     """Return a fixed JSON payload for every prompt."""
 
-    def __init__(self, payload: Dict[str, Any]):
+    def __init__(self, payload: dict[str, Any]):
         self._payload = payload
 
     async def complete(self, prompt, *, model, json_mode=False, **kwargs) -> str:
@@ -27,7 +27,7 @@ class DictClient(LLMClient):
 class CountingClient(DictClient):
     """DictClient that also counts how many completions were actually made."""
 
-    def __init__(self, payload: Dict[str, Any]):
+    def __init__(self, payload: dict[str, Any]):
         super().__init__(payload)
         self.calls = 0
 

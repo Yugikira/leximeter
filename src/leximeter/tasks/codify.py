@@ -27,9 +27,9 @@ import os
 import re
 import warnings
 from collections import defaultdict
-from dataclasses import dataclass, InitVar
+from dataclasses import InitVar, dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any
 
 import pandas as pd
 
@@ -39,7 +39,6 @@ from ..utils.parsing import safe_json
 from ..utils.word_matching import (
     letters_only,
     normalize_text_aggressive,
-    normalize_text_generous,
     robust_find_improved,
     strict_find,
 )
@@ -59,10 +58,10 @@ class CodifyConfig:
     debug_print: bool = False
     modality: str = "text"
     n_rounds: int = 2  # Total passes incl. the initial run; 1 skips completion sweeps
-    completion_classifier_instructions: Optional[str] = None
-    completion_max_rounds: InitVar[Optional[int]] = None
+    completion_classifier_instructions: str | None = None
+    completion_max_rounds: InitVar[int | None] = None
 
-    def __post_init__(self, completion_max_rounds: Optional[int]) -> None:
+    def __post_init__(self, completion_max_rounds: int | None) -> None:
         if completion_max_rounds is not None:
             warnings.warn(
                 "completion_max_rounds is deprecated; use n_rounds instead.",
@@ -75,8 +74,7 @@ class CodifyConfig:
             rounds = int(self.n_rounds)
         except (TypeError, ValueError):
             rounds = 1
-        if rounds < 1:
-            rounds = 1
+        rounds = max(rounds, 1)
         self.n_rounds = rounds
 
 
@@ -86,7 +84,7 @@ class ChunkResult:
 
     identifier: str
     chunk_text: str
-    data: Dict[str, Any]
+    data: dict[str, Any]
 
 
 @dataclass
@@ -104,10 +102,10 @@ class Codify(Task):
 
     def __init__(self, cfg: CodifyConfig, **kwargs: Any) -> None:
         super().__init__(cfg, **kwargs)
-        self.hit_rate_stats: Dict[str, Dict[str, Any]] = {}
+        self.hit_rate_stats: dict[str, dict[str, Any]] = {}
         self._template = load_prompt("codify_prompt.jinja2")
 
-    def parse_json(self, response_text: Any) -> Optional[dict]:
+    def parse_json(self, response_text: Any) -> dict | None:
         """Robust JSON parsing using :func:`safe_json`."""
 
         parsed = safe_json(response_text)
@@ -119,7 +117,7 @@ class Codify(Task):
                 return inner
         return None
 
-    def chunk_by_words(self, text: str, max_words: int) -> List[str]:
+    def chunk_by_words(self, text: str, max_words: int) -> list[str]:
         """Split text into chunks by word count."""
         words = text.split()
         if len(words) <= max_words:
@@ -131,7 +129,7 @@ class Codify(Task):
 
     def find_snippet_in_text(
         self, text: str, beginning_excerpt: str, ending_excerpt: str
-    ) -> Optional[str]:
+    ) -> str | None:
         """Fast snippet finding that returns actual text from the original document."""
         if not beginning_excerpt:
             return None
@@ -225,7 +223,7 @@ class Codify(Task):
 
     def _find_actual_position_with_type(
         self, text: str, excerpt: str, _recursion_depth: int = 0
-    ) -> Tuple[Optional[int], Optional[int], Optional[str]]:
+    ) -> tuple[int | None, int | None, str | None]:
         """Find the actual character positions and match type using the SAME
         permissive strategies as robust_find_improved."""
         if not excerpt.strip():
@@ -298,11 +296,12 @@ class Codify(Task):
         if 10 <= len(excerpt_letters) < 20:
             excerpt_first_half = excerpt_letters[: len(excerpt_letters) // 2]
             excerpt_second_half = excerpt_letters[len(excerpt_letters) // 2 :]
-            if len(excerpt_first_half) >= 5 and len(excerpt_second_half) >= 5:
-                if (
-                    excerpt_first_half in text_letters
-                    and excerpt_second_half in text_letters
-                ):
+            if (
+                len(excerpt_first_half) >= 5
+                and len(excerpt_second_half) >= 5
+                and excerpt_first_half in text_letters
+                and excerpt_second_half in text_letters
+            ):
                     letters_idx = text_letters.find(excerpt_first_half)
                     ratio = letters_idx / len(text_letters) if text_letters else 0
                     approx_start = int(ratio * len(text))
@@ -312,7 +311,7 @@ class Codify(Task):
 
     def _map_normalized_to_original(
         self, original: str, normalized: str, norm_start: int, norm_length: int
-    ) -> Tuple[Optional[int], Optional[int]]:
+    ) -> tuple[int | None, int | None]:
         """Map a position in normalized text back to original text."""
         # This is an approximation - we'll search around the estimated area
         if len(normalized) == 0:
@@ -343,7 +342,7 @@ class Codify(Task):
 
     def _expand_fallback_match(
         self, text: str, start_pos: int, end_pos: int, original_excerpt: str
-    ) -> Tuple[int, int]:
+    ) -> tuple[int, int]:
         """Expand a fallback match to include proper word boundaries and context."""
         new_start = self._find_word_start(text, start_pos)
         new_end = self._find_word_end(text, end_pos)
@@ -397,15 +396,15 @@ class Codify(Task):
     def consolidate_snippets(
         self,
         original_text: str,
-        chunk_results: List[ChunkResult],
+        chunk_results: list[ChunkResult],
         category: str,
         *,
         debug_print: bool = False,
-    ) -> List[str]:
+    ) -> list[str]:
         """Convert per-chunk responses into verbatim snippets for ``category``."""
 
-        all_excerpts: List[Tuple[str, str]] = []
-        chunk_texts: List[str] = []
+        all_excerpts: list[tuple[str, str]] = []
+        chunk_texts: list[str] = []
         for chunk_result in chunk_results:
             payload = chunk_result.data
             if not isinstance(payload, dict):
@@ -422,15 +421,15 @@ class Codify(Task):
                             chunk_texts.append(chunk_result.chunk_text)
 
         found = 0
-        snippets: List[str] = []
-        failed: List[Tuple[str, str]] = []
+        snippets: list[str] = []
+        failed: list[tuple[str, str]] = []
         begin_fail_count = 0
         end_fail_count = 0
         strict_matches = 0
 
         for idx, (beginning, ending) in enumerate(all_excerpts):
             chunk_text = chunk_texts[idx] if idx < len(chunk_texts) else ""
-            snippet: Optional[str] = None
+            snippet: str | None = None
 
             strict_begin = strict_find(original_text, beginning)
             strict_end = (
@@ -584,7 +583,7 @@ class Codify(Task):
         return f"{stem}_iter{iteration}{ext}"
 
     def _strip_snippets(
-        self, text: str, snippets_by_category: Dict[str, List[str]]
+        self, text: str, snippets_by_category: dict[str, list[str]]
     ) -> str:
         remaining = text
         for snippets in snippets_by_category.values():
@@ -595,8 +594,8 @@ class Codify(Task):
 
     def _merge_snippet_results(
         self,
-        destination: Dict[int, Dict[str, List[str]]],
-        source: Dict[int, Dict[str, List[str]]],
+        destination: dict[int, dict[str, list[str]]],
+        source: dict[int, dict[str, list[str]]],
     ) -> bool:
         added = False
         for row_idx, cat_map in source.items():
@@ -611,36 +610,36 @@ class Codify(Task):
 
     async def _gather_iteration(
         self,
-        row_texts: Dict[int, str],
+        row_texts: dict[int, str],
         *,
-        original_texts: List[str],
-        raw_values: List[Any],
-        categories: Optional[Dict[str, str]],
-        additional_instructions: Optional[str],
+        original_texts: list[str],
+        raw_values: list[Any],
+        categories: dict[str, str] | None,
+        additional_instructions: str | None,
         iteration: int,
         dynamic_mode: bool,
         reset_files: bool,
-        category_subset: Optional[Set[str]] = None,
+        category_subset: set[str] | None = None,
         **kwargs: Any,
-    ) -> Dict[int, Dict[str, List[str]]]:
+    ) -> dict[int, dict[str, list[str]]]:
         from ..engine.batch import batch_execute
 
         if not row_texts:
             return {}
 
         debug = self.cfg.debug_print
-        selected_categories: List[str] = []
+        selected_categories: list[str] = []
         if not dynamic_mode and categories:
             selected_categories = [
                 cat
-                for cat in categories.keys()
+                for cat in categories
                 if category_subset is None or cat in category_subset
             ]
             if not selected_categories:
                 return {}
 
-        requests: List[PromptRequest] = []
-        pending_requests: List[Dict[str, Any]] = []
+        requests: list[PromptRequest] = []
+        pending_requests: list[dict[str, Any]] = []
 
         if not dynamic_mode and categories:
             category_batches = [
@@ -722,7 +721,7 @@ class Codify(Task):
             **kwargs,
         )
 
-        chunk_results_by_row: Dict[int, List[ChunkResult]] = defaultdict(list)
+        chunk_results_by_row: dict[int, list[ChunkResult]] = defaultdict(list)
         for ident, resp in zip(batch_df["Identifier"], batch_df["Response"]):
             request = id_to_request.get(ident)
             if request is None:
@@ -742,20 +741,20 @@ class Codify(Task):
                 )
             )
 
-        iteration_results: Dict[int, Dict[str, List[str]]] = {}
+        iteration_results: dict[int, dict[str, list[str]]] = {}
         if dynamic_mode:
-            for row_idx in row_texts.keys():
+            for row_idx in row_texts:
                 chunk_results = chunk_results_by_row.get(row_idx, [])
                 if not chunk_results:
                     continue
-                categories_seen: Set[str] = set()
+                categories_seen: set[str] = set()
                 for chunk_result in chunk_results:
                     for key, value in chunk_result.data.items():
                         if isinstance(key, str) and isinstance(value, list):
                             categories_seen.add(key)
                 if not categories_seen:
                     continue
-                row_map: Dict[str, List[str]] = {}
+                row_map: dict[str, list[str]] = {}
                 for category in sorted(categories_seen):
                     snippets = self.consolidate_snippets(
                         original_texts[row_idx],
@@ -768,9 +767,9 @@ class Codify(Task):
                 if row_map:
                     iteration_results[row_idx] = row_map
         else:
-            for row_idx in row_texts.keys():
+            for row_idx in row_texts:
                 chunk_results = chunk_results_by_row.get(row_idx, [])
-                row_map: Dict[str, List[str]] = {}
+                row_map: dict[str, list[str]] = {}
                 for category in selected_categories:
                     snippets = self.consolidate_snippets(
                         original_texts[row_idx],
@@ -785,17 +784,17 @@ class Codify(Task):
 
     async def _classify_remaining(
         self,
-        aggregated: Dict[int, Dict[str, List[str]]],
-        original_texts: List[str],
-        categories: Dict[str, str],
-        additional_instructions: Optional[str],
+        aggregated: dict[int, dict[str, list[str]]],
+        original_texts: list[str],
+        categories: dict[str, str],
+        additional_instructions: str | None,
         iteration: int,
         reset_files: bool,
-    ) -> Dict[int, Set[str]]:
+    ) -> dict[int, set[str]]:
         from .classify import Classify, ClassifyConfig
 
-        row_indices: List[int] = []
-        remaining_texts: List[str] = []
+        row_indices: list[int] = []
+        remaining_texts: list[str] = []
         for row_idx, original in enumerate(original_texts):
             snippet_map = aggregated.get(row_idx, {})
             stripped = self._strip_snippets(original, snippet_map)
@@ -843,11 +842,11 @@ class Codify(Task):
             reset_files=reset_files and iteration == 0,
         )
 
-        flagged: Dict[int, Set[str]] = {}
+        flagged: dict[int, set[str]] = {}
         for idx, row_idx in enumerate(row_indices):
             flagged_categories = {
                 category
-                for category in categories.keys()
+                for category in categories
                 if bool(results_df.at[idx, category])
             }
             if flagged_categories:
@@ -857,14 +856,14 @@ class Codify(Task):
 
     async def _completion_loop(
         self,
-        aggregated: Dict[int, Dict[str, List[str]]],
-        original_texts: List[str],
-        raw_values: List[Any],
-        categories: Dict[str, str],
-        additional_instructions: Optional[str],
+        aggregated: dict[int, dict[str, list[str]]],
+        original_texts: list[str],
+        raw_values: list[Any],
+        categories: dict[str, str],
+        additional_instructions: str | None,
         reset_files: bool,
         **kwargs: Any,
-    ) -> Dict[int, Dict[str, List[str]]]:
+    ) -> dict[int, dict[str, list[str]]]:
         total_rounds = max(1, int(self.cfg.n_rounds))
         completion_iterations = max(0, total_rounds - 1)
 
@@ -881,8 +880,8 @@ class Codify(Task):
                 break
 
             category_subset = set().union(*flagged.values())
-            row_texts: Dict[int, str] = {}
-            for row_idx in flagged.keys():
+            row_texts: dict[int, str] = {}
+            for row_idx in flagged:
                 stripped = self._strip_snippets(
                     original_texts[row_idx], aggregated.get(row_idx, {})
                 )
@@ -914,7 +913,7 @@ class Codify(Task):
         df: pd.DataFrame,
         column_name: str,
         *,
-        categories: Optional[Dict[str, str]] = None,
+        categories: dict[str, str] | None = None,
         additional_instructions: str = "",
         reset_files: bool = False,
         **kwargs: Any,
@@ -933,10 +932,10 @@ class Codify(Task):
             )
 
         categories_dict = categories or {}
-        aggregated: Dict[int, Dict[str, List[str]]] = {}
+        aggregated: dict[int, dict[str, list[str]]] = {}
         if not dynamic_mode:
             for idx in range(len(df_proc)):
-                aggregated[idx] = {cat: [] for cat in categories_dict.keys()}
+                aggregated[idx] = {cat: [] for cat in categories_dict}
 
         row_texts = {idx: original_texts[idx] for idx in range(len(df_proc))}
         initial_results = await self._gather_iteration(
@@ -964,7 +963,7 @@ class Codify(Task):
             )
 
         if dynamic_mode:
-            coded_passages: List[Dict[str, List[str]]] = []
+            coded_passages: list[dict[str, list[str]]] = []
             for idx in range(len(df_proc)):
                 row_map = aggregated.get(idx, {})
                 coded_passages.append(
@@ -972,7 +971,7 @@ class Codify(Task):
                 )
             df_proc["coded_passages"] = coded_passages
         else:
-            for category in categories_dict.keys():
+            for category in categories_dict:
                 df_proc[category] = [
                     list(aggregated.get(idx, {}).get(category, []))
                     for idx in range(len(df_proc))

@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import re
-from typing import Dict
 
-_WORD_MAP: Dict[str, str] = {
+_WORD_MAP: dict[str, str] = {
     "circle": "square",
     "square": "circle",
     "Circle": "Square",

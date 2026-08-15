@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-from typing import List, Optional
 
 from .embedding import EmbeddingClient
 
@@ -14,9 +13,9 @@ class OpenAIEmbeddingClient(EmbeddingClient):
     def __init__(
         self,
         *,
-        model: Optional[str] = None,
-        api_key: Optional[str] = None,
-        base_url: Optional[str] = None,
+        model: str | None = None,
+        api_key: str | None = None,
+        base_url: str | None = None,
     ) -> None:
         from openai import AsyncOpenAI
 
@@ -32,6 +31,6 @@ class OpenAIEmbeddingClient(EmbeddingClient):
             or os.getenv("OPENAI_BASE_URL"),
         )
 
-    async def embed(self, texts: List[str]) -> List[List[float]]:
+    async def embed(self, texts: list[str]) -> list[list[float]]:
         resp = await self._client.embeddings.create(model=self._model_name, input=texts)
         return [d.embedding for d in resp.data]

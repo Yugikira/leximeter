@@ -22,38 +22,38 @@ import random
 import re
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Any, DefaultDict, Dict, List, Optional
+from typing import Any
 
 import pandas as pd
 
 from ..templates import load_prompt
-from ..utils.parsing import safest_json
 from ..utils.file_utils import save_dataframe_with_fallback
+from ..utils.parsing import safest_json
 from . import _common
 from .base import Task
 
-_FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.S)
+_FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
 
 
-def _collect_predictions(row: pd.Series) -> List[str]:
+def _collect_predictions(row: pd.Series) -> list[str]:
     """Return labels whose values evaluate to ``True``."""
     return [lab for lab, val in row.items() if bool(val)]
 
 
 @dataclass
 class ClassifyConfig:
-    labels: Dict[str, str]  # {"label_name": "description", ...}
+    labels: dict[str, str]  # {"label_name": "description", ...}
     save_dir: str = "classifier"
     file_name: str = "classify_responses.csv"
     model: str = "gpt-5.4-mini"
     n_parallels: int = 50
     n_runs: int = 1
     min_frequency: float = 0.6
-    additional_instructions: Optional[str] = None
+    additional_instructions: str | None = None
     modality: str = "text"
-    n_attributes_per_run: Optional[int] = None
+    n_attributes_per_run: int | None = None
     differentiate: bool = False
-    circle_first: Optional[bool] = None
+    circle_first: bool | None = None
 
     def __post_init__(self) -> None:
         if self.additional_instructions is not None:
@@ -72,23 +72,23 @@ class Classify(Task):
     # Parsing raw model output
     # ------------------------------------------------------------------
     @staticmethod
-    def _regex(raw: str, labels: List[str]) -> Dict[str, Optional[bool]]:
-        out: Dict[str, Optional[bool]] = {}
+    def _regex(raw: str, labels: list[str]) -> dict[str, bool | None]:
+        out: dict[str, bool | None] = {}
         for lab in labels:
             pat = re.compile(
-                rf'\s*"?\s*{re.escape(lab)}\s*"?\s*:\s*(true|false)', re.I | re.S
+                rf'\s*"?\s*{re.escape(lab)}\s*"?\s*:\s*(true|false)', re.IGNORECASE | re.DOTALL
             )
             m = pat.search(raw)
             out[lab] = None if not m else m.group(1).lower() == "true"
         return out
 
-    async def _parse(self, resp: Any, labels: List[str]) -> Dict[str, Optional[bool]]:
+    async def _parse(self, resp: Any, labels: list[str]) -> dict[str, bool | None]:
         # unwrap common response containers (list-of-one, bytes, fenced blocks)
         if isinstance(resp, list) and len(resp) == 1:
             resp = resp[0]
         if isinstance(resp, (bytes, bytearray)):
             resp = resp.decode()
-        data: Optional[Any] = None
+        data: Any | None = None
         if isinstance(resp, str):
             m = _FENCE_RE.search(resp)
             if m:
@@ -121,10 +121,10 @@ class Classify(Task):
     async def run(
         self,
         df: pd.DataFrame,
-        column_name: Optional[str] = None,
+        column_name: str | None = None,
         *,
-        circle_column_name: Optional[str] = None,
-        square_column_name: Optional[str] = None,
+        circle_column_name: str | None = None,
+        square_column_name: str | None = None,
         reset_files: bool = False,
         **kwargs: Any,
     ) -> pd.DataFrame:
@@ -162,7 +162,7 @@ class Classify(Task):
             metadata=run_metadata,
             reset_files=reset_files,
         )
-        label_batches: List[Dict[str, str]] = [dict(batch) for batch in label_batch_items]
+        label_batches: list[dict[str, str]] = [dict(batch) for batch in label_batch_items]
         label_count = len(label_items)
         if (
             effective_n_attributes_per_run is not None
@@ -183,15 +183,15 @@ class Classify(Task):
             attribute_batches=[[name for name, _ in b] for b in label_batch_items],
         )
 
-        prompts: List[str] = []
-        ids: List[str] = []
-        base_ids: List[str] = []
-        id_to_circle_first: Dict[str, bool] = {}
-        id_to_rows: DefaultDict[str, List[int]] = defaultdict(list)
-        id_to_val: Dict[str, Any] = {}
-        prompt_texts: Dict[str, str] = {}
-        prompt_circles: Dict[str, str] = {}
-        prompt_squares: Dict[str, str] = {}
+        prompts: list[str] = []
+        ids: list[str] = []
+        base_ids: list[str] = []
+        id_to_circle_first: dict[str, bool] = {}
+        id_to_rows: defaultdict[str, list[int]] = defaultdict(list)
+        id_to_val: dict[str, Any] = {}
+        prompt_texts: dict[str, str] = {}
+        prompt_circles: dict[str, str] = {}
+        prompt_squares: dict[str, str] = {}
 
         if self.cfg.differentiate:
             circles = df_proc[circle_column_name].tolist()  # type: ignore[index]
@@ -238,9 +238,9 @@ class Classify(Task):
                 id_to_rows[ident].append(row)
                 if len(id_to_rows[ident]) > 1:
                     continue
-                id_to_val[ident] = values[row]
+                id_to_val[ident] = val
                 prompt_texts[ident] = (
-                    str(values[row])
+                    str(val)
                     if self.cfg.modality in {"text", "entity", "web"}
                     else ""
                 )
@@ -265,12 +265,12 @@ class Classify(Task):
             try:
                 existing_df = pd.read_csv(csv_path, usecols=["Identifier"])
                 existing_ids = set(existing_df["Identifier"].astype(str))
-            except Exception:
+            except (OSError, ValueError):
                 existing_ids = set()
 
-        run_identifier_lists: List[List[str]] = []
+        run_identifier_lists: list[list[str]] = []
         for run_idx in range(1, self.cfg.n_runs + 1):
-            run_ids: List[str] = []
+            run_ids: list[str] = []
             for ident in ids:
                 if run_idx == 1:
                     legacy_ident = f"{ident}_run1"
@@ -279,8 +279,8 @@ class Classify(Task):
                     run_ids.append(f"{ident}_run{run_idx}")
             run_identifier_lists.append(run_ids)
 
-        prompts_all: List[str] = []
-        ids_all: List[str] = []
+        prompts_all: list[str] = []
+        ids_all: list[str] = []
         for run_ids in run_identifier_lists:
             prompts_all.extend(prompts)
             ids_all.extend(run_ids)
@@ -297,7 +297,7 @@ class Classify(Task):
             **kwargs,
         )
         if not isinstance(df_resp_all, pd.DataFrame):
-            raise RuntimeError("batch_execute returned no DataFrame")
+            raise TypeError("batch_execute returned no DataFrame")
 
         df_resps = []
         for run_idx, run_ids in enumerate(run_identifier_lists, start=1):
@@ -309,11 +309,11 @@ class Classify(Task):
             df_resps.append(sub)
 
         # parse each run and construct disaggregated records
-        full_records: List[Dict[str, Any]] = []
+        full_records: list[dict[str, Any]] = []
         total_orphans = 0
         all_labels = list(self.cfg.labels.keys())
         for run_idx, df_resp in enumerate(df_resps, start=1):
-            id_to_labels: Dict[str, Dict[str, Optional[bool]]] = {
+            id_to_labels: dict[str, dict[str, bool | None]] = {
                 ident: {lab: None for lab in all_labels} for ident in base_ids
             }
             orphans = 0
@@ -363,7 +363,7 @@ class Classify(Task):
             )
 
         # aggregate across runs using a minimum frequency threshold
-        def _min_freq(s: pd.Series) -> Optional[bool]:
+        def _min_freq(s: pd.Series) -> bool | None:
             s_bool = s.astype("boolean")
             if s_bool.notna().sum() == 0:
                 return None

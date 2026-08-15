@@ -6,7 +6,7 @@ import json
 import os
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any
 
 import pandas as pd
 
@@ -22,7 +22,7 @@ class DeidentifyConfig:
     model: str = "gpt-5.4-mini"
     n_parallels: int = 50
     max_words_per_call: int = 7500
-    additional_instructions: Optional[str] = None
+    additional_instructions: str | None = None
     n_passes: int = 1
     use_existing_mappings_only: bool = False
 
@@ -39,14 +39,14 @@ class Deidentify(Task):
         df: pd.DataFrame,
         column_name: str,
         *,
-        grouping_column: Optional[str] = None,
-        mapping_column: Optional[str] = None,
+        grouping_column: str | None = None,
+        mapping_column: str | None = None,
         reset_files: bool = False,
         **kwargs: Any,
     ) -> pd.DataFrame:
         out = df.copy()
-        deid_text: Dict[int, str] = {}
-        mapping_store: Dict[int, Dict[str, Any]] = {}
+        deid_text: dict[int, str] = {}
+        mapping_store: dict[int, dict[str, Any]] = {}
 
         if grouping_column is not None:
             groups = {
@@ -57,7 +57,7 @@ class Deidentify(Task):
             groups = {i: [i] for i in range(len(df))}
 
         for row_idxs in groups.values():
-            mapping: Dict[str, Any] = {}
+            mapping: dict[str, Any] = {}
             if mapping_column and mapping_column in df.columns:
                 cell = df[mapping_column].iloc[row_idxs[0]]
                 if isinstance(cell, dict):
@@ -89,8 +89,8 @@ class Deidentify(Task):
         return [" ".join(words[i : i + max_words]) for i in range(0, len(words), max_words)]
 
     async def _update_mapping(
-        self, chunk: str, current_map: Dict[str, Any], **kwargs: Any
-    ) -> Dict[str, Any]:
+        self, chunk: str, current_map: dict[str, Any], **kwargs: Any
+    ) -> dict[str, Any]:
         prompt = self._template.render(
             text=chunk,
             current_map=json.dumps(current_map, ensure_ascii=False, indent=2),
@@ -103,7 +103,7 @@ class Deidentify(Task):
         return parsed if isinstance(parsed, dict) else current_map
 
     @staticmethod
-    def _apply_mapping(text: str, mapping: Dict[str, Any]) -> str:
+    def _apply_mapping(text: str, mapping: dict[str, Any]) -> str:
         for entry in mapping.values():
             if not isinstance(entry, dict):
                 continue
@@ -122,5 +122,5 @@ class Deidentify(Task):
         out_path = os.path.join(self.cfg.save_dir, f"{self._base_name()}_cleaned.csv")
         try:
             out.to_csv(out_path, index=False)
-        except Exception:
+        except OSError:
             pass

@@ -10,14 +10,15 @@ import logging
 import math
 import os
 import re
-from typing import Any, Iterable, List, Optional
+from collections.abc import Iterable
+from typing import Any
 
 import pandas as pd
 
 logger = logging.getLogger(__name__)
 
 
-def _find_split_csv_parts(path: str) -> List[str]:
+def _find_split_csv_parts(path: str) -> list[str]:
     """Return sorted split CSV parts matching ``<stem>_<n><suffix>``."""
 
     target = os.path.expandvars(os.path.expanduser(path))
@@ -25,7 +26,7 @@ def _find_split_csv_parts(path: str) -> List[str]:
     stem = os.path.splitext(os.path.basename(target))[0]
     suffix = os.path.splitext(target)[1] or ".csv"
     pattern = re.compile(rf"^{re.escape(stem)}_(\d+){re.escape(suffix)}$")
-    matches: List[tuple[int, str]] = []
+    matches: list[tuple[int, str]] = []
     if not base_dir or not os.path.isdir(base_dir):
         return []
     for name in os.listdir(base_dir):
@@ -34,7 +35,7 @@ def _find_split_csv_parts(path: str) -> List[str]:
             continue
         try:
             order = int(match.group(1))
-        except Exception:
+        except (ValueError, TypeError):
             continue
         matches.append((order, os.path.join(base_dir, name)))
     return [candidate for _, candidate in sorted(matches, key=lambda item: item[0])]
@@ -46,22 +47,22 @@ def _remove_paths(paths: Iterable[str]) -> None:
     for candidate in paths:
         try:
             os.remove(candidate)
-        except Exception:
+        except OSError:
             continue
 
 
 def _resolve_chunk_sizes(
     primary_chunk_size: int,
-    fallback_chunk_sizes: Optional[Iterable[int]],
-) -> List[int]:
+    fallback_chunk_sizes: Iterable[int] | None,
+) -> list[int]:
     """Build ordered, de-duplicated chunk-size attempts."""
 
-    candidates: List[int] = []
+    candidates: list[int] = []
 
     def _add(value: Any) -> None:
         try:
             parsed = int(value)
-        except Exception:
+        except (ValueError, TypeError):
             return
         if parsed <= 0:
             return
@@ -85,9 +86,9 @@ def save_dataframe_with_fallback(
     *,
     index: bool = False,
     chunk_size: int = 100_000,
-    fallback_chunk_sizes: Optional[Iterable[int]] = None,
-    label: Optional[str] = None,
-) -> List[str]:
+    fallback_chunk_sizes: Iterable[int] | None = None,
+    label: str | None = None,
+) -> list[str]:
     """Persist ``df`` to CSV, falling back to progressively smaller split files.
 
     The function first attempts to save to ``path``. If that fails (for example
@@ -108,7 +109,7 @@ def save_dataframe_with_fallback(
         parent = os.path.dirname(resolved_path)
         if parent:
             os.makedirs(parent, exist_ok=True)
-    except Exception:
+    except OSError:
         logger.debug("Could not ensure parent directory for %s", resolved_path)
 
     try:
@@ -134,8 +135,8 @@ def save_dataframe_with_fallback(
     chunk_attempts = _resolve_chunk_sizes(chunk_size, fallback_chunk_sizes)
 
     for chunk in chunk_attempts:
-        attempt_paths: List[str] = []
-        part_count = max(1, int(math.ceil(total_rows / max(1, chunk))))
+        attempt_paths: list[str] = []
+        part_count = max(1, math.ceil(total_rows / max(1, chunk)))
         print(
             f"{prefix}Trying chunked backup with {chunk:,} rows per file "
             f"({part_count} part(s))."

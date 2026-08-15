@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Any, List, Optional
+from typing import Any
 
 import pandas as pd
 
 from ...engine.batch import batch_execute
 from ...templates import load_prompt
-from .. import _common
 from ..base import Task
 
 
@@ -22,7 +21,7 @@ class IdeateConfig:
     n_parallels: int = 50
     n_ideas: int = 1000
     scientific_theory: bool = True
-    additional_instructions: Optional[str] = None
+    additional_instructions: str | None = None
 
 
 class Ideate(Task):
@@ -36,7 +35,7 @@ class Ideate(Task):
         self,
         topic: str,
         *,
-        additional_instructions: Optional[str] = None,
+        additional_instructions: str | None = None,
         reset_files: bool = False,
         **kwargs: Any,
     ) -> pd.DataFrame:
@@ -78,7 +77,7 @@ class Ideate(Task):
         return out
 
     @staticmethod
-    def _parse_sections(text: str) -> Dict[str, Optional[str]]:
+    def _parse_sections(text: str) -> dict[str, str | None]:
         headers = {
             "title": "title",
             "in a nutshell": "in_a_nutshell",
@@ -87,9 +86,9 @@ class Ideate(Task):
             "testable predictions": "testable_predictions",
             "the full thinking": "full_thinking",
         }
-        result: Dict[str, Optional[str]] = {v: None for v in headers.values()}
-        current: Optional[str] = None
-        buffer: List[str] = []
+        result: dict[str, str | None] = {v: None for v in headers.values()}
+        current: str | None = None
+        buffer: list[str] = []
         for line in text.splitlines():
             lowered = line.strip().lower()
             matched = None
@@ -111,5 +110,5 @@ class Ideate(Task):
         out_path = os.path.join(self.cfg.save_dir, self.cfg.file_name)
         try:
             out.to_csv(out_path, index=False)
-        except Exception:
+        except OSError:
             pass

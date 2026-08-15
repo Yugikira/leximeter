@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-from typing import Optional
 
 import pandas as pd
 
@@ -13,7 +12,7 @@ _TEXT_EXTENSIONS = {".txt", ".md", ".csv", ".json", ".tsv", ".log"}
 def load(
     folder_path: str,
     *,
-    save_name: Optional[str] = None,
+    save_name: str | None = None,
     modality: str = "text",
     reset_files: bool = False,
 ) -> pd.DataFrame:
@@ -36,7 +35,7 @@ def load(
         try:
             with open(path, encoding="utf-8", errors="ignore") as f:
                 content = f.read()
-        except Exception:
+        except (OSError, ValueError):
             continue
         rows.append({"path": path, "name": entry, "text": content})
 
@@ -46,6 +45,6 @@ def load(
         if reset_files or not os.path.exists(out_path):
             try:
                 out.to_csv(out_path, index=False)
-            except Exception:
+            except OSError:
                 pass
     return out

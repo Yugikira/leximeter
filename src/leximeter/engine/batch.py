@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import pandas as pd
 
@@ -26,11 +26,11 @@ async def _complete_with_retry(
     model: str,
     json_mode: bool,
     max_retries: int,
-    timeout: Optional[float],
+    timeout: float | None,
     **generation_kwargs: Any,
 ) -> str:
     """Call ``client.complete``, retrying with exponential backoff."""
-    last_exc: Optional[Exception] = None
+    last_exc: Exception | None = None
     for attempt in range(max_retries + 1):
         try:
             if timeout:
@@ -52,17 +52,17 @@ async def _complete_with_retry(
 
 
 async def batch_execute(
-    prompts: List[str],
-    identifiers: List[str],
+    prompts: list[str],
+    identifiers: list[str],
     *,
     client: LLMClient,
     model: str,
     json_mode: bool = False,
     n_parallels: int = 50,
-    save_path: Optional[str] = None,
+    save_path: str | None = None,
     reset_files: bool = False,
     max_retries: int = 3,
-    timeout: Optional[float] = None,
+    timeout: float | None = None,
     **generation_kwargs: Any,
 ) -> pd.DataFrame:
     """Run ``prompts`` through ``client`` concurrently, resuming from ``save_path``.
@@ -84,7 +84,7 @@ async def batch_execute(
 
     sem = asyncio.Semaphore(max(1, n_parallels))
     lock = asyncio.Lock()
-    new_rows: List[Dict[str, Any]] = []
+    new_rows: list[dict[str, Any]] = []
 
     async def worker(ident: str, prompt: str) -> None:
         async with sem:

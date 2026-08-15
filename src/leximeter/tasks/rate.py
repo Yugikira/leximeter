@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Sequence
+from typing import Any
 
 from ..templates import load_prompt
 from ..utils.parsing import safe_json
@@ -12,15 +13,15 @@ from .base import AttributeTask
 
 @dataclass
 class RateConfig:
-    attributes: Dict[str, str]
+    attributes: dict[str, str]
     save_dir: str = "ratings"
     file_name: str = "ratings.csv"
     model: str = "gpt-5.4-mini"
     n_parallels: int = 50
     n_runs: int = 1
-    n_attributes_per_run: Optional[int] = None
-    rating_scale: Optional[str] = None
-    additional_instructions: Optional[str] = None
+    n_attributes_per_run: int | None = None
+    rating_scale: str | None = None
+    additional_instructions: str | None = None
     modality: str = "text"  # "text" or "entity"
 
 
@@ -31,7 +32,7 @@ class Rate(AttributeTask):
         super().__init__(cfg, **kwargs)
         self._template = load_prompt("ratings_prompt.jinja2")
 
-    def render_prompt(self, text: str, attributes: Dict[str, str]) -> str:
+    def render_prompt(self, text: str, attributes: dict[str, str]) -> str:
         return self._template.render(
             text=text,
             attributes=attributes,
@@ -42,9 +43,9 @@ class Rate(AttributeTask):
 
     async def parse_response(
         self, raw: Any, attributes: Sequence[str]
-    ) -> Dict[str, Optional[float]]:
+    ) -> dict[str, float | None]:
         obj = safe_json(raw)
-        out: Dict[str, Optional[float]] = {}
+        out: dict[str, float | None] = {}
         if isinstance(obj, dict):
             for attr in attributes:
                 try:

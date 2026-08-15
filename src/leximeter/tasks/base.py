@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import os
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any
 
 import pandas as pd
 
@@ -32,9 +33,9 @@ class Task(ABC):
         self,
         cfg: Any,
         *,
-        client: Optional[LLMClient] = None,
-        embedding_client: Optional[EmbeddingClient] = None,
-        search_tool: Optional[SearchTool] = None,
+        client: LLMClient | None = None,
+        embedding_client: EmbeddingClient | None = None,
+        search_tool: SearchTool | None = None,
     ) -> None:
         self.cfg = cfg
         self._client = client
@@ -52,14 +53,14 @@ class Task(ABC):
             self._client = resolve_client()
         return self._client
 
-    def _get_embedding_client(self) -> Optional[EmbeddingClient]:
+    def _get_embedding_client(self) -> EmbeddingClient | None:
         if self._embedding_client is None:
             from ..client.resolve import resolve_embedding_client
 
             self._embedding_client = resolve_embedding_client()
         return self._embedding_client
 
-    def _get_search_tool(self) -> Optional[SearchTool]:
+    def _get_search_tool(self) -> SearchTool | None:
         if self._search_tool is None:
             from ..client.resolve import resolve_search_tool
 
@@ -79,11 +80,11 @@ class Task(ABC):
     def _base_name(self) -> str:
         return os.path.splitext(self.cfg.file_name)[0]
 
-    def _build_ids(self, texts: Sequence[str]) -> Tuple[List[str], List[str], Dict[str, str]]:
+    def _build_ids(self, texts: Sequence[str]) -> tuple[list[str], list[str], dict[str, str]]:
         """Hash + dedup: ``row_ids`` align to input rows; ``base_ids`` are unique."""
-        row_ids: List[str] = []
-        base_ids: List[str] = []
-        id_to_text: Dict[str, str] = {}
+        row_ids: list[str] = []
+        base_ids: list[str] = []
+        id_to_text: dict[str, str] = {}
         for text in texts:
             ident = _common.hash_identifier(text)
             row_ids.append(ident)
@@ -107,23 +108,23 @@ class AttributeTask(Task):
 
     # ---- variant hooks (subclass) ------------------------------------
     @abstractmethod
-    def render_prompt(self, text: str, attributes: Dict[str, str]) -> str:
+    def render_prompt(self, text: str, attributes: dict[str, str]) -> str:
         """Render one prompt for ``text`` against a batch of ``attributes``."""
 
     @abstractmethod
     async def parse_response(
         self, raw: Any, attributes: Sequence[str]
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Parse one raw completion into ``{attribute: value}``."""
 
-    def _get_attributes(self) -> Dict[str, str]:
+    def _get_attributes(self) -> dict[str, str]:
         """Return the attribute (or label) dict for this task."""
         return dict(self.cfg.attributes)
 
-    def _set_attributes(self, attributes: Dict[str, str]) -> None:
+    def _set_attributes(self, attributes: dict[str, str]) -> None:
         self.cfg.attributes = attributes
 
-    def _attribute_names(self) -> List[str]:
+    def _attribute_names(self) -> list[str]:
         return list(self._get_attributes().keys())
 
     def aggregate(self, records: pd.DataFrame, df_proc: pd.DataFrame) -> pd.DataFrame:
@@ -181,9 +182,9 @@ class AttributeTask(Task):
 
         # 4. build jobs: (batch x unique item x run)
         n_runs = max(1, int(getattr(self.cfg, "n_runs", 1)))
-        prompts: List[str] = []
-        ids: List[str] = []
-        meta: List[Tuple[str, int, int]] = []  # (base_id, batch_idx, run_idx)
+        prompts: list[str] = []
+        ids: list[str] = []
+        meta: list[tuple[str, int, int]] = []  # (base_id, batch_idx, run_idx)
         for batch_idx, batch_items in enumerate(batches):
             batch_attrs = dict(batch_items)
             for ident in base_ids:
@@ -207,8 +208,8 @@ class AttributeTask(Task):
     # ---- internal steps ---------------------------------------------
     async def _execute(
         self,
-        prompts: List[str],
-        ids: List[str],
+        prompts: list[str],
+        ids: list[str],
         *,
         reset_files: bool,
         **kwargs: Any,
@@ -231,13 +232,13 @@ class AttributeTask(Task):
 
     async def _parse_all(
         self,
-        meta: List[Tuple[str, int, int]],
-        ids: List[str],
-        resp_lookup: Dict[str, Any],
-        batches: Sequence[Sequence[Tuple[str, Any]]],
-        id_to_text: Optional[Dict[str, str]] = None,
+        meta: list[tuple[str, int, int]],
+        ids: list[str],
+        resp_lookup: dict[str, Any],
+        batches: Sequence[Sequence[tuple[str, Any]]],
+        id_to_text: dict[str, str] | None = None,
     ) -> pd.DataFrame:
-        records: List[Dict[str, Any]] = []
+        records: list[dict[str, Any]] = []
         for (base_id, batch_idx, run_idx), ident in zip(meta, ids):
             names = [name for name, _ in batches[batch_idx]]
             parsed = await self.parse_response(resp_lookup.get(ident), names)
@@ -252,7 +253,7 @@ class AttributeTask(Task):
         return pd.DataFrame(records)
 
     def _save(
-        self, result: pd.DataFrame, records: Optional[pd.DataFrame] = None
+        self, result: pd.DataFrame, records: pd.DataFrame | None = None
     ) -> None:
         from ..utils.file_utils import save_dataframe_with_fallback
 
