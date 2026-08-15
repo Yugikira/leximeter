@@ -6,11 +6,12 @@ import os
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+import numpy as np
 import pandas as pd
+from scipy.cluster.vq import kmeans2
 
 from ..templates import load_prompt
 from ..utils.parsing import safe_json
-from ..utils.similarity import cluster_by_similarity
 from . import _common
 from .base import Task
 
@@ -25,7 +26,6 @@ class DeduplicateConfig:
     group_size: int = 500
     modality: str = "entity"
     use_embeddings: bool = True
-    embedding_similarity_threshold: float = 0.85
 
 
 class Deduplicate(Task):
@@ -80,13 +80,35 @@ class Deduplicate(Task):
         return out
 
     async def _group_terms(self, unique: List[str]) -> List[List[str]]:
-        if self.cfg.use_embeddings and len(unique) > 1:
+        """Split unique terms into LLM-sized groups.
+
+        With embeddings enabled and ``len(unique) >= group_size``, terms are
+        clustered with ``kmeans2`` (``k = ceil(n / group_size)``) then
+        re-chunked to ``group_size`` per group — GABRIEL's contract
+        (deduplicate.py:145-164).  Otherwise (or when the embedding client is
+        unavailable) fall back to plain chunking.
+        """
+        if self.cfg.use_embeddings and len(unique) >= self.cfg.group_size:
             try:
                 emb = await self._get_embedding_client().embed(unique)
-                clusters = cluster_by_similarity(
-                    emb, self.cfg.embedding_similarity_threshold
-                )
-                return [[unique[i] for i in cluster] for cluster in clusters]
+                arr = np.array(emb, dtype=float)
+                k = max(1, int(np.ceil(len(unique) / self.cfg.group_size)))
+                _, labels = kmeans2(arr, k, minit="points")
+                clusters: List[List[str]] = [[] for _ in range(k)]
+                for term, lbl in zip(unique, labels):
+                    clusters[int(lbl)].append(term)
+                groups: List[List[str]] = []
+                current: List[str] = []
+                for cluster in clusters:
+                    for term in cluster:
+                        current.append(term)
+                        if len(current) >= self.cfg.group_size:
+                            groups.append(current)
+                            current = []
+                if current:
+                    groups.append(current)
+                if groups:
+                    return groups
             except Exception as exc:  # noqa: BLE001 - optional dependency may be absent
                 print(
                     f"[Deduplicate] embedding prefilter unavailable ({exc}); "

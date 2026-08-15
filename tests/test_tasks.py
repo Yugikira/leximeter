@@ -7,6 +7,7 @@ import json
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from leximeter import (
     bucket,
@@ -367,6 +368,7 @@ def test_deduplicate(tmp_path):
 
 
 def test_deduplicate_embeddings(tmp_path):
+    # 3 unique < group_size: embedding path not gated in, exercises fallback
     df = pd.DataFrame({"tech": ["iPhone", "Iphone 6", "Android"]})
     client = DictClient({"iPhone": ["iPhone", "Iphone 6"]})
     res = run(
@@ -379,6 +381,39 @@ def test_deduplicate_embeddings(tmp_path):
         )
     )
     assert list(res["mapped_tech"]) == ["iPhone", "iPhone", "Android"]
+
+
+class CountingEmbeddingClient(DummyEmbeddingClient):
+    """DummyEmbeddingClient that counts embed() calls."""
+
+    def __init__(self):
+        super().__init__()
+        self.calls = 0
+
+    async def embed(self, texts):
+        self.calls += 1
+        return await super().embed(texts)
+
+
+@pytest.mark.filterwarnings("ignore:One of the clusters is empty:UserWarning")
+def test_deduplicate_embeddings_kmeans(tmp_path):
+    """600 unique terms hit the kmeans2 prefilter: groups capped at group_size."""
+    terms = [f"term_{i:03d}" for i in range(600)]
+    df = pd.DataFrame({"tech": terms})
+    client = CountingClient({})
+    emb_client = CountingEmbeddingClient()
+    res = run(
+        deduplicate(
+            df,
+            "tech",
+            save_dir=str(tmp_path / "d3"),
+            client=client,
+            embedding_client=emb_client,
+        )
+    )
+    assert emb_client.calls == 1  # embedding path gated in (600 >= group_size)
+    assert client.calls == 2  # k = ceil(600/500) = 2 -> two <=500 groups
+    assert list(res["mapped_tech"]) == terms  # empty payload: identity mapping
 
 
 def test_bucket(tmp_path):

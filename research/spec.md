@@ -81,7 +81,7 @@
 
 **嵌入预筛**：
 
-- `deduplicate` 用嵌入相似度贪心聚类（阈值 0.85）后再 LLM 去重；`merge` 按 GABRIEL 契约走 kmeans2 聚类 + 簇内分段 + 窗口候选再 LLM 匹配（`use_embeddings` 需 long 表 ≥ 256 项才启用，否则纯 LLM 路径）；嵌入不可用时优雅回退。
+- `deduplicate` / `merge` 按 GABRIEL 契约走 kmeans2 聚类 + 簇内分段后再 LLM 去重/匹配（deduplicate 的 `use_embeddings` 需唯一项 ≥ `group_size`、merge 需 long 表 ≥ 256 项才启用，否则纯 LLM 路径）；嵌入不可用时优雅回退。
 
 **API 形态**：
 

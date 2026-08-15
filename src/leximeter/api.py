@@ -562,7 +562,6 @@ async def deduplicate(
     group_size: int = 500,
     modality: str = "entity",
     use_embeddings: bool = True,
-    embedding_similarity_threshold: float = 0.85,
     file_name: str = "deduplicate_responses.csv",
     reset_files: bool = False,
     client: Optional[LLMClient] = None,
@@ -583,7 +582,6 @@ async def deduplicate(
         group_size=group_size,
         modality=modality,
         use_embeddings=use_embeddings,
-        embedding_similarity_threshold=embedding_similarity_threshold,
     )
     task = Deduplicate(
         cfg,
