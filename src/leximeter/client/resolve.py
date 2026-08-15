@@ -5,7 +5,13 @@ Environment variables (all optional)::
     LEXIMETER_PROTOCOL          "responses" (default) or "chat"
     LEXIMETER_BASE_URL          endpoint for the chosen provider
     LEXIMETER_API_KEY           API key (falls back to OPENAI_API_KEY)
-    LEXIMETER_EMBEDDING_PROVIDER  "local" (default) or "openai"
+    LEXIMETER_EMBEDDING_PROVIDER  "local" (default), "openai", or "none"
+    LEXIMETER_EMBEDDING_MODEL   embedding model (bge-m3 default for local;
+                                text-embedding-3-small default for openai)
+    LEXIMETER_EMBEDDING_BASE_URL  embedding endpoint (openai only; defaults
+                                to LEXIMETER_BASE_URL / OPENAI_BASE_URL)
+    LEXIMETER_EMBEDDING_API_KEY   embedding key (openai only; defaults to
+                                LEXIMETER_API_KEY / OPENAI_API_KEY)
     LEXIMETER_SEARCH_PROVIDER   "tavily" (default) or "none"
 """
 
@@ -49,13 +55,22 @@ def resolve_embedding_client(
     *,
     provider: Optional[str] = None,
     model: Optional[str] = None,
+    base_url: Optional[str] = None,
+    api_key: Optional[str] = None,
     embedding_client: Optional[EmbeddingClient] = None,
-) -> EmbeddingClient:
-    """Return an embedding client from an explicit instance or env defaults."""
+) -> Optional[EmbeddingClient]:
+    """Return an embedding client from an explicit instance or env defaults.
+
+    ``None`` (provider "none") means "embeddings are disabled": callers
+    should skip the embedding step rather than fail — matching
+    ``resolve_search_tool``.
+    """
     if embedding_client is not None:
         return embedding_client
 
     provider = (provider or os.getenv("LEXIMETER_EMBEDDING_PROVIDER") or "local").lower()
+    if provider in ("", "none"):
+        return None
     if provider == "local":
         from .embedding_local import LocalBgeClient  # deferred to a later milestone
 
@@ -63,9 +78,14 @@ def resolve_embedding_client(
     if provider == "openai":
         from .embedding_openai import OpenAIEmbeddingClient  # deferred
 
-        return OpenAIEmbeddingClient(model=model)
+        return OpenAIEmbeddingClient(
+            model=model or os.getenv("LEXIMETER_EMBEDDING_MODEL"),
+            base_url=base_url or os.getenv("LEXIMETER_EMBEDDING_BASE_URL"),
+            api_key=api_key or os.getenv("LEXIMETER_EMBEDDING_API_KEY"),
+        )
     raise ValueError(
-        f"Unknown LEXIMETER_EMBEDDING_PROVIDER {provider!r}; expected 'local' or 'openai'."
+        f"Unknown LEXIMETER_EMBEDDING_PROVIDER {provider!r}; "
+        "expected 'local', 'openai', or 'none'."
     )
 
 

@@ -23,9 +23,11 @@ class OpenAIEmbeddingClient(EmbeddingClient):
         self._model_name = model or "text-embedding-3-small"
         self._client = AsyncOpenAI(
             api_key=api_key
+            or os.getenv("LEXIMETER_EMBEDDING_API_KEY")
             or os.getenv("LEXIMETER_API_KEY")
             or os.getenv("OPENAI_API_KEY"),
             base_url=base_url
+            or os.getenv("LEXIMETER_EMBEDDING_BASE_URL")
             or os.getenv("LEXIMETER_BASE_URL")
             or os.getenv("OPENAI_BASE_URL"),
         )

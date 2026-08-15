@@ -127,7 +127,10 @@ class Merge(Task):
                     return {str(k): v for k, v in cache.items()}
             except Exception:
                 pass
-        vectors = await self._get_embedding_client().embed(list(texts))
+        client = self._get_embedding_client()
+        if client is None:
+            return {}
+        vectors = await client.embed(list(texts))
         mapping = {str(t): list(map(float, v)) for t, v in zip(texts, vectors)}
         try:
             os.makedirs(os.path.dirname(save_path), exist_ok=True)
@@ -206,7 +209,7 @@ class Merge(Task):
 
         matches: Dict[str, str] = {}
         remaining = short_uniques[:]
-        if use_embeddings and self.cfg.auto_match_threshold > 0:
+        if use_embeddings and short_emb and long_emb and self.cfg.auto_match_threshold > 0:
             short_matrix = np.array([short_emb[s] for s in remaining], dtype=float)
             long_matrix = np.array([long_emb[t] for t in long_uniques], dtype=float)
             short_norms = np.linalg.norm(short_matrix, axis=1) + 1e-8

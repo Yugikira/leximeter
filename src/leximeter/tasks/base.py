@@ -52,7 +52,7 @@ class Task(ABC):
             self._client = resolve_client()
         return self._client
 
-    def _get_embedding_client(self) -> EmbeddingClient:
+    def _get_embedding_client(self) -> Optional[EmbeddingClient]:
         if self._embedding_client is None:
             from ..client.resolve import resolve_embedding_client
 

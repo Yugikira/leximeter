@@ -88,9 +88,14 @@ class Deduplicate(Task):
         (deduplicate.py:145-164).  Otherwise (or when the embedding client is
         unavailable) fall back to plain chunking.
         """
-        if self.cfg.use_embeddings and len(unique) >= self.cfg.group_size:
+        client = self._get_embedding_client()
+        if (
+            client is not None
+            and self.cfg.use_embeddings
+            and len(unique) >= self.cfg.group_size
+        ):
             try:
-                emb = await self._get_embedding_client().embed(unique)
+                emb = await client.embed(unique)
                 arr = np.array(emb, dtype=float)
                 k = max(1, int(np.ceil(len(unique) / self.cfg.group_size)))
                 _, labels = kmeans2(arr, k, minit="points")

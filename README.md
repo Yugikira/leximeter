@@ -38,9 +38,11 @@ LEXIMETER_MODEL=deepseek-chat
 # 走 OpenAI Responses API 时（默认协议），只需：
 OPENAI_API_KEY=sk-...
 
-# 嵌入：local（默认，本地 BGE，需 [embeddings]）| openai
+# 嵌入：local（默认，本地 BGE，需 [embeddings]）| openai | none（禁用，merge/deduplicate 自动走纯 LLM 路径）
 LEXIMETER_EMBEDDING_PROVIDER=local
 LEXIMETER_EMBEDDING_MODEL=BAAI/bge-m3
+LEXIMETER_EMBEDDING_BASE_URL=                    # openai 专用：嵌入端点（默认同 LEXIMETER_BASE_URL / OPENAI_BASE_URL）
+LEXIMETER_EMBEDDING_API_KEY=                     # openai 专用：嵌入密钥（默认同 LEXIMETER_API_KEY / OPENAI_API_KEY）
 
 # 联网搜索：tavily | none（默认）
 LEXIMETER_SEARCH_PROVIDER=none
