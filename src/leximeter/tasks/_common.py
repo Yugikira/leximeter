@@ -11,6 +11,8 @@ import os
 from collections.abc import Sequence
 from typing import Any, TypeVar
 
+import pandas as pd
+
 T = TypeVar("T")
 
 ATTRIBUTE_WARNING_THRESHOLD = 12
@@ -60,6 +62,116 @@ def update_run_metadata(save_dir: str, base_name: str, **updates: Any) -> None:
             json.dump(payload, f, indent=2)
     except (OSError, TypeError):
         pass
+
+
+def task_state_path(save_dir: str, task_name: str) -> str:
+    return os.path.join(save_dir, f"{task_name}_state.json")
+
+
+def load_task_state(save_dir: str, task_name: str) -> dict[str, Any] | None:
+    """Read a task-level checkpoint manifest (``{task}_state.json``)."""
+    return load_json_cache(task_state_path(save_dir, task_name))
+
+
+def save_task_state(
+    save_dir: str,
+    task_name: str,
+    *,
+    input_signature: str,
+    result_artifacts: Sequence[str],
+    status: str = "complete",
+) -> None:
+    """Persist a task-level checkpoint manifest (best-effort, never raises)."""
+    write_json_cache(
+        task_state_path(save_dir, task_name),
+        {
+            "task": task_name,
+            "status": status,
+            "input_signature": input_signature,
+            "result_artifacts": list(result_artifacts),
+        },
+    )
+
+
+def clear_task_state(save_dir: str, task_name: str) -> None:
+    """Remove a task-level checkpoint manifest (``reset_files=True`` path)."""
+    remove_file(task_state_path(save_dir, task_name))
+
+
+def load_completed_csv(
+    save_dir: str,
+    task_name: str,
+    *,
+    signature: str,
+    file_name: str,
+    reset_files: bool = False,
+) -> pd.DataFrame | None:
+    """Completed-run verification for CSV-backed task results.
+
+    Clears the task manifest when ``reset_files`` is set, otherwise returns
+    the saved frame when the manifest is complete and the input signature
+    matches.  ``None`` means the run must (re)execute: state missing,
+    inputs changed, or the result file missing/malformed/empty.
+    """
+    if reset_files:
+        clear_task_state(save_dir, task_name)
+        return None
+    state = load_task_state(save_dir, task_name)
+    if (
+        not state
+        or state.get("status") != "complete"
+        or state.get("input_signature") != signature
+    ):
+        return None
+    path = os.path.join(save_dir, file_name)
+    if not os.path.exists(path):
+        return None
+    try:
+        out = pd.read_csv(path)
+    except (OSError, ValueError):
+        return None
+    if out.empty:
+        return None
+    return out
+
+
+def remove_file(path: str | None) -> None:
+    """Best-effort file removal (never raises)."""
+    try:
+        if path and os.path.exists(path):
+            os.remove(path)
+    except OSError:
+        pass
+
+
+def compute_input_signature(*parts: Any) -> str:
+    """Stable sha1 over task inputs; changes whenever any input changes.
+
+    DataFrames are canonicalised to records (deterministic for identical
+    data) so the same run with the same inputs always hashes the same.
+    """
+
+    def _canon(value: Any) -> Any:
+        if isinstance(value, pd.DataFrame):
+            return {"df": value.to_dict(orient="records")}
+        if isinstance(value, pd.Series):
+            return {"series": value.tolist()}
+        if isinstance(value, dict):
+            return {str(k): _canon(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [_canon(v) for v in value]
+        return value
+
+    try:
+        payload = json.dumps(
+            [_canon(p) for p in parts],
+            sort_keys=True,
+            ensure_ascii=False,
+            default=str,
+        )
+    except (TypeError, ValueError):
+        payload = repr(parts)
+    return hashlib.sha1(payload.encode("utf-8")).hexdigest()
 
 
 def load_json_cache(path: str) -> dict[str, Any] | None:

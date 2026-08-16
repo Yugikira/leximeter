@@ -10,6 +10,7 @@ import pandas as pd
 
 from ...engine.batch import batch_execute
 from ...templates import load_prompt
+from .. import _common
 from ..base import Task
 
 
@@ -39,12 +40,36 @@ class Ideate(Task):
         reset_files: bool = False,
         **kwargs: Any,
     ) -> pd.DataFrame:
+        instructions = additional_instructions or self.cfg.additional_instructions
+        signature = _common.compute_input_signature(
+            topic,
+            self.cfg.n_ideas,
+            self.cfg.scientific_theory,
+            instructions,
+            self.cfg.model,
+            self.cfg.file_name,
+        )
+        if reset_files:
+            _common.clear_task_state(self.cfg.save_dir, "ideate")
+        else:
+            # Identifiers are positional (idea-00000...), so the raw batch
+            # checkpoint does not encode the topic: when the inputs change,
+            # stale completions must be discarded or they would be reused.
+            state = _common.load_task_state(self.cfg.save_dir, "ideate")
+            if state is not None and state.get("input_signature") != signature:
+                _common.remove_file(
+                    os.path.join(self.cfg.save_dir, f"{self._base_name()}_raw.csv")
+                )
+            loaded = self._load_completed(signature)
+            if loaded is not None:
+                return loaded
+
         prompts = [
             self._template.render(
                 topic=topic,
                 scientific_theory=self.cfg.scientific_theory,
                 seed=None,
-                additional_instructions=additional_instructions or self.cfg.additional_instructions,
+                additional_instructions=instructions,
             )
             for _ in range(self.cfg.n_ideas)
         ]
@@ -74,6 +99,29 @@ class Ideate(Task):
 
         out = pd.DataFrame(rows)
         self._save(out)
+        _common.save_task_state(
+            self.cfg.save_dir,
+            "ideate",
+            input_signature=signature,
+            result_artifacts=[self.cfg.file_name],
+        )
+        return out
+
+    def _load_completed(self, signature: str) -> pd.DataFrame | None:
+        """Return the saved result when inputs match and it is complete."""
+        out = _common.load_completed_csv(
+            self.cfg.save_dir,
+            "ideate",
+            signature=signature,
+            file_name=self.cfg.file_name,
+        )
+        if out is None:
+            return None
+        path = os.path.join(self.cfg.save_dir, self.cfg.file_name)
+        print(
+            f"[Ideate] Found completed result in {path}; loading "
+            f"{len(out)} ideas."
+        )
         return out
 
     @staticmethod

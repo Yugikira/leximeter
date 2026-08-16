@@ -67,7 +67,9 @@ class Compare(Task):
                 )
             )
 
-        resp_df = await self._execute(prompts, ids, reset_files=reset_files, **kwargs)
+        resp_df = await self._execute_or_reuse(
+            prompts, ids, reset_files=reset_files, **kwargs
+        )
         resp_lookup = dict(zip(resp_df["Identifier"], resp_df["Response"]))
 
         rows: list[dict] = []
@@ -84,6 +86,31 @@ class Compare(Task):
                         }
                     )
         return pd.DataFrame(rows)
+
+    async def _execute_or_reuse(self, prompts, ids, *, reset_files, **kwargs):
+        """Reuse the batch checkpoint when every identifier is already done.
+
+        Compare identifiers are content hashes of the pair, so a fully
+        completed checkpoint is self-validating: same pairs -> same ids.
+        This short-circuit makes reruns fully deterministic with zero
+        provider calls (no prompt building, no dispatch).
+        """
+        if not reset_files and ids:
+            from ..engine import checkpoint as _ckpt
+
+            checkpoint = _ckpt.load_checkpoint(
+                os.path.join(
+                    self.cfg.save_dir, f"{self._base_name()}_raw_responses.csv"
+                )
+            )
+            done = _ckpt.completed_identifiers(checkpoint)
+            if all(ident in done for ident in ids):
+                print(
+                    f"[Compare] All {len(ids)} comparisons already complete; "
+                    "reusing checkpoint."
+                )
+                return checkpoint
+        return await self._execute(prompts, ids, reset_files=reset_files, **kwargs)
 
     async def _execute(self, prompts, ids, *, reset_files, **kwargs):
         from ..engine.batch import batch_execute

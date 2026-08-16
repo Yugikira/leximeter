@@ -36,6 +36,7 @@ import pandas as pd
 
 from ...utils.file_utils import save_dataframe_with_fallback
 from ...utils.regression import _safe_fit_ols
+from .. import _common
 from ..base import Task
 from ..classify import Classify, ClassifyConfig
 from ..codify import Codify, CodifyConfig
@@ -293,6 +294,26 @@ class Debias(Task):
         if column_name not in df.columns:
             raise ValueError(f"Column '{column_name}' not found in DataFrame")
 
+        # Input signature covers the whole input frame (the result embeds
+        # every input column) plus every config field that shapes the run;
+        # a completed run with the same signature is reloaded from disk
+        # (zero provider calls) instead of re-measuring.
+        signature = _common.compute_input_signature(
+            df,
+            column_name,
+            {
+                k: v
+                for k, v in asdict(self.cfg).items()
+                if k not in ("save_dir", "run_name")
+            },
+        )
+        if reset_files:
+            _common.clear_task_state(self.run_dir, "debias")
+        else:
+            loaded = self._load_completed(signature)
+            if loaded is not None:
+                return loaded
+
         df_master = df.copy().reset_index(drop=True)
         row_index = pd.RangeIndex(start=0, stop=len(df_master), step=1, name="__debias_row_id")
         df_master.index = row_index
@@ -428,10 +449,61 @@ class Debias(Task):
         if self.cfg.verbose:
             print(f"[Debias] Results saved to {results_path}")
 
+        _common.save_task_state(
+            self.run_dir,
+            "debias",
+            input_signature=signature,
+            result_artifacts=["debias_results.csv", "debias_metadata.json"],
+        )
+
         return DebiasResult(
             results=results_df,
             metadata=metadata,
             regression=regression_info,
+        )
+
+    # ------------------------------------------------------------------
+    def _load_completed(self, signature: str) -> DebiasResult | None:
+        """Rebuild the result when inputs match and the run is complete."""
+        state = _common.load_task_state(self.run_dir, "debias")
+        if (
+            not state
+            or state.get("status") != "complete"
+            or state.get("input_signature") != signature
+        ):
+            return None
+        results_path = os.path.join(self.run_dir, "debias_results.csv")
+        metadata_path = os.path.join(self.run_dir, "debias_metadata.json")
+        if not os.path.exists(results_path) or not os.path.exists(metadata_path):
+            return None
+        try:
+            results_df = pd.read_csv(results_path)
+            with open(metadata_path, encoding="utf-8") as f:
+                metadata = json.load(f)
+        except (OSError, ValueError):
+            return None
+        if not isinstance(metadata, dict) or results_df.empty:
+            return None
+        regression: dict[str, DebiasRegressionResult] = {}
+        try:
+            for variant in metadata.get("variants") or []:
+                if isinstance(variant, dict) and "variant" in variant:
+                    regression[variant["variant"]] = DebiasRegressionResult(**variant)
+        except (TypeError, KeyError, ValueError):
+            # metadata from an incompatible format: fall back to a full rerun
+            return None
+        # mirror the fresh-run in-memory metadata, which carries its path
+        metadata = dict(metadata)
+        metadata["metadata_path"] = metadata_path
+        if self.cfg.verbose:
+            print(
+                f"[Debias] Found completed result in {results_path}; "
+                f"loading {len(results_df)} rows."
+            )
+        return DebiasResult(
+            results=results_df,
+            metadata=metadata,
+            regression=regression,
         )
 
     # ------------------------------------------------------------------

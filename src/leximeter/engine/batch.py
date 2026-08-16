@@ -19,7 +19,7 @@ from . import checkpoint as _checkpoint
 _SAVE_EVERY = 100
 
 
-async def _complete_with_retry(
+async def complete_with_retry(
     client: LLMClient,
     prompt: str,
     *,
@@ -29,7 +29,12 @@ async def _complete_with_retry(
     timeout: float | None,
     **generation_kwargs: Any,
 ) -> str:
-    """Call ``client.complete``, retrying with exponential backoff."""
+    """Call ``client.complete``, retrying with exponential backoff.
+
+    Also used directly by tasks that call the client outside a batch
+    (e.g. :class:`~leximeter.tasks.seed.Seed`), so single-call failures get
+    the same per-request retry coverage as batched jobs.
+    """
     last_exc: Exception | None = None
     for attempt in range(max_retries + 1):
         try:
@@ -90,7 +95,7 @@ async def batch_execute(
         async with sem:
             started = time.monotonic()
             try:
-                text = await _complete_with_retry(
+                text = await complete_with_retry(
                     client,
                     prompt,
                     model=model,

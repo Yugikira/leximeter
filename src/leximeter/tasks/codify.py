@@ -23,8 +23,10 @@ stripped text (checkpoints in ``completion_checks/``, per-iteration outputs
 
 from __future__ import annotations
 
+import json
 import os
 import re
+import shutil
 import warnings
 from collections import defaultdict
 from dataclasses import InitVar, dataclass
@@ -42,6 +44,7 @@ from ..utils.word_matching import (
     robust_find_improved,
     strict_find,
 )
+from . import _common
 from .base import Task
 
 
@@ -582,6 +585,63 @@ class Codify(Task):
         stem, ext = os.path.splitext(self.cfg.file_name)
         return f"{stem}_iter{iteration}{ext}"
 
+    # ------------------------------------------------------------------
+    # Task-level checkpoint helpers (TICKET-001)
+    # ------------------------------------------------------------------
+    def _load_completed(
+        self, signature: str, list_columns: list[str]
+    ) -> pd.DataFrame | None:
+        """Return the saved result when inputs match and it is complete.
+
+        List-valued columns were stored as JSON; they are restored to real
+        lists so consumers keep receiving the same shapes as a fresh run.
+        """
+        out = _common.load_completed_csv(
+            self.cfg.save_dir,
+            "codify",
+            signature=signature,
+            file_name="coded_passages.csv",
+        )
+        if out is None:
+            return None
+        for col in list_columns:
+            if col not in out.columns:
+                continue
+            out[col] = out[col].map(self._restore_list)
+        print(
+            f"[Codify] Found completed result in "
+            f"{os.path.join(self.cfg.save_dir, 'coded_passages.csv')}; "
+            f"loading {len(out)} rows."
+        )
+        return out
+
+    @staticmethod
+    def _restore_list(value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        try:
+            parsed = json.loads(value)
+        except ValueError:
+            return value
+        return parsed if isinstance(parsed, (list, dict)) else value
+
+    def _purge_iteration_checkpoints(self) -> None:
+        """Remove stale per-iteration batch checkpoints after input changes."""
+        stem, ext = os.path.splitext(self.cfg.file_name)
+        try:
+            names = os.listdir(self.cfg.save_dir)
+        except OSError:
+            return
+        for name in names:
+            if name == self.cfg.file_name or (
+                name.startswith(f"{stem}_iter") and name.endswith(ext)
+            ):
+                _common.remove_file(os.path.join(self.cfg.save_dir, name))
+        try:
+            shutil.rmtree(os.path.join(self.cfg.save_dir, "completion_checks"))
+        except OSError:
+            pass
+
     def _strip_snippets(
         self, text: str, snippets_by_category: dict[str, list[str]]
     ) -> str:
@@ -932,6 +992,36 @@ class Codify(Task):
             )
 
         categories_dict = categories or {}
+
+        # Input signature covers the coded text plus the category set and
+        # chunking knobs.  A completed run with the same signature is
+        # reloaded from ``coded_passages.csv`` (zero provider calls).
+        signature = _common.compute_input_signature(
+            original_texts,
+            categories_dict,
+            additional,
+            self.cfg.n_rounds,
+            self.cfg.max_words_per_call,
+            self.cfg.max_categories_per_call,
+            self.cfg.modality,
+            self.cfg.model,
+        )
+        list_columns = (
+            ["coded_passages"] if dynamic_mode else list(categories_dict.keys())
+        )
+        if reset_files:
+            _common.clear_task_state(self.cfg.save_dir, "codify")
+        else:
+            state = _common.load_task_state(self.cfg.save_dir, "codify")
+            if state is not None and state.get("input_signature") != signature:
+                # Identifiers are row/iteration based (row0_iter0_chunk0...),
+                # so stale batch checkpoints must be purged when the inputs
+                # change or old completions would be silently reused.
+                self._purge_iteration_checkpoints()
+            loaded = self._load_completed(signature, list_columns)
+            if loaded is not None:
+                return loaded
+
         aggregated: dict[int, dict[str, list[str]]] = {}
         if not dynamic_mode:
             for idx in range(len(df_proc)):
@@ -978,7 +1068,26 @@ class Codify(Task):
                 ]
 
         output_path = os.path.join(self.cfg.save_dir, "coded_passages.csv")
-        save_dataframe_with_fallback(df_proc, output_path, index=False, label="Codify")
+        # List-valued columns (snippets per category / coded_passages) are
+        # serialised as JSON so the file round-trips losslessly; consumers
+        # (e.g. debias' snippet collector) already expect JSON in those cells.
+        frame_to_save = df_proc.copy()
+        for col in list_columns:
+            if col in frame_to_save.columns:
+                frame_to_save[col] = frame_to_save[col].map(
+                    lambda v: json.dumps(v, ensure_ascii=False)
+                    if isinstance(v, (list, dict))
+                    else v
+                )
+        save_dataframe_with_fallback(
+            frame_to_save, output_path, index=False, label="Codify"
+        )
+        _common.save_task_state(
+            self.cfg.save_dir,
+            "codify",
+            input_signature=signature,
+            result_artifacts=["coded_passages.csv"],
+        )
 
         if self.cfg.debug_print:
             print(

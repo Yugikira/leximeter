@@ -4,7 +4,12 @@ Each public function constructs a task config and delegates to a task.
 Parameters are explicit; provider selection happens via ``client=`` /
 ``embedding_client=`` / ``search_tool=`` (or environment defaults).  Extra
 keyword arguments are forwarded to the engine / model call (e.g.
-``max_output_tokens``, ``temperature``, ``timeout``, ``max_retries``).
+``max_output_tokens``, ``temperature``, ``timeout``).
+
+Complex tasks (``discover`` / ``ideate`` / ``poll`` / ``debias``) accept a
+task-level ``max_retries``: when the whole run raises, it is retried from
+its on-disk checkpoints (``reset_files`` forced to ``False``) instead of
+re-running completed stages.
 """
 
 from __future__ import annotations
@@ -16,6 +21,7 @@ import pandas as pd
 from .client.base import LLMClient
 from .client.embedding import EmbeddingClient
 from .client.search import SearchTool
+from .engine.retry import run_task_with_retry
 from .tasks.bucket import Bucket, BucketConfig
 from .tasks.classify import Classify, ClassifyConfig
 from .tasks.codify import Codify, CodifyConfig
@@ -392,6 +398,7 @@ async def seed(
     file_name: str = "seed_entities.csv",
     existing_entities: list | None = None,
     reset_files: bool = False,
+    max_retries: int = 3,
     client: LLMClient | None = None,
     embedding_client: EmbeddingClient | None = None,
     search_tool: SearchTool | None = None,
@@ -399,6 +406,10 @@ async def seed(
 ) -> pd.DataFrame:
     """Generate ``num_entities`` distinct entities per ``instructions``.
 
+    ``max_retries`` is the per-generation-batch retry count (each batch's
+    provider call is retried with exponential backoff).  A completed seed
+    is cached to ``seed_entities.csv`` + ``seed_state.json``: re-running
+    with the same inputs makes zero provider calls and reloads the file.
     Returns a DataFrame with ``entity`` and ``entity_id`` columns.
     """
     cfg = SeedConfig(
@@ -412,6 +423,7 @@ async def seed(
         existing_entities_cap=existing_entities_cap,
         deduplicate=deduplicate,
         deduplicate_sample_seed=deduplicate_sample_seed,
+        max_retries=max_retries,
     )
     task = Seed(
         cfg,
@@ -781,6 +793,7 @@ async def discover(
     top_k_per_round: int = 1,
     raw_term_definitions: bool = True,
     reset_files: bool = False,
+    max_retries: int = 0,
     client: LLMClient | None = None,
     embedding_client: EmbeddingClient | None = None,
     search_tool: SearchTool | None = None,
@@ -795,6 +808,10 @@ async def discover(
     ``inverted_pct`` and ``net_pct`` (actual − inverted, percentage
     points).  Results are persisted to ``discover_results_snapshot.json``
     and ``discover_results_export.zip``.
+
+    ``max_retries`` retries the whole pipeline from its checkpoints when a
+    run raises; a completed run with unchanged inputs is reloaded from the
+    snapshot with zero provider calls.
     """
     cfg = DiscoverConfig(
         save_dir=save_dir,
@@ -820,7 +837,9 @@ async def discover(
         embedding_client=embedding_client,
         search_tool=search_tool,
     )
-    return await task.run(
+    return await run_task_with_retry(
+        task,
+        max_retries,
         df,
         column_name=column_name,
         circle_column_name=circle_column_name,
@@ -841,12 +860,18 @@ async def ideate(
     additional_instructions: str | None = None,
     file_name: str = "ideation.csv",
     reset_files: bool = False,
+    max_retries: int = 0,
     client: LLMClient | None = None,
     embedding_client: EmbeddingClient | None = None,
     search_tool: SearchTool | None = None,
     **engine_kwargs: Any,
 ) -> pd.DataFrame:
-    """Generate ``n_ideas`` reports on a topic and parse them into fields."""
+    """Generate ``n_ideas`` reports on a topic and parse them into fields.
+
+    ``max_retries`` retries the whole run from its checkpoints when it
+    raises; a completed run with unchanged inputs is reloaded from
+    ``ideation.csv`` with zero provider calls.
+    """
     cfg = IdeateConfig(
         save_dir=save_dir,
         file_name=file_name,
@@ -862,7 +887,9 @@ async def ideate(
         embedding_client=embedding_client,
         search_tool=search_tool,
     )
-    return await task.run(
+    return await run_task_with_retry(
+        task,
+        max_retries,
         topic,
         additional_instructions=additional_instructions,
         reset_files=reset_files,
@@ -886,12 +913,19 @@ async def poll(
     n_questions_per_run: int = 8,
     file_name: str = "poll_results.csv",
     reset_files: bool = False,
+    max_retries: int = 0,
     client: LLMClient | None = None,
     embedding_client: EmbeddingClient | None = None,
     search_tool: SearchTool | None = None,
     **engine_kwargs: Any,
 ) -> pd.DataFrame:
-    """Seed a population, expand personas, and survey them."""
+    """Seed a population, expand personas, and survey them.
+
+    ``max_retries`` retries the whole run from its checkpoints when it
+    raises (e.g. a seed-stage provider failure); a completed run with
+    unchanged inputs is reloaded from ``poll_results.csv`` with zero
+    provider calls.
+    """
     cfg = PollConfig(
         population_description=population_description,
         questions=list(questions) if questions else [],
@@ -911,7 +945,9 @@ async def poll(
         embedding_client=embedding_client,
         search_tool=search_tool,
     )
-    return await task.run(
+    return await run_task_with_retry(
+        task,
+        max_retries,
         df=df,
         column_name=column_name,
         population_description=population_description,
@@ -946,12 +982,18 @@ async def debias(
     random_seed: int = 12345,
     verbose: bool = True,
     reset_files: bool = False,
+    max_retries: int = 0,
     client: LLMClient | None = None,
     embedding_client: EmbeddingClient | None = None,
     search_tool: SearchTool | None = None,
     **engine_kwargs: Any,
 ) -> DebiasResult:
     """Measure a signal, strip a confounder, re-measure, and regress out bias.
+
+    ``max_retries`` retries the whole pipeline from its checkpoints when a
+    run raises; a completed run with unchanged inputs is rebuilt from
+    ``debias_results.csv`` + ``debias_metadata.json`` with zero provider
+    calls.
 
     The pipeline measures ``measurement_attribute`` on the original text,
     removes the confounding signal (``removal_method``: ``"codify"`` strips
@@ -994,4 +1036,8 @@ async def debias(
         embedding_client=embedding_client,
         search_tool=search_tool,
     )
-    return await task.run(df, column_name, reset_files=reset_files, **engine_kwargs)
+    # Debias.run takes no engine kwargs; forwarding only the explicit args
+    # keeps the retry wrapper generic while preserving existing behaviour.
+    return await run_task_with_retry(
+        task, max_retries, df, column_name, reset_files=reset_files
+    )

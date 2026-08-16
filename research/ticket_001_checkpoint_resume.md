@@ -1,8 +1,28 @@
 # TICKET-001: 复杂任务断点续接 + 已完成验证（任务级 checkpoint）
 
-- **状态**: OPEN（2026-08-16 创建，来自 0816 复杂链路冒烟后的观察）
+- **状态**: DONE（2026-08-16 实施；含用户补充的"leximeter 层面 max retry 包装"需求）
 - **优先级**: 中（影响长任务的可用性；当前"重跑可完成但会重做编排"，无数据丢失风险，纯效率与确定性损失）
 - **标签**: checkpoint / resume / complex-tasks
+
+## 实施记录（2026-08-16）
+
+按方案 C→B 实施，并补充任务级 retry wrapper（用户要求）。**未做方案 A 的显式 stage 状态机**——分析发现 debias/poll/discover 的子任务（rate/classify/bucket/batch_execute）本身已有检查点，补上 C+B+seed 幂等 后阶段续跑由子任务检查点自动达成。
+
+| 改动 | 文件 |
+|---|---|
+| 任务级 retry wrapper（重试强制 `reset_files=False` 从检查点续跑） | `src/leximeter/engine/retry.py`（新）|
+| `{task}_state.json` manifest + `compute_input_signature` 共用件 | `src/leximeter/tasks/_common.py` |
+| seed：逐 batch `complete_with_retry`（cfg.max_retries=3）+ 已完成验证 | `seed.py`、`engine/batch.py`（`_complete_with_retry` 公开化）|
+| 已完成验证（零 API 重跑） | `ideate`/`poll`/`debias`（重建 DebiasResult）/`discover`（snapshot 重建）|
+| 子任务幂等 | `codify`（coded_passages.csv + signature 门控，list 列 JSON 化落盘）、`compare`（content-hash 自验证短接）|
+| api 层 `max_retries` | `api.py`：discover/ideate/poll/debias 任务级（默认 0）；seed 逐 batch（默认 3）|
+
+**关键设计点**：
+- **位置式 identifier 的 stale 检查点清除**：codify（`row{idx}_iter{iter}_chunk{ci}`）与 ideate（`idea-{i:05d}`）的 batch 检查点不编码输入内容——signature 失效时必须清除（ideate 删 `ideation_raw.csv`；codify 删 per-iteration CSVs + completion_checks/），否则"改输入 → 全量重跑"的验收不成立。
+- **compare 自验证短接**：identifier 是 pair 内容 hash，检查点全 done 即等价于输入未变，无需 signature。
+- **codify 落盘格式**：list/dict 列（snippets、coded_passages）改存 JSON 字符串（debias 的 `_collect_snippets` 本就按 JSON 解析），加载时 `json.loads` 还原，避免 CSV 往返丢类型。
+- **code-review 修复**（Standards + Spec 双轴）：`engine/retry.py` 不导入 tasks 层（鸭子类型，保持 engine 只依赖 client 契约）；`_load_completed` 守卫收敛为共用 `_common.load_completed_csv`；signature 覆盖修正——debias 签**整个 df**（结果嵌所有输入列）、seed/codify 补 `model`；debias 重载 metadata 补齐 `metadata_path` 键且 rebuild 失败（TypeError/KeyError/ValueError）回退全量重跑；retry wrapper 不重试确定性错误（ValueError/TypeError）。
+- 验收标准 1-6 均有测试覆盖（`tests/test_checkpoint.py`，32 个用例全假 provider 零网络；含 discover/poll/codify 的 reset 路径、AC3 签名敏感性、discover 恢复全量一致性断言）。
 
 ## 问题描述
 

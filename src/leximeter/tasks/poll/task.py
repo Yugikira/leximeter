@@ -53,6 +53,25 @@ class Poll(Task):
         )
         desc = population_description or self.cfg.population_description
 
+        # Input signature covers everything that shapes the run: the seed
+        # source (input frame, or population description), the questions,
+        # and the per-stage models.  A completed run with the same signature
+        # is reloaded instead of re-executed (zero provider calls).
+        seed_key = (df, column_name) if df is not None else (desc, self.cfg.num_personas)
+        signature = _common.compute_input_signature(
+            seed_key,
+            qs,
+            self.cfg.seed_model,
+            self.cfg.persona_model,
+            self.cfg.poll_model,
+            self.cfg.n_questions_per_run,
+            self.cfg.entities_per_generation,
+            self.cfg.file_name,
+        )
+        loaded = self._load_completed(signature, reset_files=reset_files)
+        if loaded is not None:
+            return loaded
+
         if df is not None:
             seeds = [str(v) for v in df[column_name].tolist()]
         else:
@@ -123,6 +142,32 @@ class Poll(Task):
                         out.loc[j, q] = self._sample(obj.get(q))
 
         self._save(out)
+        _common.save_task_state(
+            self.cfg.save_dir,
+            "poll",
+            input_signature=signature,
+            result_artifacts=[self.cfg.file_name],
+        )
+        return out
+
+    def _load_completed(
+        self, signature: str, *, reset_files: bool = False
+    ) -> pd.DataFrame | None:
+        """Return the saved result when inputs match and it is complete."""
+        out = _common.load_completed_csv(
+            self.cfg.save_dir,
+            "poll",
+            signature=signature,
+            file_name=self.cfg.file_name,
+            reset_files=reset_files,
+        )
+        if out is None:
+            return None
+        path = os.path.join(self.cfg.save_dir, self.cfg.file_name)
+        print(
+            f"[Poll] Found completed result in {path}; loading "
+            f"{len(out)} responses."
+        )
         return out
 
     @staticmethod

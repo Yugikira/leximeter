@@ -27,12 +27,13 @@ import json
 import os
 import re
 import zipfile
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Any
 
 import pandas as pd
 
+from .. import _common
 from ..base import Task
 from ..bucket import Bucket, BucketConfig
 from ..classify import Classify, ClassifyConfig
@@ -192,6 +193,24 @@ class Discover(Task):
             raise ValueError(
                 "Provide either column_name or both circle_column_name and square_column_name"
             )
+
+        # Input signature covers the frame plus every config field that
+        # shapes the pipeline.  A completed run with the same signature is
+        # reloaded from the persisted snapshot (zero provider calls).
+        # Computed before the cfg mutation below so it is stable across runs.
+        signature = _common.compute_input_signature(
+            df,
+            column_name,
+            circle_column_name,
+            square_column_name,
+            {k: v for k, v in asdict(self.cfg).items() if k != "save_dir"},
+        )
+        if reset_files:
+            _common.clear_task_state(self.cfg.save_dir, "discover")
+        else:
+            loaded = self._load_completed(signature)
+            if loaded is not None:
+                return loaded
 
         if single:
             self.cfg.differentiate = False
@@ -517,4 +536,44 @@ class Discover(Task):
             result["codify"] = codify_df
         self._persist_result_snapshot(result)
         self._export_result_archive(result)
+        _common.save_task_state(
+            self.cfg.save_dir,
+            "discover",
+            input_signature=signature,
+            result_artifacts=[
+                "discover_results_snapshot.json",
+                "discover_results_export.zip",
+            ],
+        )
         return result
+
+    def _load_completed(self, signature: str) -> dict[str, Any] | None:
+        """Rebuild the result dict from the snapshot when inputs match."""
+        state = _common.load_task_state(self.cfg.save_dir, "discover")
+        if (
+            not state
+            or state.get("status") != "complete"
+            or state.get("input_signature") != signature
+        ):
+            return None
+        path = os.path.join(self.cfg.save_dir, "discover_results_snapshot.json")
+        if not os.path.exists(path):
+            return None
+        try:
+            with open(path, encoding="utf-8") as f:
+                payload = json.load(f)
+        except (OSError, ValueError):
+            return None
+        results = payload.get("results") if isinstance(payload, dict) else None
+        if not isinstance(results, dict) or not results:
+            return None
+        rebuilt: dict[str, Any] = {}
+        for key, value in results.items():
+            if key == "buckets":
+                # buckets are persisted as a plain label -> definition dict
+                rebuilt[key] = dict(value) if isinstance(value, dict) else value
+                continue
+            frame = self._value_to_dataframe(key, value)
+            rebuilt[key] = frame if frame is not None else value
+        print(f"[Discover] Found completed result in {path}; loading snapshot.")
+        return rebuilt
