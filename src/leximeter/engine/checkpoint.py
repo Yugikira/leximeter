@@ -41,7 +41,9 @@ def append_rows(path: str, rows: list[dict[str, Any]]) -> None:
     frame.to_csv(path, mode="a", header=header, index=False)
 
 
-def merge_with_checkpoint(checkpoint: pd.DataFrame, rows: list[dict[str, Any]]) -> pd.DataFrame:
+def merge_with_checkpoint(
+    checkpoint: pd.DataFrame, rows: list[dict[str, Any]]
+) -> pd.DataFrame:
     """Return the checkpoint plus new rows as a single frame."""
     new_frame = pd.DataFrame(rows, columns=COLUMNS)
     if checkpoint.empty:

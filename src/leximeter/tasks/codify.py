@@ -126,8 +126,7 @@ class Codify(Task):
         if len(words) <= max_words:
             return [text]
         return [
-            " ".join(words[i : i + max_words])
-            for i in range(0, len(words), max_words)
+            " ".join(words[i : i + max_words]) for i in range(0, len(words), max_words)
         ]
 
     def find_snippet_in_text(
@@ -150,7 +149,12 @@ class Codify(Task):
                     end_pos = self._find_word_end(text, end_pos)
 
                     # If using fallback matching, expand to include more context
-                    if match_type in ["first_20", "last_20", "first_half", "second_half"]:
+                    if match_type in [
+                        "first_20",
+                        "last_20",
+                        "first_half",
+                        "second_half",
+                    ]:
                         start_pos, end_pos = self._expand_fallback_match(
                             text, start_pos, end_pos, beginning_excerpt
                         )
@@ -286,10 +290,7 @@ class Codify(Task):
         if len(excerpt_letters) >= 20:
             excerpt_first_10 = excerpt_letters[:10]
             excerpt_last_10 = excerpt_letters[-10:]
-            if (
-                excerpt_first_10 in text_letters
-                and excerpt_last_10 in text_letters
-            ):
+            if excerpt_first_10 in text_letters and excerpt_last_10 in text_letters:
                 letters_idx = text_letters.find(excerpt_first_10)
                 ratio = letters_idx / len(text_letters) if text_letters else 0
                 approx_start = int(ratio * len(text))
@@ -305,10 +306,10 @@ class Codify(Task):
                 and excerpt_first_half in text_letters
                 and excerpt_second_half in text_letters
             ):
-                    letters_idx = text_letters.find(excerpt_first_half)
-                    ratio = letters_idx / len(text_letters) if text_letters else 0
-                    approx_start = int(ratio * len(text))
-                    return approx_start, approx_start + len(excerpt), "first_half"
+                letters_idx = text_letters.find(excerpt_first_half)
+                ratio = letters_idx / len(text_letters) if text_letters else 0
+                approx_start = int(ratio * len(text))
+                return approx_start, approx_start + len(excerpt), "first_half"
 
         return None, None, None
 
@@ -703,10 +704,10 @@ class Codify(Task):
 
         if not dynamic_mode and categories:
             category_batches = [
-                selected_categories[
-                    i : i + self.cfg.max_categories_per_call
-                ]
-                for i in range(0, len(selected_categories), self.cfg.max_categories_per_call)
+                selected_categories[i : i + self.cfg.max_categories_per_call]
+                for i in range(
+                    0, len(selected_categories), self.cfg.max_categories_per_call
+                )
             ]
         else:
             category_batches = []
@@ -732,9 +733,7 @@ class Codify(Task):
                     for batch_idx, batch_keys in enumerate(category_batches):
                         assert categories is not None
                         batch_categories = {k: categories[k] for k in batch_keys}
-                        identifier = (
-                            f"row{row_idx}_iter{iteration}_chunk{chunk_idx}_batch{batch_idx}"
-                        )
+                        identifier = f"row{row_idx}_iter{iteration}_chunk{chunk_idx}_batch{batch_idx}"
                         pending_requests.append(
                             {
                                 "identifier": identifier,
@@ -876,7 +875,9 @@ class Codify(Task):
             "that should be coded for that label. Default to False when unsure."
         )
         if self.cfg.completion_classifier_instructions:
-            base_instruction += "\n" + self.cfg.completion_classifier_instructions.strip()
+            base_instruction += (
+                "\n" + self.cfg.completion_classifier_instructions.strip()
+            )
         if additional_instructions:
             base_instruction += (
                 "\nOriginal coding instructions:\n" + additional_instructions.strip()
@@ -1075,9 +1076,11 @@ class Codify(Task):
         for col in list_columns:
             if col in frame_to_save.columns:
                 frame_to_save[col] = frame_to_save[col].map(
-                    lambda v: json.dumps(v, ensure_ascii=False)
-                    if isinstance(v, (list, dict))
-                    else v
+                    lambda v: (
+                        json.dumps(v, ensure_ascii=False)
+                        if isinstance(v, (list, dict))
+                        else v
+                    )
                 )
         save_dataframe_with_fallback(
             frame_to_save, output_path, index=False, label="Codify"

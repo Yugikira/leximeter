@@ -34,26 +34,44 @@ def normalize_text_aggressive(text: str) -> str:
     # First, handle encoding artifacts BEFORE Unicode normalization
     # This is crucial because unicodedata.normalize might change the artifacts
     encoding_fixes = {
-        '‚Äô': "'",  # Main apostrophe artifact
-        '‚Äôs': "'s", '‚Äôt': "'t", '‚Äôm': "'m", '‚Äôre': "'re",
-        '‚Äôve': "'ve", '‚Äôll': "'ll", '‚Äôd': "'d",
-        '‚Ä¶': ' ', '‚Äù': '"', '‚Äú': '"', '‚Äî': '-', '‚Ä¢': "'",
-        '‚Äò': "'", '‚Äúa': '"a',  # Common patterns
+        "‚Äô": "'",  # Main apostrophe artifact
+        "‚Äôs": "'s",
+        "‚Äôt": "'t",
+        "‚Äôm": "'m",
+        "‚Äôre": "'re",
+        "‚Äôve": "'ve",
+        "‚Äôll": "'ll",
+        "‚Äôd": "'d",
+        "‚Ä¶": " ",
+        "‚Äù": '"',
+        "‚Äú": '"',
+        "‚Äî": "-",
+        "‚Ä¢": "'",
+        "‚Äò": "'",
+        "‚Äúa": '"a',  # Common patterns
     }
 
     for old, new in encoding_fixes.items():
         text = text.replace(old, new)
 
     # Unicode normalization after fixing encoding artifacts
-    text = unicodedata.normalize('NFKD', text)
+    text = unicodedata.normalize("NFKD", text)
 
     # Standard Unicode replacements
     unicode_fixes = {
         # Unicode quotes and apostrophes
-        '’': "'", '‘': "'", '“': '"', '”': '"',
-        '–': '-', '—': '-', '…': '...',
+        "’": "'",
+        "‘": "'",
+        "“": '"',
+        "”": '"',
+        "–": "-",
+        "—": "-",
+        "…": "...",
         # Remove zero-width characters
-        '\u200b': '', '‌': '', '‍': '', '﻿': '',
+        "\u200b": "",
+        "‌": "",
+        "‍": "",
+        "﻿": "",
     }
 
     for old, new in unicode_fixes.items():
@@ -74,7 +92,7 @@ def normalize_text_aggressive(text: str) -> str:
             pass
 
     # Normalize whitespace - convert all whitespace to single spaces
-    text = re.sub(r'\s+', ' ', text)
+    text = re.sub(r"\s+", " ", text)
 
     return text.strip()
 
@@ -84,7 +102,7 @@ def letters_only(text: str) -> str:
     if not text:
         return ""
     # Convert to lowercase and keep only a-z letters
-    return re.sub(r'[^a-z]', '', text.lower())
+    return re.sub(r"[^a-z]", "", text.lower())
 
 
 def robust_find_improved(text: str, excerpt: str) -> str | None:
@@ -120,8 +138,8 @@ def robust_find_improved(text: str, excerpt: str) -> str | None:
 
     # Fallback 4: For shorter excerpts, try partial matching
     if 10 <= len(excerpt_letters) < 20:
-        excerpt_first_half = excerpt_letters[:len(excerpt_letters)//2]
-        excerpt_second_half = excerpt_letters[len(excerpt_letters)//2:]
+        excerpt_first_half = excerpt_letters[: len(excerpt_letters) // 2]
+        excerpt_second_half = excerpt_letters[len(excerpt_letters) // 2 :]
         if (
             len(excerpt_first_half) >= 5
             and len(excerpt_second_half) >= 5

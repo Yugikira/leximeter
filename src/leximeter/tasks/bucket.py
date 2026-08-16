@@ -295,9 +295,7 @@ class Bucket(Task):
                         if self.cfg.raw_term_definitions
                         else sample_list
                     )
-                    selected_map = {
-                        b: candidate_defs.get(b, "") for b in selected
-                    }
+                    selected_map = {b: candidate_defs.get(b, "") for b in selected}
                     pr.append(
                         self._template.render(
                             terms=sample_terms,
@@ -378,9 +376,7 @@ class Bucket(Task):
                 model=self.cfg.model,
                 json_mode=True,
                 n_parallels=self.cfg.n_parallels,
-                save_path=os.path.join(
-                    self.cfg.save_dir, f"vote_final{loop_idx}.csv"
-                ),
+                save_path=os.path.join(self.cfg.save_dir, f"vote_final{loop_idx}.csv"),
                 reset_files=reset_files,
                 **kwargs,
             )
@@ -417,9 +413,7 @@ class Bucket(Task):
                 "definition": list(bucket_defs.values()),
             }
         )
-        out_df.to_csv(
-            os.path.join(self.cfg.save_dir, self.cfg.file_name), index=False
-        )
+        out_df.to_csv(os.path.join(self.cfg.save_dir, self.cfg.file_name), index=False)
         state["final_buckets"] = out_df.to_dict(orient="records")
         state["finalized"] = True
         state["stage"] = "complete"

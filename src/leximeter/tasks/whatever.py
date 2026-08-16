@@ -50,8 +50,11 @@ class Whatever(Task):
         **kwargs: Any,
     ) -> pd.DataFrame:
         prompts_list, identifiers_list = self._normalize(
-            prompts, df=df, column_name=column_name,
-            identifiers=identifiers, identifier_column=identifier_column,
+            prompts,
+            df=df,
+            column_name=column_name,
+            identifiers=identifiers,
+            identifier_column=identifier_column,
         )
 
         web_search_flag = self.cfg.web_search
@@ -94,9 +97,7 @@ class Whatever(Task):
             )
         return self._search_tool
 
-    async def _augment_with_search(
-        self, prompts: list[str]
-    ) -> list[str]:
+    async def _augment_with_search(self, prompts: list[str]) -> list[str]:
         """Prepend retrieved context to each prompt when a search tool is available.
 
         A prompt is used verbatim when retrieval yields nothing (no tool

@@ -167,9 +167,7 @@ class Paraphrase(Task):
             identifiers: list[str] = []
             for idx, text in enumerate(texts):
                 prompt_text = (
-                    text
-                    if self.cfg.modality in {"text", "entity", "web"}
-                    else ""
+                    text if self.cfg.modality in {"text", "entity", "web"} else ""
                 )
                 for j in range(1, n + 1):
                     prompts.append(
@@ -220,7 +218,9 @@ class Paraphrase(Task):
         # Assemble the final columns.  When multiple runs are requested,
         # each run will occupy its own column with a
         # numeric suffix.
-        col_names = [base_col] if n == 1 else [f"{base_col}_{i}" for i in range(1, n + 1)]
+        col_names = (
+            [base_col] if n == 1 else [f"{base_col}_{i}" for i in range(1, n + 1)]
+        )
         approval_cols = (
             [f"{base_col}_approved"]
             if n == 1

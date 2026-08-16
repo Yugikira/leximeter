@@ -172,10 +172,16 @@ class Merge(Task):
             raise ValueError("`how` must be either 'left' or 'right'.")
 
         if how == "left":
-            short_df, long_df = df_left.reset_index(drop=True), df_right.reset_index(drop=True)
+            short_df, long_df = (
+                df_left.reset_index(drop=True),
+                df_right.reset_index(drop=True),
+            )
             short_key, long_key = left_key, right_key
         else:  # right merge
-            short_df, long_df = df_right.reset_index(drop=True), df_left.reset_index(drop=True)
+            short_df, long_df = (
+                df_right.reset_index(drop=True),
+                df_left.reset_index(drop=True),
+            )
             short_key, long_key = right_key, left_key
 
         # Deduplicate keys and track normalized maps
@@ -185,7 +191,9 @@ class Merge(Task):
         # Build a global norm→representative map for the left-hand keys.
         global_short_norm_map = {self._normalize(s): s for s in short_uniques}
 
-        use_embeddings = self.cfg.use_embeddings and len(long_uniques) >= self.cfg.long_list_len
+        use_embeddings = (
+            self.cfg.use_embeddings and len(long_uniques) >= self.cfg.long_list_len
+        )
         response_kwargs = dict(kwargs)
         response_kwargs.pop("embedding_fn", None)
 
@@ -213,12 +221,19 @@ class Merge(Task):
 
         matches: dict[str, str] = {}
         remaining = short_uniques[:]
-        if use_embeddings and short_emb and long_emb and self.cfg.auto_match_threshold > 0:
+        if (
+            use_embeddings
+            and short_emb
+            and long_emb
+            and self.cfg.auto_match_threshold > 0
+        ):
             short_matrix = np.array([short_emb[s] for s in remaining], dtype=float)
             long_matrix = np.array([long_emb[t] for t in long_uniques], dtype=float)
             short_norms = np.linalg.norm(short_matrix, axis=1) + 1e-8
             long_norms = np.linalg.norm(long_matrix, axis=1) + 1e-8
-            sims = (short_matrix @ long_matrix.T) / (short_norms[:, None] * long_norms[None, :])
+            sims = (short_matrix @ long_matrix.T) / (
+                short_norms[:, None] * long_norms[None, :]
+            )
             for i, s in enumerate(remaining):
                 row = sims[i]
                 above = np.where(row >= self.cfg.auto_match_threshold)[0]
@@ -240,7 +255,11 @@ class Merge(Task):
                 _, labels = kmeans2(arr, k, minit="points")
                 cluster_sets: list[list[str]] = []
                 for cluster_id in range(k):
-                    members = [remaining_short[i] for i, lbl in enumerate(labels) if lbl == cluster_id]
+                    members = [
+                        remaining_short[i]
+                        for i, lbl in enumerate(labels)
+                        if lbl == cluster_id
+                    ]
                     if not members:
                         continue
                     for j in range(0, len(members), short_len):
@@ -275,8 +294,13 @@ class Merge(Task):
                                     combined[idx] = score
                         if not combined:
                             continue
-                        sorted_idx = sorted(combined.keys(), key=lambda i: combined[i], reverse=True)
-                        candidate = [long_uniques[i] for i in sorted_idx[: self.cfg.long_list_len]]
+                        sorted_idx = sorted(
+                            combined.keys(), key=lambda i: combined[i], reverse=True
+                        )
+                        candidate = [
+                            long_uniques[i]
+                            for i in sorted_idx[: self.cfg.long_list_len]
+                        ]
                         candidates.append(candidate)
                         clusters_out.append(subset)
             else:
@@ -328,7 +352,11 @@ class Merge(Task):
                 res = safe_json(res)
 
             if isinstance(res, dict):
-                return {k: v for k, v in res.items() if isinstance(k, str) and isinstance(v, str)}
+                return {
+                    k: v
+                    for k, v in res.items()
+                    if isinstance(k, str) and isinstance(v, str)
+                }
             return {}
 
         save_path = os.path.join(self.cfg.save_dir, self.cfg.file_name)
@@ -342,8 +370,15 @@ class Merge(Task):
             if not remaining:
                 break
             prev_total = len(matches)
-            cur_short_len = max(1, int(self.cfg.short_list_len * (self.cfg.short_list_multiplier ** attempt)))
-            group_path = os.path.join(self.cfg.save_dir, f"merge_groups_attempt{attempt}.json")
+            cur_short_len = max(
+                1,
+                int(
+                    self.cfg.short_list_len * (self.cfg.short_list_multiplier**attempt)
+                ),
+            )
+            group_path = os.path.join(
+                self.cfg.save_dir, f"merge_groups_attempt{attempt}.json"
+            )
             if os.path.exists(group_path) and not reset_files:
                 data = await asyncio.to_thread(_common.load_json_cache, group_path)
                 clusters = (data or {}).get("clusters", [])
@@ -390,12 +425,16 @@ class Merge(Task):
             else:
                 resp_df = pd.DataFrame(columns=["Identifier", "Response"])
 
-            resp_map = dict(zip(resp_df.get("Identifier", []), resp_df.get("Response", [])))
+            resp_map = dict(
+                zip(resp_df.get("Identifier", []), resp_df.get("Response", []))
+            )
             parsed = await asyncio.gather(
                 *[safest_json(resp_map.get(i, "")) for i in identifiers]
             )
 
-            responses_by_base: dict[str, list[dict[str, str]]] = {bid: [] for bid in base_ids}
+            responses_by_base: dict[str, list[dict[str, str]]] = {
+                bid: [] for bid in base_ids
+            }
             for ident, res in zip(identifiers, parsed):
                 base_id = ident.rsplit("_run", 1)[0] if self.cfg.n_runs > 1 else ident
                 responses_by_base.setdefault(base_id, []).append(_parse_response(res))
@@ -433,7 +472,9 @@ class Merge(Task):
                                 l_vec = np.array(long_emb.get(cand, []), dtype=float)
                                 if l_vec.size:
                                     sims[cand] = float(
-                                        s_vec @ l_vec / (s_norm_val * (np.linalg.norm(l_vec) + 1e-8))
+                                        s_vec
+                                        @ l_vec
+                                        / (s_norm_val * (np.linalg.norm(l_vec) + 1e-8))
                                     )
                             if sims:
                                 chosen = max(sims, key=sims.get)

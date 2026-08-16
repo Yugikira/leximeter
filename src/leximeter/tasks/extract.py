@@ -94,8 +94,7 @@ class Extract(Task):
             nested_candidates = [
                 (key, val)
                 for key, val in obj.items()
-                if isinstance(val, dict)
-                and (not attr_keys or key not in attr_keys)
+                if isinstance(val, dict) and (not attr_keys or key not in attr_keys)
             ]
             if nested_candidates:
                 for name, payload in nested_candidates:
@@ -241,7 +240,9 @@ class Extract(Task):
             for ident in ids:
                 if run_idx == 1:
                     legacy_ident = f"{ident}_run1"
-                    run_ids.append(legacy_ident if legacy_ident in existing_ids else ident)
+                    run_ids.append(
+                        legacy_ident if legacy_ident in existing_ids else ident
+                    )
                 else:
                     run_ids.append(f"{ident}_run{run_idx}")
             run_identifier_lists.append(run_ids)
@@ -302,7 +303,9 @@ class Extract(Task):
                         "text": id_to_val[ident],
                         "run": run_idx,
                     }
-                    rec.update({attr: attr_values.get(attr, "unknown") for attr in base_attrs})
+                    rec.update(
+                        {attr: attr_values.get(attr, "unknown") for attr in base_attrs}
+                    )
                     full_records.append(rec)
 
         full_df = pd.DataFrame(full_records).set_index(["id", "entity_name", "run"])
@@ -336,7 +339,9 @@ class Extract(Task):
             agg_df = pd.DataFrame(index=entity_index)
         agg_df = agg_df.reindex(entity_index)
 
-        unknown_counts = {attr: (agg_df[attr] == "unknown").sum() for attr in base_attrs}
+        unknown_counts = {
+            attr: (agg_df[attr] == "unknown").sum() for attr in base_attrs
+        }
 
         out_path = os.path.join(self.cfg.save_dir, f"{base_name}_cleaned.csv")
         agg_reset = agg_df.reset_index()
@@ -397,7 +402,9 @@ class Extract(Task):
         print("\n=== Extraction coverage ===")
         for attr in base_attrs:
             known = total - unknown_counts[attr]
-            print(f"{attr:<55s}: {known:5d} extracted, {unknown_counts[attr]:5d} unknown")
+            print(
+                f"{attr:<55s}: {known:5d} extracted, {unknown_counts[attr]:5d} unknown"
+            )
         print("============================\n")
 
         if duplicate_rows > 0:

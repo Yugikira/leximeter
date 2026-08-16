@@ -86,7 +86,9 @@ class Deidentify(Task):
         words = text.split()
         if max_words <= 0:
             return [text]
-        return [" ".join(words[i : i + max_words]) for i in range(0, len(words), max_words)]
+        return [
+            " ".join(words[i : i + max_words]) for i in range(0, len(words), max_words)
+        ]
 
     async def _update_mapping(
         self, chunk: str, current_map: dict[str, Any], **kwargs: Any

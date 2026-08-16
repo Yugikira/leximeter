@@ -70,7 +70,9 @@ def fit_ols(
         parameter names default to ``const``, ``x1``, ``x2``, etc.
     """
     if not _HAS_STATSMODELS:
-        raise ImportError("statsmodels is required for the primary fit_ols implementation")
+        raise ImportError(
+            "statsmodels is required for the primary fit_ols implementation"
+        )
 
     # Wrap exogenous matrix in DataFrame when names are provided
     if varnames is not None and len(varnames) == X.shape[1]:
@@ -180,7 +182,7 @@ def _fit_ols_fallback(
 
     mean_y = float(y_arr.mean()) if n else 0.0
     ss_tot = float(np.sum((y_arr - mean_y) ** 2))
-    ss_res = float(np.sum(resid ** 2))
+    ss_res = float(np.sum(resid**2))
     r2 = 1.0 - ss_res / ss_tot if ss_tot else 0.0
     adj_r2 = 1.0 - (1.0 - r2) * (n - 1) / df_resid if df_resid > 0 else np.nan
 

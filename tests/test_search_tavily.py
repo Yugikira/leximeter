@@ -35,8 +35,16 @@ def test_search_formats_answer_and_results():
             "query": "quantum computing",
             "answer": "Quantum computing is advancing rapidly.",
             "results": [
-                {"title": "Tavily", "content": "A search API for AI agents.", "url": "https://tavily.com"},
-                {"title": "Example", "content": "An example page.", "url": "https://example.com"},
+                {
+                    "title": "Tavily",
+                    "content": "A search API for AI agents.",
+                    "url": "https://tavily.com",
+                },
+                {
+                    "title": "Example",
+                    "content": "An example page.",
+                    "url": "https://example.com",
+                },
             ],
         }
     )

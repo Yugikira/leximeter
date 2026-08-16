@@ -76,7 +76,8 @@ class Classify(Task):
         out: dict[str, bool | None] = {}
         for lab in labels:
             pat = re.compile(
-                rf'\s*"?\s*{re.escape(lab)}\s*"?\s*:\s*(true|false)', re.IGNORECASE | re.DOTALL
+                rf'\s*"?\s*{re.escape(lab)}\s*"?\s*:\s*(true|false)',
+                re.IGNORECASE | re.DOTALL,
             )
             m = pat.search(raw)
             out[lab] = None if not m else m.group(1).lower() == "true"
@@ -156,13 +157,17 @@ class Classify(Task):
         )
 
         label_items = list(self.cfg.labels.items())
-        label_batch_items, effective_n_attributes_per_run = _common.resolve_attribute_batches(
-            items=label_items,
-            requested_n=self.cfg.n_attributes_per_run,
-            metadata=run_metadata,
-            reset_files=reset_files,
+        label_batch_items, effective_n_attributes_per_run = (
+            _common.resolve_attribute_batches(
+                items=label_items,
+                requested_n=self.cfg.n_attributes_per_run,
+                metadata=run_metadata,
+                reset_files=reset_files,
+            )
         )
-        label_batches: list[dict[str, str]] = [dict(batch) for batch in label_batch_items]
+        label_batches: list[dict[str, str]] = [
+            dict(batch) for batch in label_batch_items
+        ]
         label_count = len(label_items)
         if (
             effective_n_attributes_per_run is not None
@@ -240,9 +245,7 @@ class Classify(Task):
                     continue
                 id_to_val[ident] = val
                 prompt_texts[ident] = (
-                    str(val)
-                    if self.cfg.modality in {"text", "entity", "web"}
-                    else ""
+                    str(val) if self.cfg.modality in {"text", "entity", "web"} else ""
                 )
                 base_ids.append(ident)
             for batch_idx, batch_labels in enumerate(label_batches):
@@ -274,7 +277,9 @@ class Classify(Task):
             for ident in ids:
                 if run_idx == 1:
                     legacy_ident = f"{ident}_run1"
-                    run_ids.append(legacy_ident if legacy_ident in existing_ids else ident)
+                    run_ids.append(
+                        legacy_ident if legacy_ident in existing_ids else ident
+                    )
                 else:
                     run_ids.append(f"{ident}_run{run_idx}")
             run_identifier_lists.append(run_ids)
@@ -303,9 +308,7 @@ class Classify(Task):
         for run_idx, run_ids in enumerate(run_identifier_lists, start=1):
             suffix = f"_run{run_idx}"
             sub = df_resp_all[df_resp_all.Identifier.isin(run_ids)].copy()
-            sub.Identifier = sub.Identifier.str.replace(
-                suffix + "$", "", regex=True
-            )
+            sub.Identifier = sub.Identifier.str.replace(suffix + "$", "", regex=True)
             df_resps.append(sub)
 
         # parse each run and construct disaggregated records
@@ -399,10 +402,16 @@ class Classify(Task):
             cols.insert(0, column_name)
             result = result[cols]
 
-        result.insert(1, "predicted_classes", result[label_cols].apply(_collect_predictions, axis=1))
+        result.insert(
+            1,
+            "predicted_classes",
+            result[label_cols].apply(_collect_predictions, axis=1),
+        )
 
         result_to_save = result.copy()
-        result_to_save["predicted_classes"] = result_to_save["predicted_classes"].apply(json.dumps)
+        result_to_save["predicted_classes"] = result_to_save["predicted_classes"].apply(
+            json.dumps
+        )
         save_dataframe_with_fallback(
             result_to_save,
             out_path,

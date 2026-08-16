@@ -90,7 +90,13 @@ def test_classify_min_frequency(tmp_path):
 def test_extract_flattens_entity_and_coerces(tmp_path):
     df = pd.DataFrame({"product": ["Walkman"]})
     client = DictClient(
-        {"Walkman": {"company": "Sony", "year of release": "1979", "unit price": "unknown"}}
+        {
+            "Walkman": {
+                "company": "Sony",
+                "year of release": "1979",
+                "unit price": "unknown",
+            }
+        }
     )
     res = run(
         extract(
@@ -181,7 +187,9 @@ def test_whatever_web_search_injects_context(tmp_path):
 
         async def complete(self, prompt, *, model, json_mode=False, **kwargs) -> str:
             self.prompts.append(prompt)
-            return await super().complete(prompt, model=model, json_mode=json_mode, **kwargs)
+            return await super().complete(
+                prompt, model=model, json_mode=json_mode, **kwargs
+            )
 
     client = RecordingClient({"ok": True})
     search = CapturingSearchTool("RETRIEVED CONTEXT")
@@ -222,9 +230,7 @@ def test_whatever_web_search_missing_tool_falls_back(tmp_path):
 def test_compare(tmp_path):
     df = pd.DataFrame({"a": ["x", "y"], "b": ["x2", "y2"]})
     client = DictClient({"circle has more": "justification"})
-    res = run(
-        compare(df, "a", "b", save_dir=str(tmp_path / "cmp"), client=client)
-    )
+    res = run(compare(df, "a", "b", save_dir=str(tmp_path / "cmp"), client=client))
     assert set(res.columns) == {"circle", "square", "attribute", "explanation"}
     assert list(res["attribute"]) == ["circle has more", "circle has more"]
 
@@ -361,7 +367,11 @@ def test_deduplicate(tmp_path):
     client = DictClient({"iPhone": ["iPhone", "Iphone 6"]})
     res = run(
         deduplicate(
-            df, "tech", save_dir=str(tmp_path / "d"), client=client, use_embeddings=False
+            df,
+            "tech",
+            save_dir=str(tmp_path / "d"),
+            client=client,
+            use_embeddings=False,
         )
     )
     assert list(res["mapped_tech"]) == ["iPhone", "iPhone", "Android"]
@@ -424,10 +434,18 @@ def test_deduplicate_embeddings_checkpoint(tmp_path):
     save = str(tmp_path / "d4")
     client = CountingClient({})
     emb_client = CountingEmbeddingClient()
-    run(deduplicate(df, "tech", save_dir=save, client=client, embedding_client=emb_client))
+    run(
+        deduplicate(
+            df, "tech", save_dir=save, client=client, embedding_client=emb_client
+        )
+    )
     assert emb_client.calls == 1
     assert (tmp_path / "d4" / "deduplicate_embeddings.json").exists()
-    run(deduplicate(df, "tech", save_dir=save, client=client, embedding_client=emb_client))
+    run(
+        deduplicate(
+            df, "tech", save_dir=save, client=client, embedding_client=emb_client
+        )
+    )
     assert emb_client.calls == 1  # cache hit: no re-embedding
     run(
         deduplicate(
@@ -542,7 +560,14 @@ def test_codify_completion_loop(tmp_path):
         }
     )
     client = DictClient(
-        {"code1": [{"beginning excerpt": "Hello world", "ending excerpt": "much more content"}]}
+        {
+            "code1": [
+                {
+                    "beginning excerpt": "Hello world",
+                    "ending excerpt": "much more content",
+                }
+            ]
+        }
     )
     res = run(
         codify(
@@ -670,9 +695,7 @@ def test_discover_pair_summary_net_pct(tmp_path):
     # Pair pipeline: compare -> bucket -> classify (differentiate).  The
     # classify stage sees quality_actual=True / quality (inverted)=False,
     # so the summary reports actual 100% / inverted 0% / net_pct 100.
-    df = pd.DataFrame(
-        {"circle": ["sunny", "rainy"], "square": ["cloudy", "clear"]}
-    )
+    df = pd.DataFrame({"circle": ["sunny", "rainy"], "square": ["cloudy", "clear"]})
     client = StageClient(
         {
             "compare": {"quality": "circle has more quality than square"},
@@ -730,7 +753,10 @@ def test_discover_single_codify_pipeline(tmp_path):
         {
             "codify": {
                 "feature code": [
-                    {"beginning excerpt": "Hello world", "ending excerpt": "much more content"}
+                    {
+                        "beginning excerpt": "Hello world",
+                        "ending excerpt": "much more content",
+                    }
                 ]
             },
             "bucket": {"feature code": "a distinguishing feature"},
@@ -770,8 +796,18 @@ class DebiasClient(DictClient):
         "Sam": "CEO Sam owns the market.",
     }
     _ORIG: ClassVar[dict[str, int]] = {"John": 70, "Mary": 75, "Alex": 80, "Sam": 85}
-    _STRIPPED: ClassVar[dict[str, int]] = {"Alpha": 40, "Beta": 45, "Gamma": 50, "Delta": 55}
-    _REMAINING: ClassVar[dict[str, int]] = {"Alpha": 50, "Beta": 45, "Gamma": 40, "Delta": 35}
+    _STRIPPED: ClassVar[dict[str, int]] = {
+        "Alpha": 40,
+        "Beta": 45,
+        "Gamma": 50,
+        "Delta": 55,
+    }
+    _REMAINING: ClassVar[dict[str, int]] = {
+        "Alpha": 50,
+        "Beta": 45,
+        "Gamma": 40,
+        "Delta": 35,
+    }
 
     def __init__(self):
         super().__init__({})
@@ -913,18 +949,14 @@ def test_debias_twostep_numerics(tmp_path):
     r = results["prevalence of ceo (stripped)"].to_numpy(dtype=float)
 
     # simple difference column is exactly y - s
-    assert np.allclose(
-        results["brand (raw - stripped)"].to_numpy(dtype=float), y - s
-    )
+    assert np.allclose(results["brand (raw - stripped)"].to_numpy(dtype=float), y - s)
     # stage-1 delta recovers the known slope of s ~ r
     reg = res.regression["stripped_100pct"]
     assert reg.stage1_delta is not None
     assert np.isclose(reg.stage1_delta, -1.0, atol=1e-6)
     # two-step debiased column follows y - s + delta * r
     expected = y - s + reg.stage1_delta * r
-    assert np.allclose(
-        results["brand (debiased)"].to_numpy(dtype=float), expected
-    )
+    assert np.allclose(results["brand (debiased)"].to_numpy(dtype=float), expected)
 
 
 def test_ideate(tmp_path):

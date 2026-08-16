@@ -118,10 +118,7 @@ class Ideate(Task):
         if out is None:
             return None
         path = os.path.join(self.cfg.save_dir, self.cfg.file_name)
-        print(
-            f"[Ideate] Found completed result in {path}; loading "
-            f"{len(out)} ideas."
-        )
+        print(f"[Ideate] Found completed result in {path}; loading {len(out)} ideas.")
         return out
 
     @staticmethod

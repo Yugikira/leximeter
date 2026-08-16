@@ -27,7 +27,9 @@ def run_metadata_path(save_dir: str, base_name: str) -> str:
     return os.path.join(save_dir, f"{base_name}_run_metadata.json")
 
 
-def load_run_metadata(save_dir: str, base_name: str, *, reset_files: bool) -> dict[str, Any]:
+def load_run_metadata(
+    save_dir: str, base_name: str, *, reset_files: bool
+) -> dict[str, Any]:
     path = run_metadata_path(save_dir, base_name)
     if reset_files:
         try:
@@ -286,7 +288,9 @@ def resolve_attribute_batches(
 
     ``requested_n`` is the max attributes per prompt (``None`` = one batch).
     """
-    if requested_n is not None and (not isinstance(requested_n, int) or requested_n < 1):
+    if requested_n is not None and (
+        not isinstance(requested_n, int) or requested_n < 1
+    ):
         raise ValueError("n_attributes_per_run must be None or an integer >= 1")
     if not items:
         return [], requested_n

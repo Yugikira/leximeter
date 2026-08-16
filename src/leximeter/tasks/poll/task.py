@@ -57,7 +57,9 @@ class Poll(Task):
         # source (input frame, or population description), the questions,
         # and the per-stage models.  A completed run with the same signature
         # is reloaded instead of re-executed (zero provider calls).
-        seed_key = (df, column_name) if df is not None else (desc, self.cfg.num_personas)
+        seed_key = (
+            (df, column_name) if df is not None else (desc, self.cfg.num_personas)
+        )
         signature = _common.compute_input_signature(
             seed_key,
             qs,
@@ -164,10 +166,7 @@ class Poll(Task):
         if out is None:
             return None
         path = os.path.join(self.cfg.save_dir, self.cfg.file_name)
-        print(
-            f"[Poll] Found completed result in {path}; loading "
-            f"{len(out)} responses."
-        )
+        print(f"[Poll] Found completed result in {path}; loading {len(out)} responses.")
         return out
 
     @staticmethod

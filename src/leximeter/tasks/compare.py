@@ -61,7 +61,9 @@ class Compare(Task):
                     entry_circle=circle,
                     entry_square=square,
                     modality=self.cfg.modality,
-                    circle_first=self.cfg.circle_first if self.cfg.circle_first is not None else False,
+                    circle_first=self.cfg.circle_first
+                    if self.cfg.circle_first is not None
+                    else False,
                     differentiate=self.cfg.differentiate,
                     additional_instructions=self.cfg.additional_instructions,
                 )

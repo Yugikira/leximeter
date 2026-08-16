@@ -33,7 +33,9 @@ class CountingClient(DictClient):
 
     async def complete(self, prompt, *, model, json_mode=False, **kwargs) -> str:
         self.calls += 1
-        return await super().complete(prompt, model=model, json_mode=json_mode, **kwargs)
+        return await super().complete(
+            prompt, model=model, json_mode=json_mode, **kwargs
+        )
 
 
 class TextClient(LLMClient):

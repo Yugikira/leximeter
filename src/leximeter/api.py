@@ -324,7 +324,11 @@ async def compare(
         search_tool=search_tool,
     )
     return await task.run(
-        df, circle_column_name, square_column_name, reset_files=reset_files, **engine_kwargs
+        df,
+        circle_column_name,
+        square_column_name,
+        reset_files=reset_files,
+        **engine_kwargs,
     )
 
 

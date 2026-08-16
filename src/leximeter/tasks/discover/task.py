@@ -103,7 +103,9 @@ class Discover(Task):
 
     def _persist_result_snapshot(self, result: dict[str, Any]) -> None:
         payload = {
-            "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "generated_at": datetime.now(timezone.utc)
+            .isoformat()
+            .replace("+00:00", "Z"),
             "results": {k: self._to_serializable(v) for k, v in result.items()},
         }
         out_path = os.path.join(self.cfg.save_dir, "discover_results_snapshot.json")
@@ -142,7 +144,9 @@ class Discover(Task):
             return
         archive_path = os.path.join(self.cfg.save_dir, "discover_results_export.zip")
         try:
-            with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            with zipfile.ZipFile(
+                archive_path, "w", compression=zipfile.ZIP_DEFLATED
+            ) as zf:
                 name_counts: dict[str, int] = {}
                 for key, df in tables.items():
                     csv_buffer = io.StringIO()
@@ -275,9 +279,7 @@ class Discover(Task):
                 **kwargs,
             )
             term_defs = {}
-            for attr, expl in zip(
-                compare_df["attribute"], compare_df["explanation"]
-            ):
+            for attr, expl in zip(compare_df["attribute"], compare_df["explanation"]):
                 if pd.notna(attr) and attr not in term_defs:
                     term_defs[attr] = str(expl) if pd.notna(expl) else ""
             if self.cfg.raw_term_definitions:
@@ -343,10 +345,11 @@ class Discover(Task):
                 def repl(match: re.Match[str]) -> str:
                     word = match.group(0)
                     return "square" if word.lower() == "circle" else "circle"
+
                 return re.sub(r"(?i)circle|square", repl, text)
 
             def build_combined_metadata(
-                base_labels: dict[str, str]
+                base_labels: dict[str, str],
             ) -> tuple[dict[str, str], dict[str, str]]:
                 combined_local: dict[str, str] = {}
                 rename_local: dict[str, str] = {}
@@ -362,7 +365,7 @@ class Discover(Task):
                 return combined_local, rename_local
 
             def derive_base_from_combined(
-                combined_local: dict[str, str]
+                combined_local: dict[str, str],
             ) -> tuple[dict[str, str], dict[str, str]]:
                 base_local: dict[str, str] = {}
                 rename_local: dict[str, str] = {}
@@ -380,7 +383,10 @@ class Discover(Task):
                             inverted_key = candidate
                     canonical_key = key
                     canonical_desc = desc
-                    if canonical_key.endswith(" (inverted)") and swapped_key in combined_local:
+                    if (
+                        canonical_key.endswith(" (inverted)")
+                        and swapped_key in combined_local
+                    ):
                         canonical_key = swapped_key
                         canonical_desc = combined_local[canonical_key]
                         inverted_key = key
@@ -457,18 +463,17 @@ class Discover(Task):
                 actual_col = f"{lab}_actual"
                 inverted_col = f"{lab}_inverted"
                 actual_true = (
-                    classify_result[actual_col]
-                    .fillna(False)
-                    .infer_objects()
-                    .sum()
+                    classify_result[actual_col].fillna(False).infer_objects().sum()
                 )
                 inverted_true = (
-                    classify_result[inverted_col]
-                    .fillna(False)
-                    .infer_objects()
+                    classify_result[inverted_col].fillna(False).infer_objects().sum()
+                )
+                total = (
+                    classify_result[[actual_col, inverted_col]]
+                    .notna()
+                    .any(axis=1)
                     .sum()
                 )
-                total = classify_result[[actual_col, inverted_col]].notna().any(axis=1).sum()
                 actual_pct = (actual_true / total * 100) if total else None
                 inverted_pct = (inverted_true / total * 100) if total else None
                 net_pct = (
@@ -476,15 +481,17 @@ class Discover(Task):
                     if actual_pct is not None and inverted_pct is not None
                     else None
                 )
-                summary_records.append({
-                    "label": lab,
-                    "actual_true": actual_true,
-                    "inverted_true": inverted_true,
-                    "total": total,
-                    "actual_pct": actual_pct,
-                    "inverted_pct": inverted_pct,
-                    "net_pct": net_pct,
-                })
+                summary_records.append(
+                    {
+                        "label": lab,
+                        "actual_true": actual_true,
+                        "inverted_true": inverted_true,
+                        "total": total,
+                        "actual_pct": actual_pct,
+                        "inverted_pct": inverted_pct,
+                        "net_pct": net_pct,
+                    }
+                )
             summary_df = pd.DataFrame(summary_records)
         else:
             clf_cfg = ClassifyConfig(
@@ -514,7 +521,10 @@ class Discover(Task):
                 labels = actual_labels
                 if labels:
                     bucket_df = pd.DataFrame(
-                        {"bucket": list(labels.keys()), "definition": list(labels.values())}
+                        {
+                            "bucket": list(labels.keys()),
+                            "definition": list(labels.values()),
+                        }
                     )
                 else:
                     bucket_df = pd.DataFrame(columns=["bucket", "definition"])

@@ -158,9 +158,7 @@ class Debias(Task):
     # ------------------------------------------------------------------
     def _default_run_name(self) -> str:
         base_name = (
-            self.cfg.measurement_attribute
-            or self.cfg.removal_attribute
-            or "signal"
+            self.cfg.measurement_attribute or self.cfg.removal_attribute or "signal"
         )
         cleaned = re.sub(r"[^a-zA-Z0-9_-]+", "_", base_name)
         prefix = "debias"
@@ -173,7 +171,9 @@ class Debias(Task):
     def _validate_config(self) -> None:
         valid_modes = {"rate", "classify", "extract", "rank"}
         if self.cfg.mode not in valid_modes:
-            raise ValueError("mode must be one of {'rate', 'classify', 'extract', 'rank'}")
+            raise ValueError(
+                "mode must be one of {'rate', 'classify', 'extract', 'rank'}"
+            )
         self.cfg.attributes = dict(self.cfg.attributes or {})
         if not self.cfg.attributes:
             raise ValueError("attributes must be supplied for the selected mode")
@@ -315,7 +315,9 @@ class Debias(Task):
                 return loaded
 
         df_master = df.copy().reset_index(drop=True)
-        row_index = pd.RangeIndex(start=0, stop=len(df_master), step=1, name="__debias_row_id")
+        row_index = pd.RangeIndex(
+            start=0, stop=len(df_master), step=1, name="__debias_row_id"
+        )
         df_master.index = row_index
 
         if self.cfg.verbose:
@@ -330,7 +332,9 @@ class Debias(Task):
             )
 
         existing_raw_attrs = [attr for attr in attr_keys if attr in df_master.columns]
-        missing_raw_attrs = [attr for attr in attr_keys if attr not in df_master.columns]
+        missing_raw_attrs = [
+            attr for attr in attr_keys if attr not in df_master.columns
+        ]
 
         if existing_raw_attrs and self.cfg.verbose:
             print(
@@ -362,7 +366,9 @@ class Debias(Task):
                 display_name="original",
             )
         elif self.cfg.verbose:
-            print("[Debias] All raw measurement attributes already exist; skipping baseline rating step.")
+            print(
+                "[Debias] All raw measurement attributes already exist; skipping baseline rating step."
+            )
 
         if self.cfg.removal_method == "codify":
             variant_info = await self._prepare_codify_variants(
@@ -445,7 +451,9 @@ class Debias(Task):
 
         results_df = df_master.reset_index(drop=True)
         results_path = metadata["result_path"]
-        save_dataframe_with_fallback(results_df, results_path, index=False, label="Debias")
+        save_dataframe_with_fallback(
+            results_df, results_path, index=False, label="Debias"
+        )
         if self.cfg.verbose:
             print(f"[Debias] Results saved to {results_path}")
 
@@ -624,7 +632,9 @@ class Debias(Task):
         if not self.cfg.remaining_signal_attribute:
             return {}
         return {
-            self.cfg.remaining_signal_attribute: str(self.cfg.remaining_signal_description)
+            self.cfg.remaining_signal_attribute: str(
+                self.cfg.remaining_signal_description
+            )
         }
 
     # ------------------------------------------------------------------
@@ -646,8 +656,7 @@ class Debias(Task):
         if target_column in df_master.columns:
             if self.cfg.verbose:
                 print(
-                    "[Debias] Using existing remaining-signal column: "
-                    f"{target_column}"
+                    f"[Debias] Using existing remaining-signal column: {target_column}"
                 )
             return target_column
         if self.cfg.verbose:
@@ -722,9 +731,13 @@ class Debias(Task):
                 continue
             key = f"stripped_{pct:03d}pct"
             stripped_base = f"{column_name} (stripped)"
-            single_full_strip = len(self.cfg.strip_percentages or []) == 1 and pct == 100
+            single_full_strip = (
+                len(self.cfg.strip_percentages or []) == 1 and pct == 100
+            )
             display = "stripped" if single_full_strip else f"stripped {pct}%"
-            new_col = stripped_base if single_full_strip else f"{column_name} ({display})"
+            new_col = (
+                stripped_base if single_full_strip else f"{column_name} ({display})"
+            )
             df[new_col] = [
                 self._strip_passages(
                     original_text=str(df.at[idx, column_name]),
@@ -758,7 +771,9 @@ class Debias(Task):
         save_dir = kwargs.pop("save_dir", os.path.join(self.run_dir, "paraphrase"))
         os.makedirs(save_dir, exist_ok=True)
         revised_name = f"{column_name} (stripped)"
-        instructions = kwargs.pop("instructions", None) or self._build_paraphrase_instructions()
+        instructions = (
+            kwargs.pop("instructions", None) or self._build_paraphrase_instructions()
+        )
         response_kwargs: dict[str, Any] = {}
         if "n_rounds" in kwargs:
             response_kwargs["n_rounds"] = kwargs.pop("n_rounds")
@@ -1113,10 +1128,14 @@ class Debias(Task):
         remaining_signal_column: str,
         display_name: str,
     ) -> tuple[dict[str, Any] | None, float | None]:
-        stage1_df = df[[stripped_column, remaining_signal_column]].apply(
-            pd.to_numeric,
-            errors="coerce",
-        ).dropna()
+        stage1_df = (
+            df[[stripped_column, remaining_signal_column]]
+            .apply(
+                pd.to_numeric,
+                errors="coerce",
+            )
+            .dropna()
+        )
         if len(stage1_df) < 3:
             if self.cfg.verbose:
                 print(
@@ -1162,10 +1181,14 @@ class Debias(Task):
         debiased_column: str,
         title: str,
     ) -> dict[str, Any]:
-        reg_df = df[[original_column, debiased_column]].apply(
-            pd.to_numeric,
-            errors="coerce",
-        ).dropna()
+        reg_df = (
+            df[[original_column, debiased_column]]
+            .apply(
+                pd.to_numeric,
+                errors="coerce",
+            )
+            .dropna()
+        )
         if len(reg_df) < 3:
             return {}
         y_vals = reg_df[original_column].values

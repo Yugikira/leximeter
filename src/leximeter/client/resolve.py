@@ -67,7 +67,9 @@ def resolve_embedding_client(
     if embedding_client is not None:
         return embedding_client
 
-    provider = (provider or os.getenv("LEXIMETER_EMBEDDING_PROVIDER") or "local").lower()
+    provider = (
+        provider or os.getenv("LEXIMETER_EMBEDDING_PROVIDER") or "local"
+    ).lower()
     if provider in ("", "none"):
         return None
     if provider == "local":

@@ -128,12 +128,14 @@ class Seed(Task):
             file_name=self.cfg.file_name,
             reset_files=reset_files,
         )
-        if out is None or "entity" not in out.columns or len(out) < self.cfg.num_entities:
+        if (
+            out is None
+            or "entity" not in out.columns
+            or len(out) < self.cfg.num_entities
+        ):
             return None
         path = os.path.join(self.cfg.save_dir, self.cfg.file_name)
-        print(
-            f"[Seed] Found completed seed in {path}; loading {len(out)} entities."
-        )
+        print(f"[Seed] Found completed seed in {path}; loading {len(out)} entities.")
         return out
 
     @staticmethod

@@ -80,7 +80,9 @@ class Task(ABC):
     def _base_name(self) -> str:
         return os.path.splitext(self.cfg.file_name)[0]
 
-    def _build_ids(self, texts: Sequence[str]) -> tuple[list[str], list[str], dict[str, str]]:
+    def _build_ids(
+        self, texts: Sequence[str]
+    ) -> tuple[list[str], list[str], dict[str, str]]:
         """Hash + dedup: ``row_ids`` align to input rows; ``base_ids`` are unique."""
         row_ids: list[str] = []
         base_ids: list[str] = []
@@ -252,9 +254,7 @@ class AttributeTask(Task):
             )
         return pd.DataFrame(records)
 
-    def _save(
-        self, result: pd.DataFrame, records: pd.DataFrame | None = None
-    ) -> None:
+    def _save(self, result: pd.DataFrame, records: pd.DataFrame | None = None) -> None:
         from ..utils.file_utils import save_dataframe_with_fallback
 
         label = self.__class__.__name__
@@ -269,6 +269,4 @@ class AttributeTask(Task):
             disagg_path = os.path.join(
                 self.cfg.save_dir, f"{self._base_name()}_full_disaggregated.csv"
             )
-            save_dataframe_with_fallback(
-                full_df, disagg_path, index=True, label=label
-            )
+            save_dataframe_with_fallback(full_df, disagg_path, index=True, label=label)

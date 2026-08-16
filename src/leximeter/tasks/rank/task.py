@@ -265,9 +265,9 @@ class Rank(Task):
         ids_sorted = sorted(item_ids, key=lambda i: current_ratings[i])
         idx_of = {i_id: k for k, i_id in enumerate(ids_sorted)}
         num_high_se = max(1, int(self._HIGH_SE_FRAC * n))
-        high_se_ids = sorted(
-            item_ids, key=lambda i: se_agg.get(i, 1.0), reverse=True
-        )[:num_high_se]
+        high_se_ids = sorted(item_ids, key=lambda i: se_agg.get(i, 1.0), reverse=True)[
+            :num_high_se
+        ]
         candidate_pairs_set: set[tuple[str, str]] = set()
         for i_id in item_ids:
             pos = idx_of[i_id]
@@ -491,7 +491,9 @@ class Rank(Task):
                 safe_obj = await _coerce_dict(resp)
                 if not safe_obj:
                     continue
-                _record_outcomes(safe_obj, attr_batches[batch_idx], id_a, id_b, history_pairs)
+                _record_outcomes(
+                    safe_obj, attr_batches[batch_idx], id_a, id_b, history_pairs
+                )
             se_agg_next = self._refit_all(
                 attr_keys, item_ids, history_pairs, ratings, se_store
             )
@@ -862,9 +864,7 @@ class Rank(Task):
                     )
                     ids.append(hashed_ident)
                     meta_map[hashed_ident] = (batch_idx, pair_idx, id_a, id_b)
-            round_path = os.path.join(
-                self.cfg.save_dir, f"{base_name}_round{rnd}.csv"
-            )
+            round_path = os.path.join(self.cfg.save_dir, f"{base_name}_round{rnd}.csv")
             resp_df = await batch_execute(
                 prompts=prompts,
                 identifiers=ids,

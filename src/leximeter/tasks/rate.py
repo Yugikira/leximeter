@@ -49,7 +49,9 @@ class Rate(AttributeTask):
         if isinstance(obj, dict):
             for attr in attributes:
                 try:
-                    out[attr] = float(obj.get(attr)) if obj.get(attr) is not None else None
+                    out[attr] = (
+                        float(obj.get(attr)) if obj.get(attr) is not None else None
+                    )
                 except (TypeError, ValueError):
                     out[attr] = None
         else:

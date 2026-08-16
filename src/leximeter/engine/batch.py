@@ -51,7 +51,7 @@ async def complete_with_retry(
         except Exception as exc:  # noqa: BLE001 - provider errors are not typed
             last_exc = exc
             if attempt < max_retries:
-                await asyncio.sleep(min(2 ** attempt, 30))
+                await asyncio.sleep(min(2**attempt, 30))
     assert last_exc is not None
     raise last_exc
 
@@ -78,7 +78,11 @@ async def batch_execute(
     if len(prompts) != len(identifiers):
         raise ValueError("prompts and identifiers must have the same length")
 
-    checkpoint = _checkpoint.load_checkpoint(save_path) if (save_path and not reset_files) else pd.DataFrame(columns=_checkpoint.COLUMNS)
+    checkpoint = (
+        _checkpoint.load_checkpoint(save_path)
+        if (save_path and not reset_files)
+        else pd.DataFrame(columns=_checkpoint.COLUMNS)
+    )
     done = _checkpoint.completed_identifiers(checkpoint)
 
     pending = [

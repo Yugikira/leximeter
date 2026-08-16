@@ -34,8 +34,7 @@ def _normalise_search_context_size(value: str | None) -> str:
     resolved = _CONTEXT_ALIASES.get(normalised, normalised)
     if resolved not in _VALID_CONTEXT:
         raise ValueError(
-            "search_context_size must be one of low/medium/high "
-            f"(got {value!r})"
+            f"search_context_size must be one of low/medium/high (got {value!r})"
         )
     return resolved
 
