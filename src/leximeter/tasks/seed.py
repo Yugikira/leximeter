@@ -28,7 +28,6 @@ class SeedConfig:
     existing_entities_cap: int = 100
     deduplicate: bool = False
     deduplicate_sample_seed: int = 42
-    max_retries: int = 3
 
 
 class Seed(Task):
@@ -79,16 +78,14 @@ class Seed(Task):
                 entities_per_generation=self.cfg.entities_per_generation,
                 existing_entities="\n".join(sample) if sample else None,
             )
-            from ..engine.batch import complete_with_retry
-
-            text = await complete_with_retry(
-                self._get_client(),
-                prompt,
-                model=self.cfg.model,
-                json_mode=True,
-                max_retries=self.cfg.max_retries,
-                timeout=None,
-                **kwargs,
+            # Direct call on purpose: the SDK's own timeout+retry is the
+            # only retry layer here (per worksummary_0816's exit-protection
+            # decision — layering leximeter retries on top of the SDK's
+            # doubles both wall-clock and billed tokens during slow
+            # response windows).  Whole-run retries belong at the API level
+            # via run_task_with_retry.
+            text = await self._get_client().complete(
+                prompt, model=self.cfg.model, json_mode=True, **kwargs
             )
             new = self._parse(text)
             if not new:

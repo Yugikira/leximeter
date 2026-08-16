@@ -398,7 +398,7 @@ async def seed(
     file_name: str = "seed_entities.csv",
     existing_entities: list | None = None,
     reset_files: bool = False,
-    max_retries: int = 3,
+    max_retries: int = 0,
     client: LLMClient | None = None,
     embedding_client: EmbeddingClient | None = None,
     search_tool: SearchTool | None = None,
@@ -406,8 +406,9 @@ async def seed(
 ) -> pd.DataFrame:
     """Generate ``num_entities`` distinct entities per ``instructions``.
 
-    ``max_retries`` is the per-generation-batch retry count (each batch's
-    provider call is retried with exponential backoff).  A completed seed
+    ``max_retries`` retries the whole generation run when it raises (the
+    SDK's own per-request timeout+retry remains the only inner retry layer,
+    per the worksummary_0816 exit-protection decision).  A completed seed
     is cached to ``seed_entities.csv`` + ``seed_state.json``: re-running
     with the same inputs makes zero provider calls and reloads the file.
     Returns a DataFrame with ``entity`` and ``entity_id`` columns.
@@ -423,7 +424,6 @@ async def seed(
         existing_entities_cap=existing_entities_cap,
         deduplicate=deduplicate,
         deduplicate_sample_seed=deduplicate_sample_seed,
-        max_retries=max_retries,
     )
     task = Seed(
         cfg,
@@ -431,8 +431,12 @@ async def seed(
         embedding_client=embedding_client,
         search_tool=search_tool,
     )
-    return await task.run(
-        existing_entities=existing_entities, reset_files=reset_files, **engine_kwargs
+    return await run_task_with_retry(
+        task,
+        max_retries,
+        existing_entities=existing_entities,
+        reset_files=reset_files,
+        **engine_kwargs,
     )
 
 

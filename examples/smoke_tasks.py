@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+import time
 import traceback
 
 import pandas as pd
@@ -499,6 +500,146 @@ async def smoke_debias() -> None:
     verdict("debias", True, f"{len(results)} rows; delta={reg.stage1_delta:.3f}")
 
 
+async def smoke_compare_checkpoint() -> None:
+    """compare — checkpoint 版冒烟（TICKET-001 更新后复验）。
+
+    结果写入 runs/smoke_compare_checkpoint（不覆盖旧 runs/smoke_compare）。
+    加 per-request timeout：卡死的请求失败重试，而不是 SDK 层无限磨。
+    """
+    section("compare[checkpoint] — 两两对比差异复验")
+    df = pd.DataFrame({
+        "circle": [
+            "The new CEO announced a 20% R&D budget cut at the all-hands.",
+            "Our team ships weekly; velocity is up 30% since Q1.",
+            "The study surveyed 400 patients over two years.",
+            "Ticket prices rose 15% after the merger.",
+        ],
+        "square": [
+            "The CFO proposed reallocating funds to marketing instead.",
+            "Sprint cycles are now two weeks; scope creep remains an issue.",
+            "The follow-up used focus groups with 25 participants.",
+            "Ticket prices held steady despite the merger.",
+        ],
+    })
+    res = await leximeter.compare(
+        df, "circle", "square", save_dir="runs/smoke_compare_checkpoint",
+        model=MODEL, differentiate=True, reset_files=True, timeout=180,
+    )
+    print(res.to_string(index=False))
+    check("columns", {"circle", "square", "attribute", "explanation"} <= set(res.columns),
+          f"got {list(res.columns)}")
+    check("row count", len(res) >= len(df), f"got {len(res)} rows")
+    verdict("compare_checkpoint", True, f"{len(res)} attribute rows")
+
+
+async def smoke_poll_checkpoint() -> None:
+    """poll — checkpoint 版冒烟（TICKET-001 更新后复验）。
+
+    结果写入 runs/smoke_poll_checkpoint（不覆盖旧 runs/smoke_poll）。
+    跑两次：第一次 reset_files=True 全新执行；第二次 reset_files=False
+    应命中已完成验证（零 provider 调用，秒回），并返回一致结果。
+    """
+    section("poll[checkpoint] — 合成人群调查 + 断点续接复验")
+    kwargs = {
+        "population_description": "A representative sample of US adults who use social media daily.",
+        "questions": [
+            "How many hours per day do you spend on social media? (1-10)",
+            "Do you think social media is mostly good or mostly bad for society? (good/bad)",
+        ],
+        "save_dir": "runs/smoke_poll_checkpoint",
+        "seed_model": MODEL, "persona_model": MODEL, "poll_model": MODEL,
+        "num_personas": 6, "entities_per_generation": 6,
+        # per-request asyncio timeout: a hung provider call fails and is
+        # retried by the engine instead of grinding for SDK minutes
+        "timeout": 180,
+    }
+    t0 = time.monotonic()
+    first = await leximeter.poll(**kwargs, reset_files=True)
+    t1 = time.monotonic()
+    print(f"[poll_checkpoint] first run (fresh): {t1 - t0:.1f}s")
+    second = await leximeter.poll(**kwargs, reset_files=False)
+    t2 = time.monotonic()
+    print(f"[poll_checkpoint] second run (resume): {t2 - t1:.1f}s — "
+          "expected ~0s via completed-run verification")
+    print(second.to_string(index=False))
+    check("row count", len(second) == len(first),
+          f"first {len(first)} vs second {len(second)}")
+    check("columns", list(second.columns) == list(first.columns),
+          f"got {list(second.columns)}")
+    for q in second.columns:
+        if q not in {"seed", "persona"}:
+            nonempty = second[q].fillna("").astype(str).str.len().gt(0).sum()
+            check(f"question {q!r} answered", nonempty >= len(second) // 2,
+                  f"{nonempty}/{len(second)}")
+    verdict("poll_checkpoint", True,
+            f"{len(first)} personas; resume took {t2 - t1:.1f}s (vs {t1 - t0:.1f}s fresh)")
+
+
+async def smoke_discover_checkpoint() -> None:
+    """discover — checkpoint 版冒烟（TICKET-001 更新后复验）。
+
+    结果写入 runs/smoke_discover_checkpoint（不覆盖旧 runs/smoke_discover）。
+    跑两次：第一次 reset_files=True 全新执行；第二次 reset_files=False
+    应命中已完成验证（snapshot 重建，零 provider 调用），结果一致。
+    """
+    section("discover[checkpoint] — 对立两类文本特征发现 + 断点续接复验")
+    optimistic = [
+        "AI assistants handle routine support tickets, freeing staff for creative work.",
+        "Renewable energy costs keep falling; solar is now the cheapest power source.",
+        "Telemedicine reaches rural patients who previously had no local specialists.",
+        "Open-source models let small teams build tools that were once enterprise-only.",
+        "Self-driving trucks promise safer highways and cheaper goods for everyone.",
+        "Gene therapies are curing diseases that were untreatable a decade ago.",
+        "Remote work unlocked opportunities for parents and people with disabilities.",
+        "Precision agriculture cuts water use while boosting yields for small farms.",
+        "Smart grids smooth demand spikes and cut blackouts during heat waves.",
+        "Digital literacy programs are narrowing the gap in underserved schools.",
+    ]
+    pessimistic = [
+        "Algorithmic feeds deepen polarization and erode public discourse daily.",
+        "Mass surveillance tools quietly expand with each new security law.",
+        "Automation is hollowing out middle-skill jobs faster than retraining helps.",
+        "Plastic waste keeps accumulating; recycling rates have barely improved.",
+        "Social media feeds amplify misinformation about vaccines and elections.",
+        "Data brokers sell sensitive health records with almost no oversight.",
+        "Convenience apps exploit gig workers through opaque scheduling algorithms.",
+        "Fast fashion's carbon footprint keeps growing despite green marketing.",
+        "Autonomous weapons are racing ahead of any meaningful international rule.",
+        "Facial recognition errors routinely flag innocent citizens at checkpoints.",
+    ]
+    df = pd.DataFrame({"circle": optimistic, "square": pessimistic})
+    kwargs = {
+        "df": df, "circle_column_name": "circle", "square_column_name": "square",
+        "save_dir": "runs/smoke_discover_checkpoint", "model": MODEL,
+        "bucket_count": 3, "repeat_bucketing": 2, "repeat_voting": 3,
+        # per-request asyncio timeout: a hung provider call fails and is
+        # retried by the engine instead of grinding for SDK minutes
+        "timeout": 180,
+    }
+    t0 = time.monotonic()
+    first = await leximeter.discover(**kwargs, reset_files=True)
+    t1 = time.monotonic()
+    print(f"[discover_checkpoint] first run (fresh): {t1 - t0:.1f}s")
+    second = await leximeter.discover(**kwargs, reset_files=False)
+    t2 = time.monotonic()
+    print(f"[discover_checkpoint] second run (resume): {t2 - t1:.1f}s — "
+          "expected ~0s via completed-run verification")
+    check("dict return", isinstance(second, dict), f"got {type(second).__name__}")
+    check("keys", {"candidates", "buckets", "classification", "summary"} <= set(second),
+          f"got {sorted(second)}")
+    check("buckets equal", second["buckets"] == first["buckets"],
+          f"{first['buckets']} vs {second['buckets']}")
+    s1, s2 = first["summary"], second["summary"]
+    check("summary equal", s1 is not None and s2 is not None and len(s1) == len(s2),
+          f"first {len(s1) if s1 is not None else None} vs second {len(s2) if s2 is not None else None}")
+    net1 = s1["net_pct"].dropna().tolist()
+    net2 = s2["net_pct"].dropna().tolist()
+    check("net_pct equal", net1 == net2, f"{net1} vs {net2}")
+    print(second["summary"].to_string(index=False))
+    verdict("discover_checkpoint", True,
+            f"summary {len(s2)} labels; resume took {t2 - t1:.1f}s (vs {t1 - t0:.1f}s fresh)")
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 TASKS: dict[str, object] = {
     "classify": smoke_classify,
@@ -518,6 +659,9 @@ TASKS: dict[str, object] = {
     "poll": smoke_poll,
     "discover": smoke_discover,
     "debias": smoke_debias,
+    "poll_checkpoint": smoke_poll_checkpoint,
+    "discover_checkpoint": smoke_discover_checkpoint,
+    "compare_checkpoint": smoke_compare_checkpoint,
 }
 
 

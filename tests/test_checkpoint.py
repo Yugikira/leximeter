@@ -153,7 +153,10 @@ def test_input_signature_stable_and_sensitive():
 # ---------------------------------------------------------------------------
 
 
-def test_seed_retries_failed_batch(tmp_path):
+def test_seed_task_level_retry_rescues_failed_run(tmp_path):
+    # Whole-run retry (no per-batch leximeter retries — those were rolled
+    # back per worksummary_0816): the first run fails on its only call, the
+    # wrapper reruns the whole generation, and the second attempt succeeds.
     client = FlakyClient({"entity 1": "person A", "entity 2": "person B"}, fail_until=1)
     res = run(
         seed(
@@ -162,11 +165,11 @@ def test_seed_retries_failed_batch(tmp_path):
             client=client,
             num_entities=2,
             entities_per_generation=2,
-            max_retries=3,
+            max_retries=2,
         )
     )
     assert len(res) == 2
-    # batch 1: 1 failed + 1 retried call; that completes the seed, loop ends
+    # attempt 1: 1 failed call; attempt 2: 1 successful call
     assert client.calls == 2
 
 
@@ -965,13 +968,13 @@ class SeedFailClient(CountingClient):
 
 
 def test_poll_task_level_retry_rescues_seed_failure(tmp_path):
-    # The seed stage exhausts its per-batch retries on the first attempt,
-    # which raises through poll's run.  The task-level max_retries wrapper
-    # reruns the pipeline from its checkpoints; the seed regenerates (no
-    # completed seed was persisted), personas/answers would resume.
+    # The seed stage's single call fails (no per-batch retries — rolled
+    # back per worksummary_0816), raising through poll's run.  The
+    # task-level max_retries wrapper reruns the pipeline; the seed
+    # regenerates on the third attempt, personas/answers would resume.
     from leximeter import poll
 
-    client = SeedFailClient({"age": [30, 40]}, failures=4)
+    client = SeedFailClient({"age": [30, 40]}, failures=2)
     save_dir = str(tmp_path / "p")
     res = run(
         poll(

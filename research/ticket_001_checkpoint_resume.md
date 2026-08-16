@@ -12,7 +12,7 @@
 |---|---|
 | 任务级 retry wrapper（重试强制 `reset_files=False` 从检查点续跑） | `src/leximeter/engine/retry.py`（新）|
 | `{task}_state.json` manifest + `compute_input_signature` 共用件 | `src/leximeter/tasks/_common.py` |
-| seed：逐 batch `complete_with_retry`（cfg.max_retries=3）+ 已完成验证 | `seed.py`、`engine/batch.py`（`_complete_with_retry` 公开化）|
+| seed：**任务级** retry（api `max_retries` → wrapper 整轮重跑）+ 已完成验证 | `seed.py`、`api.py` |
 | 已完成验证（零 API 重跑） | `ideate`/`poll`/`debias`（重建 DebiasResult）/`discover`（snapshot 重建）|
 | 子任务幂等 | `codify`（coded_passages.csv + signature 门控，list 列 JSON 化落盘）、`compare`（content-hash 自验证短接）|
 | api 层 `max_retries` | `api.py`：discover/ideate/poll/debias 任务级（默认 0）；seed 逐 batch（默认 3）|
@@ -22,6 +22,7 @@
 - **compare 自验证短接**：identifier 是 pair 内容 hash，检查点全 done 即等价于输入未变，无需 signature。
 - **codify 落盘格式**：list/dict 列（snippets、coded_passages）改存 JSON 字符串（debias 的 `_collect_snippets` 本就按 JSON 解析），加载时 `json.loads` 还原，避免 CSV 往返丢类型。
 - **code-review 修复**（Standards + Spec 双轴）：`engine/retry.py` 不导入 tasks 层（鸭子类型，保持 engine 只依赖 client 契约）；`_load_completed` 守卫收敛为共用 `_common.load_completed_csv`；signature 覆盖修正——debias 签**整个 df**（结果嵌所有输入列）、seed/codify 补 `model`；debias 重载 metadata 补齐 `metadata_path` 键且 rebuild 失败（TypeError/KeyError/ValueError）回退全量重跑；retry wrapper 不重试确定性错误（ValueError/TypeError）。
+- **seed 重试设计修正（慢响应窗口复验后）**：初版给 seed 加了逐 batch `complete_with_retry`（leximeter 3 次 × SDK 2 次双层重试）——这正是 worksummary_0816「退出保护决策」拍板回滚的方案，慢响应窗口下失败请求（server 端已计费）被放大：耗时 ×N + token ×N。已字面回滚：seed 恢复直接 `client.complete()`（SDK 600s 超时 + 2 次重试保留），api `max_retries` 改为**任务级**语义（整轮重跑，与复杂链路一致；符合"失败重跑"哲学）。
 - 验收标准 1-6 均有测试覆盖（`tests/test_checkpoint.py`，32 个用例全假 provider 零网络；含 discover/poll/codify 的 reset 路径、AC3 签名敏感性、discover 恢复全量一致性断言）。
 
 ## 问题描述
