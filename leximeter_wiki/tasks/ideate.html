@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>理论生成 ideate — Leximeter 使用指南</title>
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+<div class="layout">
+  <nav class="sidebar">
+    <div class="brand">Leximeter<small>文本测量 · 使用指南</small></div>
+    <a href="../index.html">🏠 主页</a>
+    <a href="../getting-started.html">🚀 快速上手</a>
+    <a href="../configuration.html">⚙️ 参数设置</a>
+    <div class="group">测量类任务</div>
+    <a href="rate.html">评分 rate</a>
+    <a href="classify.html">分类 classify</a>
+    <a href="extract.html">抽取 extract</a>
+    <a href="rank.html">排序 rank</a>
+    <a href="debias.html">去偏 debias</a>
+    <div class="group">文本整理类任务</div>
+    <a href="merge.html">合并 merge</a>
+    <a href="deduplicate.html">去重 deduplicate</a>
+    <a href="filter.html">过滤 filter</a>
+    <a href="deidentify.html">脱敏 deidentify</a>
+    <a href="paraphrase.html">改写 paraphrase</a>
+    <div class="group">质性分析类任务</div>
+    <a href="codify.html">编码 codify</a>
+    <a href="bucket.html">归桶 bucket</a>
+    <a href="compare.html">对比 compare</a>
+    <a href="discover.html">特征发现 discover</a>
+    <div class="group">生成类任务</div>
+    <a href="ideate.html">理论生成 ideate</a>
+    <a href="seed.html">样本生成 seed</a>
+    <a href="poll.html">合成调查 poll</a>
+    <a href="whatever.html">任意提示词 whatever</a>
+  </nav>
+
+  <main>
+    <h1>理论生成 <code class="inline">ideate</code></h1>
+    <p class="lead">围绕一个主题，并行生成成百上千条结构化的新理论（或新点子），每条都自带标题、摘要、例子与可检验的预测。</p>
+    <span class="badge">生成类</span><span class="badge llm">LLM 核心</span>
+
+    <h2>这是什么</h2>
+    <p>输入一个研究主题，输出 <code class="inline">n_ideas</code> 条互不相同的"思路报告"。每条报告固定六个部分：</p>
+    <ul>
+      <li><strong>Title</strong>：一个抓住核心的标题</li>
+      <li><strong>In a nutshell</strong>：一句话核心</li>
+      <li><strong>In one paragraph</strong>：一段摘要</li>
+      <li><strong>Illustrative examples</strong>：现实例子</li>
+      <li><strong>Testable predictions</strong>：可检验的预测</li>
+      <li><strong>The full thinking</strong>：完整思考备忘（动机、文献、机制、验证设计）</li>
+    </ul>
+    <p><code class="inline">scientific_theory=True</code>（默认）时，要求模型按"前沿科学理论"的标准产出：新颖、具体、有独特预测、值得检验；设为 False 时改为"务实有用的好点子"，并给出可衡量的成功标准。</p>
+
+    <div class="tip"><strong>什么时候用</strong>
+      头脑风暴与假设生成：文献探索、理论梳理、研究问题还没定稿时批量获得候选。注意：<code class="inline">ideate</code> 产出的是<strong>候选理论</strong>，不是测量结果——拿到候选后，通常再用 <a href="rate.html">评分</a> / <a href="classify.html">分类</a> 打分筛选。如果只是要一批样本实体（人名、公司名），请用 <a href="seed.html">样本生成 seed</a>。</div>
+
+    <h2>怎么用</h2>
+    <p>一个主题、一个调用，其余交给模型。</p>
+    <pre><code>import leximeter
+
+result = await leximeter.ideate(
+    topic="What explains the persistence of income inequality across generations?",
+    n_ideas=5,             # 示例取 5 条便于展示
+    save_dir="my_study/ideas",
+    model="deepseek-v4-flash",
+)</code></pre>
+
+    <h3>示例结果（真实运行）</h3>
+    <div class="result">
+      <table>
+        <tr><th>idea_id</th><th>title</th><th>in_a_nutshell</th></tr>
+        <tr><td>idea-00000</td><td>The Epistemic Inheritance: Income Inequality Persists Because the Rich Can Afford to Know Themselves</td><td>Income inequality persists because parental income buys children not only better skills but better information about what their skills are—and in an economy that rewards specialization, …</td></tr>
+        <tr><td>idea-00001</td><td>The Legibility Trap: How Bureaucratic Visibility Inherits Income Inequality</td><td>Income inequality persists across generations because parents transmit not just money, skills, or networks, but "legibility capital"—the tacit capacity to make one's self, work, and claims visible…</td></tr>
+        <tr><td>idea-00002</td><td>The Inherited Prism: How Perceptual Priors Transmit Income Inequality Across Generations</td><td>Every family bequeaths its child, alongside money, skills, and connections, a perceptual operating system that decides what the economic world automatically looks like—so the persistence of income inequality…</td></tr>
+        <tr><td>idea-00003</td><td>An Inherited Eye for the Main Chance: Attention Capital and Intergenerational Income Persistence</td><td>Income inequality persists across generations because families transmit not only money, genes, skills, and contacts, but "economic attention"—a learned habit of seeing the economy as…</td></tr>
+        <tr><td>idea-00004</td><td>The Family Baseline: Loss-Averse Parenting and the Intergenerational Persistence of Income Inequality</td><td>Income inequality persists because parents are more motivated to keep their children from falling below the family's inherited status line than to help them leap far above it—so each generation…</td></tr>
+      </table>
+      <div class="dim">真实运行共 5 行，主题即上方示例的题目。标题与摘要按显示宽度截断。每条完整记录还含：in_one_paragraph（摘要段，约 1200–1700 字符）、illustrative_examples（现实例子）、testable_predictions（可检验预测，约 1600–2700 字符）、full_thinking（完整思考，约 8000–14000 字符）与 report_text（原始报告全文）。</div>
+    </div>
+
+    <h3>回到数据里</h3>
+    <p>直接 <code class="inline">result.to_csv("ideas.csv")</code>。先看 title 与 nutshell 做一轮人工初筛，再把候选喂给 <a href="rate.html">rate</a>（如"新颖性""可行性"打分）或 <a href="classify.html">classify</a> 归类，即可把几百条候选压缩成可管理的备选清单。</p>
+
+    <h2>实现原理（简版）</h2>
+    <p>整个过程不需要你理解细节，但知道原理有助于判断结果质量：</p>
+    <ol>
+      <li><strong>生成提示词</strong>：把主题（与附加指令）填进模板，同一提示词复制 <code class="inline">n_ideas</code> 份——各份完全独立、互不影响，天然多样。</li>
+      <li><strong>并行执行</strong>：批处理引擎把全部提示词并发发出（默认 50 路），原始报告边做边存（ideation_raw.csv），中断后断点续跑。</li>
+      <li><strong>六节解析</strong>：按 Title / In a nutshell / In one paragraph / Illustrative examples / Testable predictions / The full thinking 六个小标题逐行切分，各成一列；缺失的节留空。</li>
+      <li><strong>输出</strong>：每行还带 idea_id（idea-00000 起）、topic 与原始报告 report_text，方便追溯。</li>
+    </ol>
+
+    <h3>给模型的提示词（概括）</h3>
+    <div class="prompt"><span class="plabel">Ideation 提示词结构（简化为要点）</span>
+      你的任务是围绕以下主题提出理论：<br>
+      <em>[topic]</em><br>
+      目标是提出一个真正新颖、推动领域前沿的科学理论；要具体、可检验、有别的理论预期不到的独特预测；宁可大胆，不可平庸。<br>
+      写作要清楚易懂：专家能读、初学者也学得会。按六节输出：<br>
+      <code>Title: …</code> / <code>In a nutshell: …</code> / <code>In one paragraph: …</code> / <code>Illustrative examples: …</code> / <code>Testable predictions: …</code> / <code>The full thinking: …</code>
+    </div>
+    <p><code class="inline">scientific_theory=False</code> 时，同样的结构，任务改为"提出一个务实有用的好点子"，预测节改为可衡量的成功信号。模板把"新颖性"与"可检验性"作为硬要求写进去——这就是候选理论质量的主要来源。</p>
+
+    <h2>参数设置</h2>
+    <table>
+      <tr><th>参数</th><th>默认值</th><th>说明</th></tr>
+      <tr><td><code>topic</code></td><td>（必填）</td><td>研究主题或问题（如 "What explains the persistence of income inequality across generations?"）。</td></tr>
+      <tr><td><code>save_dir</code></td><td>（必填）</td><td>保存目录（自动创建）。</td></tr>
+      <tr><td><code>n_ideas</code></td><td>1000</td><td>生成的思路报告数量。</td></tr>
+      <tr><td><code>scientific_theory</code></td><td>True</td><td>True 按"前沿科学理论"标准生成；False 按"务实可用的好点子"标准生成。</td></tr>
+      <tr><td><code>model</code></td><td>gpt-5.4-mini</td><td>使用的模型；默认从环境变量 <code>LEXIMETER_MODEL</code> 读取。</td></tr>
+      <tr><td><code>n_parallels</code></td><td>50</td><td>同时发送给模型的请求数。</td></tr>
+      <tr><td><code>additional_instructions</code></td><td>None</td><td>追加给模型的任何指令（如理论取向、写作风格）。</td></tr>
+      <tr><td><code>file_name</code></td><td>ideation.csv</td><td>输出文件名。</td></tr>
+      <tr><td><code>reset_files</code></td><td>False</td><td>True 时清空 save_dir 重新跑；False 时断点续跑。</td></tr>
+    </table>
+    <p>完整参数与进阶选项见 <a href="../configuration.html">⚙️ 参数设置</a>。</p>
+
+    <footer><a href="../index.html">← 返回主页</a> · 示例输出来自真实运行（DeepSeek deepseek-v4-flash）</footer>
+  </main>
+</div>
+</body>
+</html>

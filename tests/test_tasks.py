@@ -864,6 +864,69 @@ def test_fit_ols_robust_hc3():
     assert res["k"] == 1
 
 
+def test_fit_ols_robust_matches_classical_coefficients():
+    """HC3 robustness changes standard errors, never the coefficients."""
+    from leximeter.utils.regression import fit_ols
+
+    rng = np.random.default_rng(7)
+    x = rng.uniform(0, 10, 200)
+    y = 2.0 + 3.0 * x + rng.normal(0, 1, 200)
+    X = np.column_stack([np.ones(200), x])
+    robust = fit_ols(y, X, robust=True)
+    classical = fit_ols(y, X, robust=False)
+    assert np.allclose(robust["coef"], classical["coef"])
+    assert not np.allclose(robust["se"], classical["se"])
+    assert np.allclose(robust["coef"], [2.0, 3.0], atol=0.2)
+
+
+def test_debias_twostep_numerics(tmp_path):
+    """Two-step formula ``y - s + delta * r`` with a known stage-1 delta.
+
+    The fake provider yields s = 40..55 and r = 50..35, i.e. a perfect
+    negative correlation, so the stage-1 slope is exactly -1 and the
+    debiased column is ``y - s - r``.
+    """
+    df = pd.DataFrame(
+        {
+            "text": [
+                "Brand Alpha is great. CEO John leads the firm. Revenue is up.",
+                "Brand Beta shines. CEO Mary runs the show. Costs are low.",
+                "Brand Gamma excels. CEO Alex drives the plan. Growth is fast.",
+                "Brand Delta grows. CEO Sam owns the market. Margins are high.",
+            ]
+        }
+    )
+    res = run(
+        debias(
+            df,
+            "text",
+            save_dir=str(tmp_path / "dbn"),
+            attributes={"brand": "overall brand strength"},
+            signal_dictionary={"ceo": "mentions of the chief executive"},
+            client=DebiasClient(),
+            verbose=False,
+        )
+    )
+    results = res.results
+    y = results["brand"].to_numpy(dtype=float)
+    s = results["brand (stripped)"].to_numpy(dtype=float)
+    r = results["prevalence of ceo (stripped)"].to_numpy(dtype=float)
+
+    # simple difference column is exactly y - s
+    assert np.allclose(
+        results["brand (raw - stripped)"].to_numpy(dtype=float), y - s
+    )
+    # stage-1 delta recovers the known slope of s ~ r
+    reg = res.regression["stripped_100pct"]
+    assert reg.stage1_delta is not None
+    assert np.isclose(reg.stage1_delta, -1.0, atol=1e-6)
+    # two-step debiased column follows y - s + delta * r
+    expected = y - s + reg.stage1_delta * r
+    assert np.allclose(
+        results["brand (debiased)"].to_numpy(dtype=float), expected
+    )
+
+
 def test_ideate(tmp_path):
     client = TextClient("Title: Test\nIn a nutshell: A nutshell.")
     res = run(

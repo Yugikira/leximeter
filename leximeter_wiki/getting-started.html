@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>快速上手 — Leximeter 使用指南</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="layout">
+  <nav class="sidebar">
+    <div class="brand">Leximeter<small>文本测量 · 使用指南</small></div>
+    <a href="index.html">🏠 主页</a>
+    <a href="getting-started.html">🚀 快速上手</a>
+    <a href="configuration.html">⚙️ 参数设置</a>
+    <div class="group">测量类任务</div>
+    <a href="tasks/rate.html">评分 rate</a>
+    <a href="tasks/classify.html">分类 classify</a>
+    <a href="tasks/extract.html">抽取 extract</a>
+    <a href="tasks/rank.html">排序 rank</a>
+    <a href="tasks/debias.html">去偏 debias</a>
+    <div class="group">文本整理类任务</div>
+    <a href="tasks/merge.html">合并 merge</a>
+    <a href="tasks/deduplicate.html">去重 deduplicate</a>
+    <a href="tasks/filter.html">过滤 filter</a>
+    <a href="tasks/deidentify.html">脱敏 deidentify</a>
+    <a href="tasks/paraphrase.html">改写 paraphrase</a>
+    <div class="group">质性分析类任务</div>
+    <a href="tasks/codify.html">编码 codify</a>
+    <a href="tasks/bucket.html">归桶 bucket</a>
+    <a href="tasks/compare.html">对比 compare</a>
+    <a href="tasks/discover.html">特征发现 discover</a>
+    <div class="group">生成类任务</div>
+    <a href="tasks/ideate.html">理论生成 ideate</a>
+    <a href="tasks/seed.html">样本生成 seed</a>
+    <a href="tasks/poll.html">合成调查 poll</a>
+    <a href="tasks/whatever.html">任意提示词 whatever</a>
+  </nav>
+
+  <main>
+    <h1>快速上手</h1>
+    <p class="lead">从安装到跑通第一个结果，约 10 分钟。你只需要能打开一个命令行窗口。</p>
+
+    <h2>第 1 步：安装</h2>
+    <p>项目使用 Python（建议 3.11+）。推荐用 <code class="inline">uv</code> 管理环境，没有 uv 也可以用 pip：</p>
+    <pre><code># 进入项目目录（假设你已克隆或拿到项目文件夹）
+cd leximeter
+
+# 方式一：uv（推荐）
+uv sync
+
+# 方式二：传统 pip
+python -m venv .venv
+.venv\Scripts\activate        # Windows
+source .venv/bin/activate     # macOS / Linux
+pip install -e .
+pip install -e ".[embeddings]"  # 可选：本地嵌入（合并/去重的高级路径）</code></pre>
+
+    <h2>第 2 步：配置模型</h2>
+    <p>Leximeter 本身不包含大模型——它调用你配置的模型 API。在项目根目录创建 <code class="inline">.env</code> 文件（模板见 <code class="inline">.env.example</code>）：</p>
+    <pre><code># .env —— 用你的服务商信息替换
+LEXIMETER_PROTOCOL=responses          # 协议：responses 或 chat
+LEXIMETER_BASE_URL=https://api.deepseek.com   # 服务商地址
+LEXIMETER_API_KEY=sk-你的密钥
+LEXIMETER_MODEL=deepseek-v4-flash     # 模型名</code></pre>
+    <table>
+      <tr><th>你想用哪家模型</th><th>填什么</th></tr>
+      <tr><td>DeepSeek（性价比高，本指南示例默认）</td><td>协议 <code>chat</code> 或 <code>responses</code>，地址 <code>https://api.deepseek.com</code></td></tr>
+      <tr><td>OpenAI</td><td>协议 <code>responses</code>，只填 <code>OPENAI_API_KEY</code> 即可</td></tr>
+      <tr><td>MiniMax / 其他 OpenAI 兼容网关</td><td>协议 <code>chat</code>，地址填网关的 base URL</td></tr>
+      <tr><td>本地模型（Ollama / vLLM）</td><td>协议 <code>chat</code>，地址填本地端点</td></tr>
+    </table>
+    <div class="note"><strong>密钥安全</strong>
+      <code>.env</code> 已被项目忽略（不进版本库）。也可以在命令行用环境变量临时传入，例如 PowerShell：<code>$env:LEXIMETER_API_KEY="sk-..."</code>。</div>
+
+    <h2>第 3 步：写第一个脚本</h2>
+    <p>把下面的内容存为 <code class="inline">first_run.py</code>，放在项目根目录：</p>
+    <pre><code>import asyncio
+import pandas as pd
+import leximeter          # 导入时会自动读取 .env
+
+async def main():
+    # 你的数据：一列文本
+    df = pd.DataFrame({"text": [
+        "I heard that the new president instituted a law on gun control.",
+        "My dog decided to eat food at 3am.",
+        "Congress passes amended budget for 2026",
+        "Scientists discover new species of frog in the Amazon rainforest.",
+    ]})
+
+    # 测量：每条文本在 5 个维度上打分 0-100
+    result = await leximeter.rate(
+        df, "text",
+        attributes={
+            "discusses politics": "How much the text concerns political figures or issues (0-100).",
+            "news headline": "How much the text reads like a journalistic headline (0-100).",
+            "discusses animals": "How much the text mentions animals (0-100).",
+        },
+        save_dir="my_study/ratings",
+        n_runs=2,               # 每条测 2 次取平均，结果更稳
+    )
+    print(result)
+
+asyncio.run(main())</code></pre>
+
+    <h3>运行</h3>
+    <pre><code>uv run python first_run.py</code></pre>
+    <p>你会看到类似这样的输出（每次运行会略有不同——模型不是确定性计算）：</p>
+    <div class="result">
+      <table>
+        <tr><th>text</th><th>discusses politics</th><th>news headline</th><th>discusses animals</th></tr>
+        <tr><td>I heard that the new president instituted a law on gun control.</td><td>95.0</td><td>10.0</td><td>2.0</td></tr>
+        <tr><td>My dog decided to eat food at 3am.</td><td>3.0</td><td>5.0</td><td>92.0</td></tr>
+        <tr><td>Congress passes amended budget for 2026</td><td>88.0</td><td>90.0</td><td>0.0</td></tr>
+        <tr><td>Scientists discover new species of frog in the Amazon rainforest.</td><td>0.0</td><td>85.0</td><td>78.0</td></tr>
+      </table>
+      <div class="dim">4 行 × 3 属性：原文本列 + 每个属性一列（示意值；真实运行会有轻微波动）</div>
+    </div>
+
+    <h2>第 4 步：保存与下一步</h2>
+    <ol>
+      <li><code class="inline">result.to_csv("ratings.csv", index=False)</code> 导出，供 Stata / R / Excel 分析。</li>
+      <li>所有中间文件（原始模型回答、检查点）都在 <code class="inline">my_study/ratings/</code> 目录里——断线或中断后重跑同一脚本会自动续跑，不重复花钱。</li>
+      <li>把 <code class="inline">n_runs=2</code> 的明细数据（<code class="inline">ratings_full_disaggregated.csv</code>）用于信度分析（如 ICC）。</li>
+      <li>想换任务？看<a href="index.html">主页的任务地图</a>，每个功能都有独立页面（含示例代码与真实结果）。</li>
+    </ol>
+
+    <h2>常见问题</h2>
+    <table>
+      <tr><th>问题</th><th>答案</th></tr>
+      <tr><td>这要花多少钱？</td><td>取决于数据量与模型。以 DeepSeek 为例，1 万段文本 × 1 个属性的成本通常只有几元到几十元。API 有免费额度可先试。</td></tr>
+      <tr><td>结果可复现吗？</td><td>同一段文本两次打分可能有 ±5 分内的波动。建议 <code>n_runs=2~3</code> 取平均；检查点机制保证"跑过的部分不重跑"。</td></tr>
+      <tr><td>可以用自己的词表/量表吗？</td><td>可以。所有属性、分类标签、编码类别都是你定义的自由文本——写清楚定义就是你的测量工具。</td></tr>
+      <tr><td>中文文本支持吗？</td><td>支持。所有提示词由模型处理，直接写中文文本即可；<code>attributes</code> 的定义也可以写中文。</td></tr>
+      <tr><td>断网/中断了怎么办？</td><td>重跑同一脚本即可，已完成的条目自动跳过（检查点）。复杂任务的中断恢复正在完善（见项目 TICKET-001）。</td></tr>
+    </table>
+
+    <footer><a href="index.html">← 返回主页</a> · <a href="configuration.html">下一步：参数设置 →</a></footer>
+  </main>
+</div>
+</body>
+</html>

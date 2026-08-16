@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>特征发现 discover — Leximeter 使用指南</title>
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+<div class="layout">
+  <nav class="sidebar">
+    <div class="brand">Leximeter<small>文本测量 · 使用指南</small></div>
+    <a href="../index.html">🏠 主页</a>
+    <a href="../getting-started.html">🚀 快速上手</a>
+    <a href="../configuration.html">⚙️ 参数设置</a>
+    <div class="group">测量类任务</div>
+    <a href="rate.html">评分 rate</a>
+    <a href="classify.html">分类 classify</a>
+    <a href="extract.html">抽取 extract</a>
+    <a href="rank.html">排序 rank</a>
+    <a href="debias.html">去偏 debias</a>
+    <div class="group">文本整理类任务</div>
+    <a href="merge.html">合并 merge</a>
+    <a href="deduplicate.html">去重 deduplicate</a>
+    <a href="filter.html">过滤 filter</a>
+    <a href="deidentify.html">脱敏 deidentify</a>
+    <a href="paraphrase.html">改写 paraphrase</a>
+    <div class="group">质性分析类任务</div>
+    <a href="codify.html">编码 codify</a>
+    <a href="bucket.html">归桶 bucket</a>
+    <a href="compare.html">对比 compare</a>
+    <a href="discover.html">特征发现 discover</a>
+    <div class="group">生成类任务</div>
+    <a href="ideate.html">理论生成 ideate</a>
+    <a href="seed.html">样本生成 seed</a>
+    <a href="poll.html">合成调查 poll</a>
+    <a href="whatever.html">任意提示词 whatever</a>
+  </nav>
+
+  <main>
+    <h1>特征发现 <code class="inline">discover</code></h1>
+    <p class="lead">把两组文本丢给它，让大语言模型自己找出"它们到底差在哪里"，再把每个特征量化成"在多少条文本中成立"，直接产出可检验的研究假设。</p>
+    <span class="badge">质性分析类</span><span class="badge llm">LLM 核心</span>
+
+    <h2>这是什么</h2>
+    <p>在质性研究中你常会面对这样的问题：支持者与反对者的发言、A 公司与 B 公司的年报、改革前后的话语——它们<strong>显然不一样</strong>，但你一时说不清差在哪儿，也没有一张现成的编码表。</p>
+    <p><code class="inline">discover</code> 就是为你解决这个问题的：它不要求你事先定义任何特征，而是走一条完整的"特征发现"链路——</p>
+    <ul>
+      <li><strong>找差异</strong>：把两类文本逐条配对，让模型写下每条"区别点"（比如：circle 是乐观语气，square 是警示语气）；</li>
+      <li><strong>归并成标签</strong>：几十条零碎的差异描述太散，模型再把这些差异归并成几个互斥的"大类"（标签），每个标签自带定义；</li>
+      <li><strong>套回数据量化</strong>：把每个标签当成一个问题，逐条文本判断它是否成立，统计出占比，回答"这个特征到底有多常见、是否只属于某一类"。</li>
+    </ul>
+    <p>它支持两种用法：<strong>两列对比</strong>（circle 列 = 你关心的类，square 列 = 对照类，推荐，能产出净占比）与<strong>单列挖掘</strong>（只给一列文本，让模型直接标出其中的特征片段）。</p>
+
+    <div class="tip"><strong>什么时候用</strong>
+      当你<strong>没有预设特征清单</strong>，想探索"两类文本究竟差在哪"、为下一步研究生成假设时。发现出的标签可以接着用来手工完善编码手册，或者转成 <a href="classify.html">分类</a> 的标签做大样本验证。如果你已经有明确假设，直接用 <a href="classify.html">分类</a>；标签由模型生成，是"建议"而非"结论"，正式研究请人工审读一遍再使用。</div>
+
+    <h2>怎么用</h2>
+    <p>三步：准备两类文本（或一列文本）→ 调用 → 读取汇总表。数据是一个表格（pandas DataFrame），circle/square 各占一列。</p>
+    <pre><code>import leximeter
+import pandas as pd
+
+# 1. 你的数据：两类文本各一列（circle = 你关心的类，square = 对照类）
+df = pd.DataFrame({
+    "circle": [
+        "AI assistants handle routine support tickets, freeing staff for creative work.",
+        "Renewable energy costs keep falling; solar is now the cheapest power source.",
+        "Telemedicine reaches rural patients who previously had no local specialists.",
+    ],
+    "square": [
+        "Algorithmic feeds deepen polarization and erode public discourse daily.",
+        "Mass surveillance tools quietly expand with each new security law.",
+        "Automation is hollowing out middle-skill jobs faster than retraining helps.",
+    ],
+})
+
+# 2. 调用：discover 自己找差异、归并标签、再逐条量化
+result = await leximeter.discover(
+    df,
+    circle_column_name="circle",
+    square_column_name="square",
+    save_dir="my_study/discover",
+    bucket_count=10,          # 差异条目最终归并成几个标签
+    model="deepseek-v4-flash",  # 或任何已配置的模型
+)
+
+# 3. 最重要的输出：每个特征的"净占比"汇总表
+print(result["summary"])
+result["summary"].to_csv("my_study/discover_summary.csv", index=False)</code></pre>
+    <p>如果只想挖一列文本的特征（不对比两类），把 <code class="inline">column_name="text"</code> 传给 <code class="inline">discover</code>，其他照旧；该模式不产出 summary 净占比表。</p>
+
+    <h3>结果里有什么</h3>
+    <pre><code>result["candidates"]        # 原始差异候选（Compare 或 Codify 阶段产出的术语 → 定义）
+result["compare"]           # pair 模式：逐对差异表（attribute / explanation 两列）
+result["buckets"]           # 归并后的标签：{标签: 定义}（也即汇总表的 label 列）
+result["bucket_df"]         # 同上，表格形式（bucket / definition 两列）
+result["classification"]    # 原数据 + 每个标签的 {label}_actual / {label}_inverted 两列
+result["summary"]           # pair 模式：每个标签的净占比汇总表</code></pre>
+    <p>所有中间产物都会保存在 <code class="inline">save_dir</code>（compare / bucket / classify 子目录），并打包成 <code class="inline">discover_results_snapshot.json</code> 和 <code class="inline">discover_results_export.zip</code>（zip 内含全部表格的 CSV），方便检查与续跑。</p>
+
+    <h3>示例结果（真实运行）</h3>
+    <p>下面来自一次真实运行：10 对科技主题文本，circle 是"正面立场"句，square 是"负面立场"句（示例代码只展示了 3 对）。先看第一步——模型逐对找出的差异（50 条中摘 3 条）：</p>
+    <div class="result">
+      <table>
+        <tr><th>attribute（差异点）</th><th>explanation（为什么是差异）</th></tr>
+        <tr><td>circle has an optimistic tone whereas square has a cautionary tone</td><td>Circle describes positive developments ('costs keep falling', 'now the cheapest power source'); square describes a potentially concerning trend ('quietly expand'), suggesting worry.</td></tr>
+        <tr><td>square involves government legislation while circle involves market and technology forces</td><td>Square attributes changes to 'new security law' (government); circle attributes to cost dynamics inherent in solar power (market/technology).</td></tr>
+        <tr><td>circle explicitly names a universal beneficiary, while square does not</td><td>Circle ends with 'for everyone', making its benefit universal; square mentions no beneficiary at all.</td></tr>
+      </table>
+      <div class="dim">Compare 阶段输出，一行一条差异。这些零碎描述随后被归并成 3 个标签。</div>
+    </div>
+    <p>最终核心输出——<code class="inline">summary</code> 汇总表（真实值）：</p>
+    <div class="result">
+      <table>
+        <tr><th>label（模型生成的标签）</th><th>actual_true</th><th>inverted_true</th><th>total</th><th>actual_pct</th><th>inverted_pct</th><th>net_pct</th></tr>
+        <tr><td>square entries emphasize policy, regulation, oversight, or government action, while circle entries do not</td><td>3</td><td>0</td><td>10</td><td>30.0</td><td>0.0</td><td>30.0</td></tr>
+        <tr><td>circle entries present technologies/programs as beneficial solutions and progress, while square entries present them as harmful problems or stagnation</td><td>10</td><td>0</td><td>10</td><td>100.0</td><td>0.0</td><td>100.0</td></tr>
+        <tr><td>circle entries explicitly name human beneficiaries and deliberate programs, while square entries attribute outcomes to automated/inanimate systems or omit beneficiaries</td><td>6</td><td>0</td><td>10</td><td>60.0</td><td>0.0</td><td>60.0</td></tr>
+      </table>
+      <div class="dim">10 对文本。实际占比 = 该特征按"正向描述"成立的条数比例；反转占比 = 把 circle/square 对调后仍然成立的比例；净占比 = 实际 − 反转（百分点）。净占比为正表示该特征在 circle 类更常见（为负则反过来）。本例反转占比全为 0，说明没有"反向也成立"的混淆；"circle 呈现有益进展"的特征在 10 条中全部成立（净占比 100%）。标签由模型生成（本例为英文），正式研究建议人工改写成中文/学术用语。</div>
+    </div>
+    <p>逐条判断表（<code class="inline">classification</code>，真实值，3 行示例；①②③对应上表三个标签）：</p>
+    <div class="result">
+      <table>
+        <tr><th>circle 文本</th><th>square 文本</th><th>① 正向</th><th>① 反向</th><th>② 正向</th><th>② 反向</th><th>③ 正向</th><th>③ 反向</th></tr>
+        <tr><td>AI assistants handle routine support tickets, freeing staff for creative work.</td><td>Algorithmic feeds deepen polarization and erode public discourse daily.</td><td>False</td><td>False</td><td>True</td><td>False</td><td>True</td><td>False</td></tr>
+        <tr><td>Renewable energy costs keep falling; solar is now the cheapest power source.</td><td>Mass surveillance tools quietly expand with each new security law.</td><td>True</td><td>False</td><td>True</td><td>False</td><td>False</td><td>False</td></tr>
+        <tr><td>Open-source models let small teams build tools that were once enterprise-only.</td><td>Plastic waste keeps accumulating; recycling rates have barely improved.</td><td>False</td><td>False</td><td>True</td><td>False</td><td>False</td><td>False</td></tr>
+      </table>
+      <div class="dim">每个标签展开成"正向 / 反向"两列（见实现原理第 3 步）。汇总表里的 actual_true / inverted_true 就是统计这一层的 True 个数。</div>
+    </div>
+
+    <h2>实现原理（简版）</h2>
+    <p>整条流水线由三个现成任务串起来，理解它有助于判断结果该信多少：</p>
+    <ol>
+      <li><strong>找候选特征（Compare / Codify）</strong>：pair 模式下，把 circle 与 square 逐条配对，让模型写出"这条 circle 与这条 square 在哪些方面不同"，每条差异配一句解释；单列模式改用动态编码（<a href="codify.html">codify</a>），直接在文本中标出特征片段。这一步产出的候选可能几十上百条，很碎。</li>
+      <li><strong>归并成标签（Bucket）</strong>：候选太碎无法直接用。归桶任务经过"生成 → 缩减 → 定稿"三轮投票（<code class="inline">repeat_bucketing</code> / <code class="inline">repeat_voting</code> 控制次数），把原始差异归并成 <code class="inline">bucket_count</code> 个互斥的大类，每个标签自带一段定义。</li>
+      <li><strong>套回数据量化（Classify）</strong>：把每个标签从"circle 的视角"描述一遍（正向），再对调成"square 的视角"（反向，模型会把描述里的 circle/square 互换），于是每个标签变成 <code class="inline">{label}_actual</code> 与 <code class="inline">{label}_inverted</code> 两个问题。然后逐条文本投票：每段文本判断该特征是否成立（<code class="inline">n_runs</code> 次重复，取多数；判定阈值 <code class="inline">min_frequency</code>）。</li>
+      <li><strong>净占比（Summary）</strong>：对每个标签统计正向成立的比例（<code class="inline">actual_pct</code>）、反向成立的比例（<code class="inline">inverted_pct</code>），净占比 <code class="inline">net_pct</code> = 实际 − 反转（百分点）。</li>
+    </ol>
+    <p>为什么要"实际 − 反转"而不是只看实际占比？因为模型可能系统性"容易打勾"——对某些表述总是倾向于说"存在差异"。反向问题提供了一个基准线：如果某特征只是模型偏好造成的假象，那它正向、反向成立的频率应该差不多，净占比会趋近 0；净占比越接近 ±100，越说明这是一个真实的、方向明确的区分特征。这和问卷里用反向题控制应答偏差是同一个统计思想。</p>
+
+    <h3>给模型的提示词（概括）</h3>
+    <div class="prompt"><span class="plabel">Compare 提示词结构（简化为要点）</span>
+      这是第 1 条文本（circle）："<em>…circle 文本…</em>"<br>
+      这是第 2 条文本（square）："<em>…square 文本…</em>"<br>
+      请找出这两条文本在内容、语气、结构上的差异，重点找<strong>能区分两类文本</strong>的特征。<br>
+      对每条差异输出 JSON：<code>{"attribute": "差异点的一句话描述", "explanation": "为什么这是差异"}</code>
+    </div>
+    <div class="prompt"><span class="plabel">Classify 提示词结构（简化为要点）</span>
+      <em>…circle 文本…</em> 是研究对象，<em>…square 文本…</em> 是对照。<br>
+      请判断以下特征是否成立："<em>…标签定义…</em>"<br>
+      正向（actual）：该特征描述了 circle 而没有描述 square；<br>
+      反向（inverted）：该特征描述了 square 而没有描述 circle。<br>
+      输出 JSON：<code>{"actual": true/false, "inverted": true/false}</code>
+    </div>
+    <p>归桶阶段的提示词核心是"把下面这些零散差异归并为 N 个大类，每类互斥且自带定义"，并经过多轮投票取多数，降低单次抽样的随机性。</p>
+
+    <h2>参数设置</h2>
+    <table>
+      <tr><th>参数</th><th>默认值</th><th>说明</th></tr>
+      <tr><td><code>circle_column_name</code> / <code>square_column_name</code></td><td>None</td><td>pair 模式（推荐）：你关心的类与对照类的列名，两者必须同时给出。</td></tr>
+      <tr><td><code>column_name</code></td><td>None</td><td>单列模式：只给一列文本，动态编码直接挖特征。与 pair 模式二选一，不能都给。</td></tr>
+      <tr><td><code>save_dir</code></td><td>（必填）</td><td>保存中间产物与结果快照的目录（自动创建，含 compare/bucket/classify 子目录）。</td></tr>
+      <tr><td><code>bucket_count</code></td><td>10</td><td>差异条目最终归并成几个标签。想得到更细的发现就调大。</td></tr>
+      <tr><td><code>model</code></td><td>gpt-5.4-mini</td><td>使用的模型名；默认从环境变量 <code>LEXIMETER_MODEL</code> 读取。</td></tr>
+      <tr><td><code>n_parallels</code></td><td>50</td><td>同时发送给模型的请求数。API 允许时越高越快。</td></tr>
+      <tr><td><code>n_runs</code></td><td>1</td><td>第三步分类时每段文本投票几次。大于 1 时取多数，降低随机波动。</td></tr>
+      <tr><td><code>min_frequency</code></td><td>0.6</td><td>分类判定阈值：n_runs 次中标记为真的比例 ≥ 该值才算"成立"。</td></tr>
+      <tr><td><code>additional_instructions</code></td><td>None</td><td>追加给各阶段任务的额外指令（例如"忽略品牌名差异"）。</td></tr>
+      <tr><td><code>max_words_per_call</code></td><td>1000</td><td>单列模式动态编码时，每次请求处理的文本上限（词数）。</td></tr>
+      <tr><td><code>max_categories_per_call</code></td><td>8</td><td>单列模式动态编码时，每次请求最多输出的特征类别数。</td></tr>
+      <tr><td><code>modality</code></td><td>"text"</td><td>文本类型提示："text"（段落）或 "entity"（短实体）。影响提示词措辞。</td></tr>
+      <tr><td><code>n_terms_per_prompt</code></td><td>250</td><td>归桶时每个提示词里放多少条原始术语。</td></tr>
+      <tr><td><code>repeat_bucketing</code></td><td>5</td><td>归桶"生成"阶段的重复次数（每次提出一套桶方案，再取多数）。</td></tr>
+      <tr><td><code>repeat_voting</code></td><td>25</td><td>归桶"投票"阶段的重复次数。</td></tr>
+      <tr><td><code>next_round_frac</code></td><td>0.25</td><td>归桶多轮缩减时每轮保留的候选比例。</td></tr>
+      <tr><td><code>top_k_per_round</code></td><td>1</td><td>归桶每轮每组保留的前几个候选。</td></tr>
+      <tr><td><code>raw_term_definitions</code></td><td>True</td><td>True 时把候选特征连同其定义一起喂给归桶（推荐）；False 只喂术语名。</td></tr>
+      <tr><td><code>reset_files</code></td><td>False</td><td>True 时清空 save_dir 重新跑；False 时断点续跑（跳过已完成条目）。</td></tr>
+      <tr><td><code>client</code> / <code>embedding_client</code> / <code>search_tool</code></td><td>None</td><td>注入自定义模型客户端 / 嵌入客户端 / 搜索工具（进阶用法）。</td></tr>
+    </table>
+    <p>完整参数与进阶选项见 <a href="../configuration.html">⚙️ 参数设置</a>。</p>
+
+    <footer><a href="../index.html">← 返回主页</a> · 示例输出来自真实运行（DeepSeek deepseek-v4-flash，10 对文本）</footer>
+  </main>
+</div>
+</body>
+</html>

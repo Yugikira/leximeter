@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>任意提示词 whatever — Leximeter 使用指南</title>
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+<div class="layout">
+  <nav class="sidebar">
+    <div class="brand">Leximeter<small>文本测量 · 使用指南</small></div>
+    <a href="../index.html">🏠 主页</a>
+    <a href="../getting-started.html">🚀 快速上手</a>
+    <a href="../configuration.html">⚙️ 参数设置</a>
+    <div class="group">测量类任务</div>
+    <a href="rate.html">评分 rate</a>
+    <a href="classify.html">分类 classify</a>
+    <a href="extract.html">抽取 extract</a>
+    <a href="rank.html">排序 rank</a>
+    <a href="debias.html">去偏 debias</a>
+    <div class="group">文本整理类任务</div>
+    <a href="merge.html">合并 merge</a>
+    <a href="deduplicate.html">去重 deduplicate</a>
+    <a href="filter.html">过滤 filter</a>
+    <a href="deidentify.html">脱敏 deidentify</a>
+    <a href="paraphrase.html">改写 paraphrase</a>
+    <div class="group">质性分析类任务</div>
+    <a href="codify.html">编码 codify</a>
+    <a href="bucket.html">归桶 bucket</a>
+    <a href="compare.html">对比 compare</a>
+    <a href="discover.html">特征发现 discover</a>
+    <div class="group">生成类任务</div>
+    <a href="ideate.html">理论生成 ideate</a>
+    <a href="seed.html">样本生成 seed</a>
+    <a href="poll.html">合成调查 poll</a>
+    <a href="whatever.html">任意提示词 whatever</a>
+  </nav>
+
+  <main>
+    <h1>任意提示词 <code class="inline">whatever</code></h1>
+    <p class="lead">不套模板，把你的提示词原样批量执行——并白拿现成的并发、断点续跑与（可选）联网检索。</p>
+    <span class="badge">生成类</span><span class="badge llm">LLM 核心</span>
+
+    <h2>这是什么</h2>
+    <p>Leximeter 的每个正式任务（评分、分类、抽取……）都有一套固定模板和输出解析。但研究中总有"一次性"或"还没定型"的提问：</p>
+    <ul>
+      <li>试问几个开放问题，看看模型的回答像不像回事</li>
+      <li>对一批文本各问一个自定义问题，结果只要原文即可</li>
+      <li>探索阶段拿不准该用哪个正式任务</li>
+    </ul>
+    <p><code class="inline">whatever</code> 把你的提示词原样发给模型，批量执行后返回两列：<code class="inline">Identifier</code>（标识符）与 <code class="inline">Response</code>（回答原文）。可选 <code class="inline">web_search=True</code>：每条提示词先联网检索（Tavily）再作答，适合"需要最新信息"的问题。</p>
+
+    <div class="tip"><strong>什么时候用</strong>
+      临时探索、快速批量、研究设计未定型时。注意：<code class="inline">whatever</code> 不做解析、不做校验，返回的是模型原始文字——一旦问题与格式定型、需要可复现的测量，请改用 <a href="rate.html">评分</a> / <a href="classify.html">分类</a> 等有结构、有解析的任务。</div>
+
+    <h2>怎么用</h2>
+    <p>传一串提示词，或传一个表格（取其某一列逐行执行）。两种方式都支持。</p>
+    <pre><code>import leximeter
+
+result = await leximeter.whatever(
+    prompts=[
+        "Why do transformers outperform RNNs on long sequences?",
+        "What is the main risk of training a model on a very small dataset?",
+        "Give polite ways to tell someone their claim is incorrect.",
+    ],
+    save_dir="my_study/whatever",
+    model="deepseek-v4-flash",
+    web_search=False,   # True 时先联网检索（Tavily）再作答
+)</code></pre>
+
+    <h3>示例结果（真实运行）</h3>
+    <div class="result">
+      <table>
+        <tr><th>Identifier</th><th>Response</th></tr>
+        <tr><td><code>9a3067e51cb4148e</code></td><td>Transformers outperform RNNs on long sequences due to their parallelizable self-attention mechanism, which better captures long-range dependencies.</td></tr>
+        <tr><td><code>9b9aa8458f8d0a57</code></td><td>One risk is **overfitting** — the model may memorize the small training set instead of learning general patterns, leading to poor performance on new, unseen data.</td></tr>
+        <tr><td><code>a5817a3a9ba38a38</code></td><td>Here are a few polite ways to phrase it:<br>— "I believe that claim may not be entirely accurate."<br>— "I'm not sure that claim is correct."<br>— "With respect, I think there may be some misunderstanding there."<br>— "I see it differently — my understanding is that..."</td></tr>
+      </table>
+      <div class="dim">真实运行共 3 行（三个提示词，默认模式、未开检索）。Identifier 是提示词内容的哈希编号：同一提示词编号固定，断点续跑时不会重复调用。原始 CSV 还记录了每条的成功状态与耗时（约 2 秒/条）。</div>
+    </div>
+
+    <h3>回到数据里</h3>
+    <p><code class="inline">result.to_csv("custom_responses.csv")</code> 即可保存两列结果；<code class="inline">json_mode=True</code> 时返回还会多一列 <code class="inline">Response JSON</code>（解析后的字典），方便直接按字段读取。</p>
+
+    <h2>实现原理（简版）</h2>
+    <p>整个过程不需要你理解细节，但知道原理有助于判断结果质量：</p>
+    <ol>
+      <li><strong>整理提示词</strong>：字符串→单条；列表→逐条；表格→按 <code class="inline">column_name</code> 列逐行展开。每条配一个标识符（自己传，或自动用提示词的哈希）。</li>
+      <li><strong>检索增强（可选）</strong>：<code class="inline">web_search</code> 开启（或给了 <code class="inline">web_search_filters</code>）时，每条提示词先调检索工具取回相关上下文，拼在提示词前再发送；检索失败或没有结果时原样发送——检索只增强、绝不丢弃任务。</li>
+      <li><strong>批量执行</strong>：复用批处理引擎——并发发送（默认 50 路）、失败自动重试、完成一批写盘一批；中断后以 <code class="inline">reset_files=False</code> 续跑，不重复计费。</li>
+      <li><strong>解析</strong>：默认直接返回模型原文；<code class="inline">json_mode=True</code> 时要求模型输出 JSON，并追加解析后的列。</li>
+    </ol>
+
+    <h3>给模型的提示词（概括）</h3>
+    <div class="prompt"><span class="plabel">Whatever 没有固定模板</span>
+      你的提示词<strong>原样</strong>发送给模型。开启 <code>web_search</code> 后，实际发送的是：<br>
+      [检索到的相关上下文]<br><br>
+      [你的提示词原文]
+    </div>
+    <p>所谓"增强"就是把检索到的资料放在提示词前面、当作背景材料——模型读到的仍是你的原话，只是多了可引用的信息。</p>
+
+    <h2>参数设置</h2>
+    <table>
+      <tr><th>参数</th><th>默认值</th><th>说明</th></tr>
+      <tr><td><code>prompts</code></td><td>None</td><td>提示词：一个字符串或字符串列表。与 <code>df</code> 二选一。</td></tr>
+      <tr><td><code>df</code></td><td>None</td><td>表格数据；提供时把 <code>column_name</code> 列的每一行当作一条提示词。</td></tr>
+      <tr><td><code>column_name</code></td><td>None</td><td>df 中用作提示词的列名。</td></tr>
+      <tr><td><code>identifiers</code></td><td>None</td><td>每条提示词的标识符列表（须与提示词数量一致）。</td></tr>
+      <tr><td><code>identifier_column</code></td><td>None</td><td>df 中用作标识符的列名；缺省时自动用提示词哈希。</td></tr>
+      <tr><td><code>save_dir</code></td><td>"whatever"</td><td>保存目录（自动创建）。</td></tr>
+      <tr><td><code>model</code></td><td>gpt-5.4-mini</td><td>使用的模型；默认从环境变量 <code>LEXIMETER_MODEL</code> 读取。</td></tr>
+      <tr><td><code>json_mode</code></td><td>False</td><td>True 时要求模型输出 JSON，并追加 <code>Response JSON</code> 列。</td></tr>
+      <tr><td><code>web_search</code></td><td>None</td><td>是否先联网检索再作答；None 时视 <code>web_search_filters</code> 是否提供而定。</td></tr>
+      <tr><td><code>web_search_filters</code></td><td>None</td><td>检索过滤条件（如时间范围、来源）；提供即自动开启检索。</td></tr>
+      <tr><td><code>search_context_size</code></td><td>"medium"</td><td>检索上下文规模：small / medium / large。</td></tr>
+      <tr><td><code>n_parallels</code></td><td>50</td><td>同时发送给模型的请求数。</td></tr>
+      <tr><td><code>file_name</code></td><td>custom_prompt_responses.csv</td><td>输出文件名。</td></tr>
+      <tr><td><code>reset_files</code></td><td>False</td><td>True 时清空 save_dir 重新跑；False 时断点续跑。</td></tr>
+    </table>
+    <p>完整参数与进阶选项见 <a href="../configuration.html">⚙️ 参数设置</a>。</p>
+
+    <footer><a href="../index.html">← 返回主页</a> · 示例输出来自真实运行（DeepSeek deepseek-v4-flash）</footer>
+  </main>
+</div>
+</body>
+</html>

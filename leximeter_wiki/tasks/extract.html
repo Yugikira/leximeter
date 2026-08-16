@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>抽取 extract — Leximeter 使用指南</title>
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+<div class="layout">
+  <nav class="sidebar">
+    <div class="brand">Leximeter<small>文本测量 · 使用指南</small></div>
+    <a href="../index.html">🏠 主页</a>
+    <a href="../getting-started.html">🚀 快速上手</a>
+    <a href="../configuration.html">⚙️ 参数设置</a>
+    <div class="group">测量类任务</div>
+    <a href="rate.html">评分 rate</a>
+    <a href="classify.html">分类 classify</a>
+    <a href="extract.html">抽取 extract</a>
+    <a href="rank.html">排序 rank</a>
+    <a href="debias.html">去偏 debias</a>
+    <div class="group">文本整理类任务</div>
+    <a href="merge.html">合并 merge</a>
+    <a href="deduplicate.html">去重 deduplicate</a>
+    <a href="filter.html">过滤 filter</a>
+    <a href="deidentify.html">脱敏 deidentify</a>
+    <a href="paraphrase.html">改写 paraphrase</a>
+    <div class="group">质性分析类任务</div>
+    <a href="codify.html">编码 codify</a>
+    <a href="bucket.html">归桶 bucket</a>
+    <a href="compare.html">对比 compare</a>
+    <a href="discover.html">特征发现 discover</a>
+    <div class="group">生成类任务</div>
+    <a href="ideate.html">理论生成 ideate</a>
+    <a href="seed.html">样本生成 seed</a>
+    <a href="poll.html">合成调查 poll</a>
+    <a href="whatever.html">任意提示词 whatever</a>
+  </nav>
+
+  <main>
+    <h1>抽取 <code class="inline">extract</code></h1>
+    <p class="lead">让大语言模型从每段文本里抽出结构化事实（公司名、年份、价格……），把散落在文字里的信息变成规整的数据表。</p>
+    <span class="badge">测量类</span><span class="badge llm">LLM 核心</span>
+
+    <h2>这是什么</h2>
+    <p>你有一段段文本，其中<strong>已经含有</strong>你想要的信息，只是混在句子和叙述里。你想把每段文本的某些"字段"提取出来，变成一列列的规整数据。例如：</p>
+    <ul>
+      <li>从产品名里抽出<strong>生产公司</strong>、<strong>发布年份</strong>、<strong>单价</strong></li>
+      <li>从简历里抽出<strong>毕业院校</strong>、<strong>最近任职年份</strong></li>
+      <li>从学术摘要里抽出<strong>样本国家</strong>、<strong>数据来源年份</strong></li>
+    </ul>
+    <p>与 <a href="classify.html">分类</a>、<a href="rate.html">评分</a> 不同，<code class="inline">extract</code> 不判断"强弱"或"是不是"，而是把文本里<strong>已有的具体事实</strong>原样摘出来。一段文本通常对应一行；如果一段文本里含有多个实体（例如一份目录里列了多件商品），每个实体会各占一行。抽不到的信息记为空值。</p>
+
+    <div class="tip"><strong>什么时候用</strong>
+      当文本里有"现成的事实"需要变成表格字段时——数据库入库、做回归的协变量、把非结构化档案整理成编码表。需要测量"强弱程度"用 <a href="rate.html">评分</a>，需要"是不是"的判断用 <a href="classify.html">分类</a>。</div>
+
+    <h2>怎么用</h2>
+    <p>三步：准备数据 → 定义属性 → 调用。数据是一个表格（pandas DataFrame 或 CSV），其中一列是你的文本。</p>
+    <pre><code>import leximeter
+import pandas as pd
+
+# 1. 你的数据：一列文本（这里是产品名）
+df = pd.DataFrame({"product": ["Walkman", "iPad", "Nintendo Switch"]})
+
+# 2. 定义要抽取的属性（键 = 字段名，值 = 给模型的抽取标准说明）
+attributes = {
+    "company":         "The company that made this product.",
+    "year of release": "The year this product was first released.",
+    "unit price":      "The typical unit price in USD.",
+}
+
+# 3. 调用
+result = await leximeter.extract(
+    df, "product",
+    attributes=attributes,
+    save_dir="my_study/extraction",
+    model="deepseek-v4-flash",   # 或任何已配置的模型
+    types={"year of release": "int", "unit price": "float"},  # 可选：把结果转成数值
+)</code></pre>
+
+    <h3>示例结果（真实运行）</h3>
+    <div class="result">
+      <table>
+        <tr><th>product</th><th>entity_name</th><th>company</th><th>year of release</th><th>unit price</th></tr>
+        <tr><td>Walkman</td><td>Walkman</td><td>Sony</td><td>1979</td><td>33000</td></tr>
+        <tr><td>iPad</td><td>iPad</td><td>Apple Inc.</td><td>2010</td><td>499</td></tr>
+        <tr><td>Nintendo Switch</td><td>Nintendo Switch</td><td>Nintendo</td><td>2017</td><td>299.99</td></tr>
+        <tr><td>Instant Pot</td><td>Instant Pot</td><td>Instant Brands</td><td>2010</td><td>149.99</td></tr>
+        <tr><td>GoPro</td><td>GoPro</td><td>GoPro, Inc.</td><td>2004</td><td>29.95</td></tr>
+        <tr><td>Rubik's Cube</td><td>Rubik's Cube</td><td>Ideal Toy Company</td><td>1980</td><td>1.95</td></tr>
+      </table>
+      <div class="dim">6 行 × 5 列：原文本列 + 实体名 + 每个属性一列。公司、发布年份、单价都被抽成规整字段；配合 types 参数后年份与单价会被转成数值（另存为 *_cleaned_coerced.csv，如 33000 → 33000.0），可直接进回归。</div>
+    </div>
+
+    <h3>回到数据里</h3>
+    <p>返回的表格就是在你原来的表格上追加了每个属性一列。可以直接 <code class="inline">result.to_csv("extracted.csv")</code> 保存，再导入 Stata / R 分析。</p>
+
+    <h2>实现原理（简版）</h2>
+    <p>整个过程不需要你理解细节，但知道原理有助于判断结果质量：</p>
+    <ol>
+      <li><strong>生成提示词</strong>：对每段文本和全部属性（含抽取标准与格式规则），拼出一段标准指令（见下）。</li>
+      <li><strong>并行执行</strong>：全部任务并发发送给模型（默认 50 路并行），失败自动重试，完成一批存一批。</li>
+      <li><strong>解析</strong>：模型返回 JSON。若一段文本里含有多个实体，每个实体展开成独立的一行；抽不到的属性记 "unknown"（最终转成空值）。</li>
+      <li><strong>聚合</strong>：如果 <code class="inline">n_runs &gt; 1</code>（多次测量），每个字段取第一次成功抽到的值。</li>
+      <li><strong>类型转换（可选）</strong>：<code class="inline">types</code> 参数把文本值转成数值或日期（如 "1979" → 1979），转不了的记录在日志里。</li>
+    </ol>
+
+    <h3>给模型的提示词（概括）</h3>
+    <div class="prompt"><span class="plabel">Extract 提示词结构（简化为要点）</span>
+      以下是待抽取的文本："<em>…文本…</em>"。<br>
+      请抽取以下属性，输出 JSON（每个实体一节）：<br>
+      <code>{"实体名": {"属性名": "抽取到的值"}}</code><br>
+      格式规则：年份只给数字（如 "1979"，公元前用负数）、日期用 ISO 格式、价格不带货币符号；<br>
+      只给抽取到的数据本身，不要解释；抽不到就写 "unknown"。
+    </div>
+    <p>属性定义里写清楚"抽什么、按什么格式给"，模型就照此执行——这就是抽取结果的"编码手册"，写得越明确，抽取越一致。</p>
+
+    <h2>参数设置</h2>
+    <table>
+      <tr><th>参数</th><th>默认值</th><th>说明</th></tr>
+      <tr><td><code>df</code></td><td>（必填）</td><td>你的数据表格（pandas DataFrame），须包含文本列。</td></tr>
+      <tr><td><code>column_name</code></td><td>（必填）</td><td>数据中文本所在列的列名。</td></tr>
+      <tr><td><code>attributes</code></td><td>（必填）</td><td>字典：字段名 → 抽取标准说明（含期望格式，如"年份只给数字"）。</td></tr>
+      <tr><td><code>save_dir</code></td><td>（必填）</td><td>保存中间产物与结果的目录（自动创建）。</td></tr>
+      <tr><td><code>model</code></td><td>gpt-5.4-mini</td><td>使用的模型名；默认从环境变量 <code>LEXIMETER_MODEL</code> 读取。</td></tr>
+      <tr><td><code>n_runs</code></td><td>1</td><td>每段文本抽取几次。大于 1 时取第一次成功抽到的值，并额外保存逐次明细。</td></tr>
+      <tr><td><code>n_parallels</code></td><td>50</td><td>同时发送给模型的请求数。API 允许时越高越快。</td></tr>
+      <tr><td><code>n_attributes_per_run</code></td><td>None（全部分批）</td><td>每次请求最多包含几个属性。属性很多时模型可能顾此失彼，设小一点更稳。</td></tr>
+      <tr><td><code>additional_instructions</code></td><td>None</td><td>追加给模型的任何额外指令（如补充格式要求）。</td></tr>
+      <tr><td><code>modality</code></td><td>"entity"</td><td>文本类型提示：默认 "entity"（短实体，如产品名）；文本较长时改为 "text"。</td></tr>
+      <tr><td><code>types</code></td><td>None</td><td>把结果列转成数值或日期，如 <code>{"year of release": "int", "unit price": "float"}</code>；转换结果另存 <code>*_cleaned_coerced.csv</code>。</td></tr>
+      <tr><td><code>file_name</code></td><td>"extraction.csv"</td><td>中间结果文件名；最终汇总文件为同名 <code>*_cleaned.csv</code>。</td></tr>
+      <tr><td><code>reset_files</code></td><td>False</td><td>True 时清空 save_dir 重新跑；False 时断点续跑（跳过已完成条目）。</td></tr>
+      <tr><td><code>client / embedding_client / search_tool</code></td><td>None</td><td>底层客户端；默认自动从环境变量配置，一般不用改。</td></tr>
+      <tr><td><code>**engine_kwargs</code></td><td>—</td><td>透传给模型调用的额外参数（如 max_output_tokens、temperature、timeout、max_retries）。</td></tr>
+    </table>
+    <p>完整参数与进阶选项见 <a href="../configuration.html">⚙️ 参数设置</a>。</p>
+
+    <footer><a href="../index.html">← 返回主页</a> · 示例输出来自真实运行（DeepSeek deepseek-v4-flash）</footer>
+  </main>
+</div>
+</body>
+</html>

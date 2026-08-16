@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>合成调查 poll — Leximeter 使用指南</title>
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+<div class="layout">
+  <nav class="sidebar">
+    <div class="brand">Leximeter<small>文本测量 · 使用指南</small></div>
+    <a href="../index.html">🏠 主页</a>
+    <a href="../getting-started.html">🚀 快速上手</a>
+    <a href="../configuration.html">⚙️ 参数设置</a>
+    <div class="group">测量类任务</div>
+    <a href="rate.html">评分 rate</a>
+    <a href="classify.html">分类 classify</a>
+    <a href="extract.html">抽取 extract</a>
+    <a href="rank.html">排序 rank</a>
+    <a href="debias.html">去偏 debias</a>
+    <div class="group">文本整理类任务</div>
+    <a href="merge.html">合并 merge</a>
+    <a href="deduplicate.html">去重 deduplicate</a>
+    <a href="filter.html">过滤 filter</a>
+    <a href="deidentify.html">脱敏 deidentify</a>
+    <a href="paraphrase.html">改写 paraphrase</a>
+    <div class="group">质性分析类任务</div>
+    <a href="codify.html">编码 codify</a>
+    <a href="bucket.html">归桶 bucket</a>
+    <a href="compare.html">对比 compare</a>
+    <a href="discover.html">特征发现 discover</a>
+    <div class="group">生成类任务</div>
+    <a href="ideate.html">理论生成 ideate</a>
+    <a href="seed.html">样本生成 seed</a>
+    <a href="poll.html">合成调查 poll</a>
+    <a href="whatever.html">任意提示词 whatever</a>
+  </nav>
+
+  <main>
+    <h1>合成调查 <code class="inline">poll</code></h1>
+    <p class="lead">从一段人群描述出发，自动生成成千上万个"虚拟受访者"，再向每人提问，得到一份可分析的模拟问卷数据。</p>
+    <span class="badge">生成类</span><span class="badge llm">LLM 核心</span>
+
+    <h2>这是什么</h2>
+    <p>没有受访者，也可以先"演"一遍问卷。<code class="inline">poll</code> 分三个阶段完成：</p>
+    <ol>
+      <li><strong>生成人群</strong>：按 <code class="inline">population_description</code> 用 <a href="seed.html">seed</a> 生成 <code class="inline">num_personas</code> 条人群种子（也可直接传入你自己的表格，跳过这一步）。</li>
+      <li><strong>扩写传记</strong>：把每条种子扩写成约 750 词的完整人物传记——姓名、家庭、职业、性格、政治观点、人生目标，读起来像一段真实人生。</li>
+      <li><strong>逐人提问</strong>：把问卷逐批发给每个 persona，要求完全以该人的视角回答；答案以"答案 + 概率"的分布给出，写进结果表时每个问题一列。</li>
+    </ol>
+    <p>输出是每行一个 persona 的表格：<code class="inline">seed</code>（种子）+ <code class="inline">persona</code>（传记）+ 每个问题一列。</p>
+
+    <div class="tip"><strong>什么时候用</strong>
+      问卷预测试与措辞打磨、没有真实样本时的探索性分析。注意：这是模型对"这类人"的模拟，不是真实抽样——代表性取决于模型对人群的了解，结论不能替代真实调查。若想基于你自己的受访者文本提问，直接用 <a href="whatever.html">任意提示词 whatever</a> 更合适。</div>
+
+    <h2>怎么用</h2>
+    <p>说清人群、列出问题，然后调用。</p>
+    <pre><code>import leximeter
+
+result = await leximeter.poll(
+    population_description="The general US adult population.",
+    questions=[
+        "How many hours per day do you spend on social media? (1-10)",
+        "Do you think social media is mostly good or mostly bad for society? (good/bad)",
+    ],
+    num_personas=6,   # 示例取 6 人便于展示
+    save_dir="my_study/poll",
+    seed_model="deepseek-v4-flash",    # 三个阶段可分别指定模型
+    persona_model="deepseek-v4-flash",
+    poll_model="deepseek-v4-flash",
+)</code></pre>
+
+    <h3>示例结果（真实运行）</h3>
+    <div class="result">
+      <table>
+        <tr><th>seed（前 60 字符）</th><th>persona（前 60 字符）</th><th>How many hours per day do you spend on social media? (1-10)</th><th>Do you think social media is mostly good or mostly bad for society? (good/bad)</th></tr>
+        <tr><td>A 29-year-old White man from rural Ohio, high-school-educate…</td><td>Name: Tyler “Ty” McAllister<br>Nationality: USA<br>Age: 29<br>Gender: …</td><td>1.0</td><td>bad</td></tr>
+        <tr><td>A 34-year-old Hispanic woman from Phoenix, Arizona, register…</td><td>Name: Mariana “Mary” Sandoval<br>Nationality: American<br>Age: 34<br>…</td><td>1.0</td><td>bad</td></tr>
+        <tr><td>A 51-year-old White man from suburban Chicago, works as an I…</td><td>Name: Mark Sullivan<br>Nationality: USA<br>Age: 51<br>Gender: Male<br>Ra…</td><td>1.0</td><td>bad</td></tr>
+        <tr><td>A 25-year-old Black woman from Atlanta, Georgia, has some co…</td><td>Name: Kiana Renee Harris<br>Nationality: American<br>Age: 25<br>Gende…</td><td>1.0</td><td>good</td></tr>
+        <tr><td>A 67-year-old White woman from Fort Myers, Florida, retired …</td><td>Name: Nancy Carol Whitfield (née Bowen)<br>Nationality: USA<br>Age…</td><td>1.0</td><td>bad</td></tr>
+        <tr><td>A 42-year-old White woman from rural Tennessee, high-school …</td><td>Name: Darlene “Darla” Sue Whitfield<br>Nationality: USA<br>Age: 42…</td><td>1.0</td><td>good</td></tr>
+      </table>
+      <div class="dim">真实运行共 6 行（6 个 persona）；seed 与 persona 传记很长，显示时截断为前 60 字符。答案列取的是模型给出的"答案 + 概率"分布的第一个候选，不一定是概率最高的答案（如第 1 位受访者对第 1 问的原始分布中"4 小时"概率最高、为 0.25，但首个候选是 1）。完整分布与传记保存在 save_dir 下的 answers_raw.csv / personas_raw.csv。</div>
+    </div>
+
+    <h3>回到数据里</h3>
+    <p>每个问题一列，直接 <code class="inline">result.to_csv("poll_results.csv")</code> 后用 Stata / R 做频数、交叉与分组分析。想要概率加权的完整分布，到 <code class="inline">save_dir</code> 下的 answers_raw.csv 取原始 JSON。</p>
+
+    <h2>实现原理（简版）</h2>
+    <p>整个过程不需要你理解细节，但知道原理有助于判断结果质量：</p>
+    <ol>
+      <li><strong>种子生成</strong>：未传表格时，用 seed 任务按人群描述逐批生成 <code class="inline">num_personas</code> 条种子（每批 <code class="inline">entities_per_generation</code> 条），存到 save_dir/seed/。</li>
+      <li><strong>传记扩写</strong>：每条种子套用 persona 模板，扩写成约 750 词、格式固定的人物传记（家庭、教育、职业、性格五因素、政治观点、人生目标……）。</li>
+      <li><strong>逐批提问</strong>：问题按 <code class="inline">n_questions_per_run</code> 个一批；对每个 persona 发一个 poll 提示词，要求完全以该人视角作答、输出 JSON：每个问题对应一个"答案 + 概率"数组（概率为 0–1，和为 1）。</li>
+      <li><strong>解析输出</strong>：取每个问题分布的第一个候选写入结果表对应列（persona 的原始传记写入 persona 列）；完整分布存 answers_raw.csv，供加权分析。</li>
+    </ol>
+
+    <h3>给模型的提示词（概括）</h3>
+    <div class="prompt"><span class="plabel">Poll 提示词结构（简化为要点）</span>
+      你必须完全以以下人物的身份回答问卷：<br>
+      <em>[persona 传记]</em><br>
+      不要以 AI 助手的身份作答，不要加免责声明；人可以前后矛盾、可以极端——忠实扮演。<br>
+      输出恰好一个 JSON：键 = 逐字复述的问题；值 = <code>[答案, 概率]</code> 数组，概率和为 1；不确定就把概率分散到多个可能的答案上。<br>
+      真实运行示例（节选）：<br>
+      <code>"Do you think social media is mostly good or mostly bad for society? (good/bad)": [["bad", 0.65], ["good", 0.35]]</code>
+    </div>
+    <p>概率分布就是"随机性"的载体：同一 persona 在不同日子、不同心情下可能给出不同答案，分布反映这种真实的不确定性——这也是为何结果表展示的只是"第一个候选"，而非唯一答案。</p>
+
+    <h2>参数设置</h2>
+    <table>
+      <tr><th>参数</th><th>默认值</th><th>说明</th></tr>
+      <tr><td><code>questions</code></td><td>（必填）</td><td>问题列表（字符串）。每个问题输出一列。</td></tr>
+      <tr><td><code>save_dir</code></td><td>（必填）</td><td>保存目录（自动创建）。</td></tr>
+      <tr><td><code>population_description</code></td><td>None</td><td>人群描述，如 "The general US adult population."；不传且未提供 df 时生成"代表性人群"。</td></tr>
+      <tr><td><code>df</code> / <code>column_name</code></td><td>None</td><td>（调用时传）直接提供你自己的种子列表（表格 + 列名），跳过人群生成阶段。</td></tr>
+      <tr><td><code>num_personas</code></td><td>1000</td><td>要生成的 persona 数量（即种子总数）。</td></tr>
+      <tr><td><code>entities_per_generation</code></td><td>50</td><td>人群生成阶段每批产出的种子数。</td></tr>
+      <tr><td><code>n_questions_per_run</code></td><td>8</td><td>每次提问最多包含几个问题；问题太多时模型可能顾此失彼。</td></tr>
+      <tr><td><code>seed_model</code></td><td>gpt-5.5</td><td>人群生成阶段使用的模型（默认从环境变量 <code>LEXIMETER_MODEL</code> 读取）。</td></tr>
+      <tr><td><code>persona_model</code></td><td>gpt-5.5</td><td>传记扩写阶段使用的模型（同上）。</td></tr>
+      <tr><td><code>poll_model</code></td><td>gpt-5.5</td><td>提问阶段使用的模型（同上）。</td></tr>
+      <tr><td><code>n_parallels</code></td><td>50</td><td>同时发送给模型的请求数。</td></tr>
+      <tr><td><code>file_name</code></td><td>poll_results.csv</td><td>输出文件名。</td></tr>
+      <tr><td><code>reset_files</code></td><td>False</td><td>True 时清空 save_dir 重新跑；False 时断点续跑。</td></tr>
+    </table>
+    <p>完整参数与进阶选项见 <a href="../configuration.html">⚙️ 参数设置</a>。</p>
+
+    <footer><a href="../index.html">← 返回主页</a> · 示例输出来自真实运行（DeepSeek deepseek-v4-flash）</footer>
+  </main>
+</div>
+</body>
+</html>

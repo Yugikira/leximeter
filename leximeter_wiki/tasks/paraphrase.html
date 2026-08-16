@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>改写 paraphrase — Leximeter 使用指南</title>
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+<div class="layout">
+  <nav class="sidebar">
+    <div class="brand">Leximeter<small>文本测量 · 使用指南</small></div>
+    <a href="../index.html">🏠 主页</a>
+    <a href="../getting-started.html">🚀 快速上手</a>
+    <a href="../configuration.html">⚙️ 参数设置</a>
+    <div class="group">测量类任务</div>
+    <a href="rate.html">评分 rate</a>
+    <a href="classify.html">分类 classify</a>
+    <a href="extract.html">抽取 extract</a>
+    <a href="rank.html">排序 rank</a>
+    <a href="debias.html">去偏 debias</a>
+    <div class="group">文本整理类任务</div>
+    <a href="merge.html">合并 merge</a>
+    <a href="deduplicate.html">去重 deduplicate</a>
+    <a href="filter.html">过滤 filter</a>
+    <a href="deidentify.html">脱敏 deidentify</a>
+    <a href="paraphrase.html">改写 paraphrase</a>
+    <div class="group">质性分析类任务</div>
+    <a href="codify.html">编码 codify</a>
+    <a href="bucket.html">归桶 bucket</a>
+    <a href="compare.html">对比 compare</a>
+    <a href="discover.html">特征发现 discover</a>
+    <div class="group">生成类任务</div>
+    <a href="ideate.html">理论生成 ideate</a>
+    <a href="seed.html">样本生成 seed</a>
+    <a href="poll.html">合成调查 poll</a>
+    <a href="whatever.html">任意提示词 whatever</a>
+  </nav>
+
+  <main>
+    <h1>改写 <code class="inline">paraphrase</code></h1>
+    <p class="lead">让大语言模型按你写好的指令改写每一段文本——把口语换成正式书面语、压缩长度、统一术语表述——并自动校验改写是否真的做到了指令要求。</p>
+    <span class="badge">文本整理类</span><span class="badge llm">LLM 核心</span>
+
+    <h2>这是什么</h2>
+    <p>你有一段段文本，想按统一规则把它们"整理"成另一种表述。例如：</p>
+    <ul>
+      <li>把网络俚语改写为<strong>正式书面语</strong>，再进入后续分析或发表</li>
+      <li>把每个回答<strong>压缩到 50 字以内</strong>，便于做摘要对比</li>
+      <li>把不同受访者对同一事物的称呼<strong>统一成一致术语</strong>（短实体模式）</li>
+    </ul>
+    <p>输出有两列：改写结果（默认 <code class="inline">text_revised</code>，即"原列名 _revised"）和校验标记（<code class="inline">text_revised_approved</code>）。开启多轮校验后（<code class="inline">n_rounds &gt; 1</code>），模型还会自己当"质检员"：没达到指令要求的改写会自动重写一轮，直到通过或轮数用尽。</p>
+
+    <div class="tip"><strong>什么时候用</strong>
+      当你的研究需要"语体统一、可公开、可比对"的文本时——比如把口语化访谈转成书面语供人工核对，或把产品描述统一风格后做比较研究。注意：如果目标只是删掉敏感信息而基本保留原话，请用 <a href="deidentify.html">脱敏</a>；只需给整段文本贴"是/否"标签用 <a href="classify.html">分类</a>；要在原文中按类别逐字标片段用 <a href="codify.html">编码</a>。</div>
+
+    <h2>怎么用</h2>
+    <p>三步：准备数据 → 写清改写指令 → 调用。指令（instructions）越具体，改写越稳定。</p>
+    <pre><code>import leximeter
+import pandas as pd
+
+# 1. 你的数据：一列"文本"
+df = pd.DataFrame({"text": [
+    "u up? we should totally hit that new spot tmrw",
+    "the boss is a total tool, no cap",
+    "idk why they kept the old server up tbh",
+    "lowkey hyped for the on-device models tho",
+]})
+
+# 2. 改写指令（告诉模型怎么改）
+instructions = "Rewrite in a formal register, no slang."
+
+# 3. 调用
+result = await leximeter.paraphrase(
+    df, "text",
+    instructions=instructions,
+    save_dir="my_study/paraphrased",
+    model="deepseek-v4-flash",   # 或任何已配置的模型
+)</code></pre>
+
+    <h3>示例结果（真实运行）</h3>
+    <div class="result">
+      <table>
+        <tr><th>text</th><th>text_revised</th><th>text_revised_approved</th></tr>
+        <tr><td>u up? we should totally hit that new spot tmrw</td><td>Are you awake? We should visit that new place tomorrow.</td><td>True</td></tr>
+        <tr><td>the boss is a total tool, no cap</td><td>The manager is completely incompetent.</td><td>True</td></tr>
+        <tr><td>idk why they kept the old server up tbh</td><td>I do not understand why they continued to keep the old server operational.</td><td>True</td></tr>
+        <tr><td>lowkey hyped for the on-device models tho</td><td>I am moderately enthusiastic about the on-device models.</td><td>True</td></tr>
+      </table>
+      <div class="dim">4 行 × 3 列：原列 + 改写列 + 校验标记列。本次运行使用单轮模式（n_rounds=1），全部直接通过；若开启多轮校验（n_rounds&gt;1），未通过的行会被标为 False 并进入下一轮重写。</div>
+    </div>
+
+    <h3>回到数据里</h3>
+    <p>返回的表格就是在原表上追加了改写列与校验列。设 <code class="inline">n_runs=2</code> 会生成 <code class="inline">text_revised_1</code>、<code class="inline">text_revised_2</code> 等多份改写。保存后建议重点抽查 <code class="inline">approved=False</code> 的行（多轮模式下才会出现），人工修正即可。</p>
+
+    <h2>实现原理（简版）</h2>
+    <p>整个过程不需要你理解细节，但知道原理有助于判断结果质量：</p>
+    <ol>
+      <li><strong>生成</strong>：对每段文本、每次改写，拼出一段标准指令（见下），并发发送给模型（默认 50 路并行，失败自动重试）。单轮模式（n_rounds=1）到此为止，所有改写直接标记"通过"。</li>
+      <li><strong>校验（仅 n_rounds&gt;1）</strong>：每轮为"尚未通过"的条目多生成几个候选改写（第一轮 n_runs 个，之后 n_runs × later_round_run_multiplier 个），然后用分类器逐条判定："改文是否忠实应用了指令、对原文做了符合要求的转换"。"通过"和"不确定"都算过，只有明确"未遵循"才算失败。</li>
+      <li><strong>递归循环</strong>：失败的条目进入下一轮，从原文重新生成（若 use_modified_source=True，则从上一版改文继续，做增量改进）；直到全部通过或轮数上限用尽。</li>
+      <li><strong>兜底</strong>：轮数用尽仍未通过时，从最后一轮候选中随机保留一个，<code class="inline">approved</code> 标为 False，提醒你人工处理。</li>
+    </ol>
+
+    <h3>给模型的提示词（概括）</h3>
+    <div class="prompt"><span class="plabel">Paraphrase 提示词结构（简化为要点）</span>
+      以下是需要改写的内容："<em>…原文…</em>"。<br>
+      任务：按下列指令改写，务必勤勉、彻底、忠实于指令。<br>
+      BEGIN INSTRUCTIONS<br>
+      <code>…你的指令…</code><br>
+      END INSTRUCTIONS<br>
+      只输出改写后的文本，不要任何前言或解释。
+    </div>
+    <p>多轮模式下还隐藏一道"校验提示词"：把「指令 + 原文 + 改文」一起发给分类器，问"改文是否忠实运用了指令对原文进行转换"，返回 True/False。这就是改写的质量闸门。</p>
+
+    <h2>参数设置</h2>
+    <table>
+      <tr><th>参数</th><th>默认值</th><th>说明</th></tr>
+      <tr><td><code>instructions</code></td><td>（必填）</td><td>改写指令：告诉模型怎么改（语体、长度、角度……）。越具体越稳定。</td></tr>
+      <tr><td><code>column_name</code></td><td>（必填）</td><td>数据中文本所在列的列名。</td></tr>
+      <tr><td><code>save_dir</code></td><td>（必填）</td><td>保存中间产物与结果的目录（自动创建）。</td></tr>
+      <tr><td><code>model</code></td><td>gpt-5.4-mini</td><td>使用的模型名；默认从环境变量 <code>LEXIMETER_MODEL</code> 读取。改写与校验共用同一个模型。</td></tr>
+      <tr><td><code>n_parallels</code></td><td>50</td><td>同时发送给模型的请求数。API 允许时越高越快。</td></tr>
+      <tr><td><code>modality</code></td><td>"text"</td><td>输入类型："text"（段落）、"entity"（短实体，如产品名）等，影响提示词措辞。</td></tr>
+      <tr><td><code>json_mode</code></td><td>False</td><td>True 时要求模型只输出 JSON（适合程序化解析）。</td></tr>
+      <tr><td><code>revised_column_name</code></td><td>None</td><td>自定义改写结果列名；默认 <code>{"{column_name}_revised"}</code>。</td></tr>
+      <tr><td><code>file_name</code></td><td>paraphrase_responses.csv</td><td>原始改写响应的保存文件名；清洗后的结果存同名 <code>_cleaned.csv</code>。</td></tr>
+      <tr><td><code>n_rounds</code></td><td>1</td><td>校验轮数上限。1 = 单轮改写、不校验；大于 1 时启用"生成 → 校验 → 重写"循环。</td></tr>
+      <tr><td><code>n_runs</code></td><td>1</td><td>每段文本生成几份改写。大于 1 时输出列带 <code>_1.._n</code> 后缀；也是第一轮的候选数量。</td></tr>
+      <tr><td><code>later_round_run_multiplier</code></td><td>5</td><td>第二轮起每个条目生成的候选数 = n_runs × 该倍数（倍数不逐轮累乘）。</td></tr>
+      <tr><td><code>use_modified_source</code></td><td>False</td><td>True 时后续轮从上一版改文继续改写（增量改进），False 则始终回到原文。</td></tr>
+      <tr><td><code>validation_attribute</code></td><td>None</td><td>自定义校验标签定义（默认为"是否遵循指令"）；多条目时取第一个。</td></tr>
+      <tr><td><code>reset_files</code></td><td>False</td><td>True 时清空 save_dir 重新跑；False 时断点续跑（跳过已完成条目）。</td></tr>
+    </table>
+    <p>完整参数与进阶选项见 <a href="../configuration.html">⚙️ 参数设置</a>。</p>
+
+    <footer><a href="../index.html">← 返回主页</a> · 示例输出来自真实运行（DeepSeek deepseek-v4-flash）</footer>
+  </main>
+</div>
+</body>
+</html>

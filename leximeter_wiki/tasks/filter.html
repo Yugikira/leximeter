@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>过滤 filter — Leximeter 使用指南</title>
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+<div class="layout">
+  <nav class="sidebar">
+    <div class="brand">Leximeter<small>文本测量 · 使用指南</small></div>
+    <a href="../index.html">🏠 主页</a>
+    <a href="../getting-started.html">🚀 快速上手</a>
+    <a href="../configuration.html">⚙️ 参数设置</a>
+    <div class="group">测量类任务</div>
+    <a href="rate.html">评分 rate</a>
+    <a href="classify.html">分类 classify</a>
+    <a href="extract.html">抽取 extract</a>
+    <a href="rank.html">排序 rank</a>
+    <a href="debias.html">去偏 debias</a>
+    <div class="group">文本整理类任务</div>
+    <a href="merge.html">合并 merge</a>
+    <a href="deduplicate.html">去重 deduplicate</a>
+    <a href="filter.html">过滤 filter</a>
+    <a href="deidentify.html">脱敏 deidentify</a>
+    <a href="paraphrase.html">改写 paraphrase</a>
+    <div class="group">质性分析类任务</div>
+    <a href="codify.html">编码 codify</a>
+    <a href="bucket.html">归桶 bucket</a>
+    <a href="compare.html">对比 compare</a>
+    <a href="discover.html">特征发现 discover</a>
+    <div class="group">生成类任务</div>
+    <a href="ideate.html">理论生成 ideate</a>
+    <a href="seed.html">样本生成 seed</a>
+    <a href="poll.html">合成调查 poll</a>
+    <a href="whatever.html">任意提示词 whatever</a>
+  </nav>
+
+  <main>
+    <h1>过滤 <code class="inline">filter</code></h1>
+    <p class="lead">按一句自然语言条件筛选文本：只保留符合条件的行，其余筛掉。</p>
+    <span class="badge">文本整理类</span><span class="badge llm">LLM 核心</span>
+
+    <h2>这是什么</h2>
+    <p>你的数据里往往混着大量与主题无关的文本。例如你要研究"科技新闻标题"，但抓回来的标题里有一半是天气、生活琐事。你想先筛掉无关的，再对剩下的做评分、编码。这类条件常常无法用关键词表达清楚：</p>
+    <ul>
+      <li>"宣布产品或服务发布的新闻标题"——"Apple announces iPhone 17" 符合，"Weather forecast calls for rain" 不符合</li>
+      <li>"提及具体政策内容的段落"——需要理解句义而不是匹配词</li>
+      <li>"讨论工作压力的评论"——"Funding ran dry" 是，夸午餐的就不是</li>
+    </ul>
+    <p><code class="inline">filter</code> 让你把条件写成一句自然语言，模型逐条判断"是否符合"，符合的 <code class="inline">keep</code> 列为 True。相当于请一位认真的助理把表格过一遍，只留下符合你条件的行。</p>
+
+    <div class="tip"><strong>什么时候用</strong>
+      数据量大、想先砍掉无关文本再做深度分析时；或者你想得到"符合某条件的行子集"用于子样本比较。如果筛选之后还要给每行打分，可以用 <a href="rate.html">评分 rate</a>（评分不做丢弃，每行都保留分数）；要按标签分几类而不是二选一，用 <a href="classify.html">分类 classify</a>。</div>
+
+    <h2>怎么用</h2>
+    <p>给一个 DataFrame、列名和一句条件即可。返回原表 + 两个新列：<code class="inline">keep</code>（是否保留）和 <code class="inline">score</code>（符合程度，0–1）。</p>
+    <pre><code>import leximeter
+import pandas as pd
+
+# 你的数据：一列"文本"
+df = pd.DataFrame({"text": [
+    "Apple announces iPhone 17 with foldable display.",
+    "I made toast this morning and it was fine.",
+    "Tesla begins deliveries of the Cybertruck in Europe.",
+    "Weather forecast calls for rain on Tuesday.",
+    "OpenAI ships GPT-6 API in public beta.",
+    "My cat slept through the entire meeting.",
+]})
+
+# 条件写成一句自然语言
+result = await leximeter.filter(
+    df, "text",
+    condition="The text announces a product launch or shipment.",
+    save_dir="my_study/filter",
+    model="deepseek-v4-flash",       # 或任何已配置的模型
+)</code></pre>
+
+    <h3>示例结果（真实运行）</h3>
+    <div class="result">
+      <table>
+        <tr><th>text</th><th>keep</th><th>score</th></tr>
+        <tr><td>Apple announces iPhone 17 with foldable display.</td><td>True</td><td>1.0</td></tr>
+        <tr><td>I made toast this morning and it was fine.</td><td>False</td><td>0.0</td></tr>
+        <tr><td>Tesla begins deliveries of the Cybertruck in Europe.</td><td>True</td><td>1.0</td></tr>
+        <tr><td>Weather forecast calls for rain on Tuesday.</td><td>False</td><td>0.0</td></tr>
+        <tr><td>OpenAI ships GPT-6 API in public beta.</td><td>True</td><td>1.0</td></tr>
+        <tr><td>My cat slept through the entire meeting.</td><td>False</td><td>0.0</td></tr>
+      </table>
+      <div class="dim">6 行全量输出。条件为"宣布产品或服务发布/出货"：3 条命中、3 条未命中。本次 n_runs=1，所以 score 非 0 即 1；把 n_runs 调大后 score 就是"多次判断中命中的比例"。</div>
+    </div>
+
+    <h3>回到数据里</h3>
+    <p>用 <code class="inline">result[result["keep"]].to_csv("kept.csv")</code> 把筛出的行另存，或直接 <code class="inline">result["keep"]</code> 作为筛选标记参与后续分析。模型的原始回答在 <code class="inline">save_dir/filter_responses_raw_responses.csv</code>。</p>
+
+    <h2>实现原理（简版）</h2>
+    <p>关键挑战是"漏判"：模型面对一大串条目时，埋在中段的条目容易被看漏。做法：</p>
+    <ol>
+      <li><strong>分批</strong>：把所有唯一文本随机打乱（固定种子 <code class="inline">random_seed</code>，每次运行结果可复现），切成每批 <code class="inline">entities_per_call</code> 条（默认 150）的小清单。打乱是为了避免"同一来源的文本挤在同一批"造成的批次效应。</li>
+      <li><strong>多次复测</strong>：每批独立问模型 <code class="inline">n_runs</code> 遍——"逐条评估是否满足条件，只输出满足的条目，一个都不能漏"。模型被要求检查清单中每条，包括埋在中段的。</li>
+      <li><strong>计票与判定</strong>：每个文本被点名几次 ÷ 总遍数 = <code class="inline">score</code>（0–1）；<code class="inline">score &ge; threshold</code>（默认 0.5）则 <code class="inline">keep = True</code>。多次判断降低了模型偶尔看漏或误报的影响——只被点到一半遍数的文本会被滤掉，只有稳定命中的才保留。</li>
+    </ol>
+
+    <h3>给模型的提示词（概括）</h3>
+    <div class="prompt"><span class="plabel">Filter 提示词结构（简化为要点）</span>
+      判定条件：<em>"…你的条件…"</em>。<br>
+      逐条评估下面清单中的每个实体是否满足条件，<strong>每一条都要看，不许跳过</strong>。<br>
+      只输出满足条件的实体，漏掉任何一条都不行，也不许混入不满足的。<br>
+      输出 JSON：<code>{"entities meeting condition": ["…", …]}</code>，实体名必须逐字照抄。
+    </div>
+
+    <h2>参数设置</h2>
+    <table>
+      <tr><th>参数</th><th>默认值</th><th>说明</th></tr>
+      <tr><td><code>condition</code></td><td>（必填）</td><td>筛选条件，写成一句自然语言，例如 "The text announces a product launch or shipment."。</td></tr>
+      <tr><td><code>save_dir</code></td><td>（必填）</td><td>保存中间产物与结果的目录（自动创建）。</td></tr>
+      <tr><td><code>model</code></td><td>gpt-5.4-nano</td><td>使用的模型名；默认从环境变量 <code>LEXIMETER_MODEL</code> 读取。</td></tr>
+      <tr><td><code>n_runs</code></td><td>1</td><td>每批问几遍。大于 1 时 <code>score</code> = 命中的遍数 ÷ 总遍数，判定更稳。</td></tr>
+      <tr><td><code>n_parallels</code></td><td>50</td><td>同时发送给模型的请求数。API 允许时越高越快。</td></tr>
+      <tr><td><code>entities_per_call</code></td><td>150</td><td>每批最多放多少条文本（批次越大越省调用，也越容易看漏）。</td></tr>
+      <tr><td><code>shuffle</code></td><td>True</td><td>是否先打乱顺序再分批（避免批次效应）。</td></tr>
+      <tr><td><code>random_seed</code></td><td>42</td><td>打乱顺序的随机种子；固定后每次运行的分批方式一致。</td></tr>
+      <tr><td><code>threshold</code></td><td>0.5</td><td>保留判定线：<code>score</code> 达到该值才 <code>keep = True</code>。想更保守地过滤就调高（如 0.8）。</td></tr>
+      <tr><td><code>additional_instructions</code></td><td>None</td><td>追加给模型的任何额外指令（例如对条件的补充澄清）。</td></tr>
+      <tr><td><code>file_name</code></td><td>filter_responses.csv</td><td>原始模型响应保存的文件名前缀（实际存为 <code>filter_responses_raw_responses.csv</code>）。</td></tr>
+      <tr><td><code>reset_files</code></td><td>False</td><td>True 时清空 save_dir 重新跑；False 时断点续跑（跳过已完成批次）。</td></tr>
+    </table>
+    <p>完整参数与进阶选项见 <a href="../configuration.html">⚙️ 参数设置</a>。</p>
+
+    <footer><a href="../index.html">← 返回主页</a> · 示例输出来自真实运行（DeepSeek deepseek-v4-flash）</footer>
+  </main>
+</div>
+</body>
+</html>

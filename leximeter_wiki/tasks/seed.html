@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>样本生成 seed — Leximeter 使用指南</title>
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+<div class="layout">
+  <nav class="sidebar">
+    <div class="brand">Leximeter<small>文本测量 · 使用指南</small></div>
+    <a href="../index.html">🏠 主页</a>
+    <a href="../getting-started.html">🚀 快速上手</a>
+    <a href="../configuration.html">⚙️ 参数设置</a>
+    <div class="group">测量类任务</div>
+    <a href="rate.html">评分 rate</a>
+    <a href="classify.html">分类 classify</a>
+    <a href="extract.html">抽取 extract</a>
+    <a href="rank.html">排序 rank</a>
+    <a href="debias.html">去偏 debias</a>
+    <div class="group">文本整理类任务</div>
+    <a href="merge.html">合并 merge</a>
+    <a href="deduplicate.html">去重 deduplicate</a>
+    <a href="filter.html">过滤 filter</a>
+    <a href="deidentify.html">脱敏 deidentify</a>
+    <a href="paraphrase.html">改写 paraphrase</a>
+    <div class="group">质性分析类任务</div>
+    <a href="codify.html">编码 codify</a>
+    <a href="bucket.html">归桶 bucket</a>
+    <a href="compare.html">对比 compare</a>
+    <a href="discover.html">特征发现 discover</a>
+    <div class="group">生成类任务</div>
+    <a href="ideate.html">理论生成 ideate</a>
+    <a href="seed.html">样本生成 seed</a>
+    <a href="poll.html">合成调查 poll</a>
+    <a href="whatever.html">任意提示词 whatever</a>
+  </nav>
+
+  <main>
+    <h1>样本生成 <code class="inline">seed</code></h1>
+    <p class="lead">让大语言模型按你的说明，一批一批地生成互不重复的"代表性样本"（人、公司、主题……），并自动编号。</p>
+    <span class="badge">生成类</span><span class="badge llm">LLM 核心</span>
+
+    <h2>这是什么</h2>
+    <p>研究里常常需要一大批样本：模拟访谈对象、创业公司、研究主题、政策案例……自己一条条写既慢又不全面。<code class="inline">seed</code> 用一段文字说明替代手工罗列：</p>
+    <ul>
+      <li>说清楚你想要什么样的实体（种类、分布、多样性要求）</li>
+      <li>模型按说明逐批生成，每批默认 50 个</li>
+      <li>每批都会把"已经生成过的样本"回传给模型，防止重复</li>
+      <li>一直循环到凑满 <code class="inline">num_entities</code> 个，自动编号（entity-00000、entity-00001……）</li>
+    </ul>
+    <p>输出是一个两列表格：<code class="inline">entity</code>（样本内容）+ <code class="inline">entity_id</code>（编号）。</p>
+
+    <div class="tip"><strong>什么时候用</strong>
+      当你需要大量互不重复、且有代表性的实体列表时——特别是作为 <a href="poll.html">合成调查 poll</a> 的人群种子。如果手头已有名单、只是想合并同类项，请用 <a href="deduplicate.html">去重 deduplicate</a>；如果想要天马行空的新想法，用 <a href="ideate.html">理论生成 ideate</a>。</div>
+
+    <h2>怎么用</h2>
+    <p>两步：写清楚实体说明 → 调用。说明写得越具体（种类、分布、多样性要求），生成越可控。</p>
+    <pre><code>import leximeter
+
+# 1. 写清楚你要什么样本
+instructions = (
+    "Representative startup founders building AI infrastructure "
+    "companies: varied backgrounds, company focus, and geography."
+)
+
+# 2. 调用（示例取小批量便于展示）
+result = await leximeter.seed(
+    instructions,
+    num_entities=8,              # 目标总数
+    entities_per_generation=4,   # 每批生成几个
+    save_dir="my_study/seeds",
+    model="deepseek-v4-flash",
+)</code></pre>
+
+    <h3>示例结果（真实运行）</h3>
+    <div class="result">
+      <table>
+        <tr><th>entity</th><th>entity_id</th></tr>
+        <tr><td>Maya Chen, founder of TensorForge, a startup designing specialized AI accelerator chips (ASICs) for training large language models. She previously led…</td><td>entity-00000</td></tr>
+        <tr><td>Diego Fernández, founder of FeatureFlow, a data infrastructure startup building a real-time feature store and automated data versioning…</td><td>entity-00001</td></tr>
+        <tr><td>Priya Sharma, founder of EdgeMind, a company creating on-device AI inference infrastructure…</td><td>entity-00002</td></tr>
+        <tr><td>James O'Connor, founder of GuardRailsAI, a startup providing security and compliance infrastructure for deployed AI systems…</td><td>entity-00003</td></tr>
+        <tr><td>Sofia Ramírez, founder of Inferio, a platform providing serverless model serving with seamless GPU multiplexing and predictive autoscaling, allowing AI teams to deploy models in production with minimal overhead and optimal cost efficiency.</td><td>entity-00004</td></tr>
+      </table>
+      <div class="dim">真实运行共 8 行（此处节选 5 行；每条文本较长，显示时截断）。同一次运行里实体互不重复、各走一个方向：芯片设计、特征存储、端侧推理、模型安全、模型托管……编号从 entity-00000 连续递增。</div>
+    </div>
+
+    <h3>回到数据里</h3>
+    <p>返回的是 <code class="inline">entity</code> / <code class="inline">entity_id</code> 两列，直接 <code class="inline">result.to_csv("seeds.csv")</code> 保存即可。这组实体可以接着喂给 <a href="poll.html">poll</a>（作为人群种子跳过第一阶段）、或作为 <a href="rate.html">评分</a> / <a href="classify.html">分类</a> 的测量对象。</p>
+
+    <h2>实现原理（简版）</h2>
+    <p>整个过程不需要你理解细节，但知道原理有助于判断结果质量：</p>
+    <ol>
+      <li><strong>生成提示词</strong>：把你的说明、每批数量、以及一批"已有样本"拼进模板。已有样本从已生成的实体中随机抽取，最多 <code class="inline">existing_entities_cap</code> 条——这就是防重复的关键。</li>
+      <li><strong>循环生成</strong>：每批让模型用 JSON 返回一批新实体；解析成功后追加进总表，再进入下一批；如果某批模型没返回任何实体，说明"没货了"，停止。</li>
+      <li><strong>生成预算</strong>：最多允许 ⌈num_entities ÷ entities_per_generation⌉ + 2 批。预算耗尽仍未凑满时，用已得到的实体收尾并打印提示——防止模型反复返回半截结果时无限循环。</li>
+      <li><strong>编号与保存</strong>：截断到 <code class="inline">num_entities</code> 条，按 entity-00000 起编号，写入 <code class="inline">seed_entities.csv</code>。</li>
+    </ol>
+
+    <h3>给模型的提示词（概括）</h3>
+    <div class="prompt"><span class="plabel">Seed 提示词结构（简化为要点）</span>
+      你的任务是按照以下说明生成 N 个实体：<br>
+      <em>[你的 instructions]</em><br>
+      每条必须与其他条目互不相同；如果说明中给出分布，整体集合须忠实反映真实统计分布（不要高估少数群体）。<br>
+      以下是已生成的实体样本，新实体不得与它们重复：<br>
+      <em>[随机抽取的已有样本]</em><br>
+      以 JSON 输出，恰好 N 条：<code>{"entity 1": "…", "entity 2": "…", …}</code>
+    </div>
+    <p>模板里特别强调"互斥性"与"忠实分布"：前者靠每批回传已有样本实现，后者靠明确指示模型按真实统计配比。这就是生成出来的实体"既有代表性、又不重复"的来源。</p>
+
+    <h2>参数设置</h2>
+    <table>
+      <tr><th>参数</th><th>默认值</th><th>说明</th></tr>
+      <tr><td><code>instructions</code></td><td>（必填）</td><td>实体说明：种类、分布、多样性要求。越具体，生成越可控。</td></tr>
+      <tr><td><code>save_dir</code></td><td>（必填）</td><td>保存目录（自动创建）。</td></tr>
+      <tr><td><code>num_entities</code></td><td>1000</td><td>目标实体总数。达到即停止。</td></tr>
+      <tr><td><code>entities_per_generation</code></td><td>50</td><td>每批生成几个。越大调用次数越少，越小每批质量越稳。</td></tr>
+      <tr><td><code>existing_entities_cap</code></td><td>100</td><td>每批回传给模型"防重复"的已有样本上限（随机抽取）。</td></tr>
+      <tr><td><code>model</code></td><td>gpt-5.5</td><td>使用的模型；默认从环境变量 <code>LEXIMETER_MODEL</code> 读取。</td></tr>
+      <tr><td><code>n_parallels</code></td><td>50</td><td>并发设置（本任务逐批串行执行，参数保留供引擎使用）。</td></tr>
+      <tr><td><code>deduplicate</code></td><td>False</td><td>是否对结果做附加去重（默认关闭）。</td></tr>
+      <tr><td><code>deduplicate_sample_seed</code></td><td>42</td><td>抽样已有实体样本的随机种子；固定后可复现同一批样本。</td></tr>
+      <tr><td><code>file_name</code></td><td>seed_entities.csv</td><td>输出文件名。</td></tr>
+      <tr><td><code>existing_entities</code></td><td>None</td><td>（调用时传）已有的实体列表；传入后从该基础上继续生成、避免重复。</td></tr>
+      <tr><td><code>reset_files</code></td><td>False</td><td>True 时清空 save_dir 重新跑；False 时断点续跑。</td></tr>
+    </table>
+    <p>完整参数与进阶选项见 <a href="../configuration.html">⚙️ 参数设置</a>。</p>
+
+    <footer><a href="../index.html">← 返回主页</a> · 示例输出来自真实运行（DeepSeek deepseek-v4-flash）</footer>
+  </main>
+</div>
+</body>
+</html>

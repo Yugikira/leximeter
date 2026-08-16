@@ -28,6 +28,10 @@ def test_resolve_embedding_openai_falls_back_to_llm_base_url(monkeypatch):
     """Without embedding-specific env, the LLM endpoint is used."""
     monkeypatch.setenv("LEXIMETER_BASE_URL", LLM_URL)
     monkeypatch.setenv("LEXIMETER_EMBEDDING_PROVIDER", "openai")
+    # Project .env (loaded at import) may set embedding-specific vars; drop
+    # them so this test genuinely exercises the LLM fallback.
+    monkeypatch.delenv("LEXIMETER_EMBEDDING_BASE_URL", raising=False)
+    monkeypatch.delenv("LEXIMETER_EMBEDDING_API_KEY", raising=False)
     client = resolve_embedding_client()
     assert isinstance(client, OpenAIEmbeddingClient)
     assert str(client._client.base_url).startswith(LLM_URL)

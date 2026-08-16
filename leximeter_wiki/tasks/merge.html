@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>合并 merge — Leximeter 使用指南</title>
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+<div class="layout">
+  <nav class="sidebar">
+    <div class="brand">Leximeter<small>文本测量 · 使用指南</small></div>
+    <a href="../index.html">🏠 主页</a>
+    <a href="../getting-started.html">🚀 快速上手</a>
+    <a href="../configuration.html">⚙️ 参数设置</a>
+    <div class="group">测量类任务</div>
+    <a href="rate.html">评分 rate</a>
+    <a href="classify.html">分类 classify</a>
+    <a href="extract.html">抽取 extract</a>
+    <a href="rank.html">排序 rank</a>
+    <a href="debias.html">去偏 debias</a>
+    <div class="group">文本整理类任务</div>
+    <a href="merge.html">合并 merge</a>
+    <a href="deduplicate.html">去重 deduplicate</a>
+    <a href="filter.html">过滤 filter</a>
+    <a href="deidentify.html">脱敏 deidentify</a>
+    <a href="paraphrase.html">改写 paraphrase</a>
+    <div class="group">质性分析类任务</div>
+    <a href="codify.html">编码 codify</a>
+    <a href="bucket.html">归桶 bucket</a>
+    <a href="compare.html">对比 compare</a>
+    <a href="discover.html">特征发现 discover</a>
+    <div class="group">生成类任务</div>
+    <a href="ideate.html">理论生成 ideate</a>
+    <a href="seed.html">样本生成 seed</a>
+    <a href="poll.html">合成调查 poll</a>
+    <a href="whatever.html">任意提示词 whatever</a>
+  </nav>
+
+  <main>
+    <h1>合并 <code class="inline">merge</code></h1>
+    <p class="lead">把两张表格按"意思相同但写法不同"的键连接起来——左表叫 "Apple Inc."，右表叫 "Apple, Inc."，merge 会认出它们是一回事。</p>
+    <span class="badge">文本整理类</span><span class="badge llm">LLM 核心</span>
+
+    <h2>这是什么</h2>
+    <p>你经常需要把两个数据源按某个"键"合并：访谈数据里受访者提到的公司名，对接工商名录里的正式名称；问卷调查里的城市名，对接人口普查代码。问题是两边写法往往不一致：</p>
+    <ul>
+      <li>标点格式不同："Apple Inc." 与 "Apple, Inc."、"Google Incorporated"</li>
+      <li>缩写与别名："JFK" 与 "John Kennedy"</li>
+      <li>面子上不同、意思却相同："minneapolis" 与 "Hennepin County"、"heart rhythm doctor" 与 "927 - Cardiac Electrophysiology"</li>
+    </ul>
+    <p><code class="inline">merge</code> 逐行检查左表的键，在右表里寻找含义最接近的键并配对。匹配上的行会把右表其余列一并接进来；找不到匹配的行保持空缺。相当于请一位很谨慎的助理做"模糊匹配"——宁可不配，绝不乱配。</p>
+
+    <div class="tip"><strong>什么时候用</strong>
+      两个数据源说的是同一批实体（公司、城市、机构、人名……）但命名体系不同，需要合并成一张表做分析。如果两边键完全一致（连大小写、标点都一样），用 pandas 自带的 <code class="inline">pd.merge</code> 即可，不必动用模型。需要把一列里的重复概念归一化而不是跨表连接，用 <a href="deduplicate.html">去重 deduplicate</a>。</div>
+
+    <h2>怎么用</h2>
+    <p>准备左表、右表，各指定一个"键列"，调用即可。数据是 pandas DataFrame 或 CSV。</p>
+    <pre><code>import leximeter
+import pandas as pd
+
+# 左表：你的研究数据（比如访谈中提到的公司）
+df_left = pd.DataFrame({
+    "company_id":   [1, 2, 3],
+    "company_name": ["Apple Inc.", "Google Inc.", "Tesla Inc."],
+})
+
+# 右表：另一个来源的名录（拼写五花八门）
+df_right = pd.DataFrame({
+    "record_id": [101, 102, 103, 104],
+    "name":      ["Apple, Inc.", "Google Incorporated",
+                  "Tesla, Inc.", "Distractor Company 1"],
+})
+
+# 调用：左表键列 = company_name，右表键列 = name
+result = await leximeter.merge(
+    df_left, df_right,
+    left_on="company_name", right_on="name",
+    how="left",                      # 保留左表全部行
+    save_dir="my_study/merge",
+    model="deepseek-v4-flash",       # 或任何已配置的模型
+)</code></pre>
+
+    <h3>示例结果（真实运行）</h3>
+    <p>下面这次真实运行：左表 8 家"X Inc."公司，右表约 80 个名称（含每家的 8 种写法变体 + 16 个干扰项）。模型给出的配对：</p>
+    <div class="result">
+      <table>
+        <tr><th>左表键（company_name）</th><th>匹配到的右表键（name）</th></tr>
+        <tr><td>Amazon Inc.</td><td>Amazon, Inc.</td></tr>
+        <tr><td>Apple Inc.</td><td>Apple, Inc.</td></tr>
+        <tr><td>Google Inc.</td><td>Google, Inc.</td></tr>
+        <tr><td>Meta Inc.</td><td>Meta, Inc.</td></tr>
+        <tr><td>Microsoft Inc.</td><td>Microsoft, Inc.</td></tr>
+        <tr><td>Netflix Inc.</td><td>Netflix, Inc.</td></tr>
+        <tr><td>Tesla Inc.</td><td>Tesla, Inc.</td></tr>
+        <tr><td>Uber Inc.</td><td>Uber, Inc.</td></tr>
+      </table>
+      <div class="dim">8 个左表键全部在第一次尝试内匹配（进度文件显示 attempt 0：匹配 8，剩余 0），这批耗时约 10 秒。"Inc." 与 "Inc," 仅差一个逗号，模型全部正确配对，16 个干扰项无一误配。</div>
+    </div>
+
+    <h3>回到数据里</h3>
+    <p>返回的表格 = 左表全部行 + 右表匹配到的列（未匹配的行这些列为空）。可以直接 <code class="inline">result.to_csv("merged.csv")</code> 保存。原始的模型回答保存在 <code class="inline">save_dir/merge_responses.csv</code>，每轮进度在 <code class="inline">merge_progress.csv</code>，方便检查匹配质量。</p>
+
+    <h2>实现原理（简版）</h2>
+    <p>知道原理有助于判断结果质量。整个过程分四步：</p>
+    <ol>
+      <li><strong>自动匹配（先捡走最稳的）</strong>：把两边的键都换算成"向量"——可以想象成地图上的一个点，意思越近的点靠得越近。若左表某键与右表某键的相似度 ≥ 0.75（<code class="inline">auto_match_threshold</code>）且候选唯一，就直接判定匹配，不再麻烦模型。</li>
+      <li><strong>聚类 + 候选窗口（把意思相近的名字先在地图上聚成堆）</strong>：剩下的键用聚类算法（kmeans2）分成若干堆，每堆里的键意思相近，再按相似度为堆里每个键挑出最可能的右表候选。第一轮每堆最多 16 个左表键（<code class="inline">short_list_len</code>），候选上限 256 个；没匹配上的进入下一轮，窗口缩小为 8 → 4 → 2（每轮 × 0.5），同时扫描更多候选窗口（<code class="inline">candidate_scan_chunks</code>），给难配的键更多机会，直到轮数用尽（<code class="inline">max_attempts</code>）。</li>
+      <li><strong>细问</strong>：每堆发一个提示词——"为每个短名单词，在长名单里找最接近的匹配；没有把握就写 no certain match"。模型返回 JSON 映射。</li>
+      <li><strong>汇总与拼接</strong>：如果 <code class="inline">n_runs &gt; 1</code>，同一问题问多遍、投票取多数，平票时用向量相似度裁决；答案为 "no certain match" 的放弃。最后把同键同写的各组展开回原表，完成拼接。</li>
+    </ol>
+    <p>两个实用细节：合并前键会自动做"归一化"（小写、去重音、去标点）——所以 "Café" 和 "cafe" 天然视为同一写法；无 embedding 环境时自动退化为按字母序分堆的纯 LLM 路径。</p>
+
+    <h3>给模型的提示词（概括）</h3>
+    <div class="prompt"><span class="plabel">Merge 提示词结构（简化为要点）</span>
+      下面是短名单（待匹配）与长名单（候选）。<br>
+      为每个短名单词在长名单中找<strong>唯一的最佳匹配</strong>，写法不同但意思相同也算（如 "Mary Monroe" ↔ "Marilyn Monroe"）。<br>
+      找不到匹配就写 <code>"no certain match"</code>——宁可漏配，绝不乱配。<br>
+      输出 JSON：<code>{"短名单词": "长名单词或 no certain match"}</code>，词必须逐字照抄，不得改动。
+    </div>
+    <p>提示词刻意强调"宁缺毋滥"：错误的匹配比没有匹配更有害，所以模型默认非常保守。</p>
+
+    <h2>参数设置</h2>
+    <table>
+      <tr><th>参数</th><th>默认值</th><th>说明</th></tr>
+      <tr><td><code>on</code></td><td>None</td><td>两边键列同名时的简写；与 <code>left_on</code> / <code>right_on</code> 二选一。</td></tr>
+      <tr><td><code>left_on</code> / <code>right_on</code></td><td>None</td><td>左表 / 右表中用于匹配的键列列名。</td></tr>
+      <tr><td><code>how</code></td><td>"left"</td><td>"left" 保留左表全部行；"right" 保留右表全部行。</td></tr>
+      <tr><td><code>save_dir</code></td><td>（必填）</td><td>保存中间产物与结果的目录（自动创建）。</td></tr>
+      <tr><td><code>model</code></td><td>gpt-5.4-nano</td><td>使用的模型名；默认从环境变量 <code>LEXIMETER_MODEL</code> 读取。</td></tr>
+      <tr><td><code>n_parallels</code></td><td>50</td><td>同时发送给模型的请求数。API 允许时越高越快。</td></tr>
+      <tr><td><code>n_runs</code></td><td>1</td><td>每个匹配问题问几遍；大于 1 时投票取多数，降低偶然错误。</td></tr>
+      <tr><td><code>additional_instructions</code></td><td>None</td><td>追加给模型的任何额外指令（例如你已知的同义对照表）。</td></tr>
+      <tr><td><code>short_list_len</code></td><td>16</td><td>每组最多放几个待匹配的左表键（第一轮）。</td></tr>
+      <tr><td><code>long_list_len</code></td><td>256</td><td>每个键最多纳入多少个右表候选。</td></tr>
+      <tr><td><code>use_embeddings</code></td><td>True</td><td>是否用向量相似度预筛候选并做自动匹配；关闭时退化为按字母序分堆。</td></tr>
+      <tr><td><code>max_attempts</code></td><td>4</td><td>匹配轮数上限；每轮窗口收缩并换新候选。</td></tr>
+      <tr><td><code>short_list_multiplier</code></td><td>0.5</td><td>每轮窗口收缩倍率（16 → 8 → 4 → 2）。</td></tr>
+      <tr><td><code>auto_match_threshold</code></td><td>0.75</td><td>自动匹配的相似度阈值；达到且候选唯一时直接匹配，不再问模型。</td></tr>
+      <tr><td><code>use_best_auto_match</code></td><td>False</td><td>多个候选同时超过阈值时，是否直接取相似度最高的（默认否——宁可交给模型细看）。</td></tr>
+      <tr><td><code>candidate_scan_chunks</code></td><td>5</td><td>第二轮起，每堆额外扫描几个候选窗口，给难配的键更多机会。</td></tr>
+      <tr><td><code>verbose</code></td><td>True</td><td>是否在运行中打印每轮的匹配进度。</td></tr>
+      <tr><td><code>file_name</code></td><td>merge_responses.csv</td><td>原始模型响应保存的文件名。</td></tr>
+      <tr><td><code>reset_files</code></td><td>False</td><td>True 时清空 save_dir 重新跑；False 时断点续跑（跳过已完成部分）。</td></tr>
+    </table>
+    <p>完整参数与进阶选项见 <a href="../configuration.html">⚙️ 参数设置</a>。</p>
+
+    <footer><a href="../index.html">← 返回主页</a> · 示例输出来自真实运行（DeepSeek deepseek-v4-flash）</footer>
+  </main>
+</div>
+</body>
+</html>

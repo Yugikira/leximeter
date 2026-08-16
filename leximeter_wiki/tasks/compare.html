@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>对比 compare — Leximeter 使用指南</title>
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+<div class="layout">
+  <nav class="sidebar">
+    <div class="brand">Leximeter<small>文本测量 · 使用指南</small></div>
+    <a href="../index.html">🏠 主页</a>
+    <a href="../getting-started.html">🚀 快速上手</a>
+    <a href="../configuration.html">⚙️ 参数设置</a>
+    <div class="group">测量类任务</div>
+    <a href="rate.html">评分 rate</a>
+    <a href="classify.html">分类 classify</a>
+    <a href="extract.html">抽取 extract</a>
+    <a href="rank.html">排序 rank</a>
+    <a href="debias.html">去偏 debias</a>
+    <div class="group">文本整理类任务</div>
+    <a href="merge.html">合并 merge</a>
+    <a href="deduplicate.html">去重 deduplicate</a>
+    <a href="filter.html">过滤 filter</a>
+    <a href="deidentify.html">脱敏 deidentify</a>
+    <a href="paraphrase.html">改写 paraphrase</a>
+    <div class="group">质性分析类任务</div>
+    <a href="codify.html">编码 codify</a>
+    <a href="bucket.html">归桶 bucket</a>
+    <a href="compare.html">对比 compare</a>
+    <a href="discover.html">特征发现 discover</a>
+    <div class="group">生成类任务</div>
+    <a href="ideate.html">理论生成 ideate</a>
+    <a href="seed.html">样本生成 seed</a>
+    <a href="poll.html">合成调查 poll</a>
+    <a href="whatever.html">任意提示词 whatever</a>
+  </nav>
+
+  <main>
+    <h1>对比 <code class="inline">compare</code></h1>
+    <p class="lead">把两列文本逐行配对（circle 对 square），让大语言模型列出每一对之间具体、可检验的相同点或不同点，输出一份逐条带原文证据的对照表。</p>
+    <span class="badge">质性分析类</span><span class="badge llm">LLM 核心</span>
+
+    <h2>这是什么</h2>
+    <p>你的数据里有两列，且<strong>两列已经按行配对好</strong>——同一道题目下 A 组与 B 组的回答、乐观版与悲观版新闻、两家公司的年报节选……例如：</p>
+    <ul>
+      <li>circle = 乐观新闻，square = 悲观新闻，找出<strong>每对新闻具体差在哪</strong></li>
+      <li>circle = 干预组访谈，square = 对照组访谈，找出两组回答<strong>最稳定的差异维度</strong></li>
+      <li><code class="inline">differentiate=False</code> 时反过来，找出每一对<strong>像在哪</strong></li>
+    </ul>
+    <p>默认模式（<code class="inline">differentiate=True</code>）下，每条差异都是一个<strong>方向性陈述</strong>——明确说"circle 比 square 多/少什么"，而不是含糊的"X 与 Y 不同"。输出是"长表"：<code class="inline">circle</code> / <code class="inline">square</code> / <code class="inline">attribute</code> / <code class="inline">explanation</code> 四列，一行一条属性，explanation 里附引用原文的证据。</p>
+
+    <div class="tip"><strong>什么时候用</strong>
+      当你想系统回答"这两组内容差在哪、像在哪"时。把输出的差异词（attribute 列）再交给 <a href="bucket.html">归桶</a>（记得设 differentiate=True，桶名会保留"哪边更多"的方向），就能归纳出两组之间的稳定差异模式。若只想测某个属性的强弱用 <a href="rate.html">评分</a>，只需判断配对是否同类用 <a href="classify.html">分类</a>。</div>
+
+    <h2>怎么用</h2>
+    <p>三步：准备配对好的两列 → 调用 → 分析长表。</p>
+    <pre><code>import leximeter
+import pandas as pd
+
+# 1. 你的数据：circle / square 两列，逐行配对
+df = pd.DataFrame({
+    "circle": [
+        "The new CEO announced a 20% R&D budget cut at the all-hands.",
+        "Our team ships weekly; velocity is up 30% since Q1.",
+        "The study surveyed 400 patients over two years.",
+        "Ticket prices rose 15% after the merger.",
+    ],
+    "square": [
+        "The CFO proposed reallocating funds to marketing instead.",
+        "Sprint cycles are now two weeks; scope creep remains an issue.",
+        "The follow-up used focus groups with 25 participants.",
+        "Ticket prices held steady despite the merger.",
+    ],
+})
+
+# 2. 调用（differentiate=True 找差异；False 找相似）
+result = await leximeter.compare(
+    df, "circle", "square",
+    save_dir="my_study/comparison",
+    model="deepseek-v4-flash",   # 或任何已配置的模型
+)</code></pre>
+
+    <h3>示例结果（真实运行）</h3>
+    <div class="result">
+      <table>
+        <tr><th>circle</th><th>square</th><th>attribute</th><th>explanation</th></tr>
+        <tr><td>The study surveyed 400 patients over two years.</td><td>The follow-up used focus groups with 25 participants.</td><td>circle has a larger sample size than square</td><td>Square mentions 25 participants, while circle surveys 400 patients, making circle's sample substantially larger.</td></tr>
+        <tr><td>The study surveyed 400 patients over two years.</td><td>The follow-up used focus groups with 25 participants.</td><td>circle uses surveys while square uses focus groups</td><td>Square says 'used focus groups,' whereas circle says 'surveyed,' indicating different data collection methods.</td></tr>
+        <tr><td>Ticket prices rose 15% after the merger.</td><td>Ticket prices held steady despite the merger.</td><td>circle reports an increase in ticket prices, square reports no change</td><td>Circle states 'Ticket prices rose 15% after the merger' while square states 'Ticket prices held steady despite the merger' — one entry directly describes an upward movement, the other describes a maintained level.</td></tr>
+        <tr><td>The new CEO announced a 20% R&D budget cut at the all-hands.</td><td>The CFO proposed reallocating funds to marketing instead.</td><td>circle is an announcement while square is a proposal</td><td>Circle says the CEO 'announced a 20% R&D budget cut at the all-hands,' conveying a definite decision; square says the CFO 'proposed reallocating funds to marketing instead,' which is a tentative suggestion.</td></tr>
+        <tr><td>Our team ships weekly; velocity is up 30% since Q1.</td><td>Sprint cycles are now two weeks; scope creep remains an issue.</td><td>circle has a faster delivery cadence than square</td><td>Square's 'Sprint cycles are now two weeks' indicates a two-week cycle, while circle's 'ships weekly' implies a one-week interval, making circle's cadence twice as fast.</td></tr>
+        <tr><td>Our team ships weekly; velocity is up 30% since Q1.</td><td>Sprint cycles are now two weeks; scope creep remains an issue.</td><td>square mentions scope creep as an unresolved issue, circle does not</td><td>Square explicitly says 'scope creep remains an issue'; circle contains no mention of scope creep or any unresolved problem.</td></tr>
+      </table>
+      <div class="dim">6 行示例，该次运行共生成 18 条对照记录（4 对条目，每对 3–6 条属性）。长表格式：一对条目拆成多行，每行 = 一个属性词条 + 附原文证据的说明。</div>
+    </div>
+
+    <h3>回到数据里</h3>
+    <p>返回的是"长表"：每一行是一条属性记录。attribute 列就是可分析的维度——做词频统计、去重、或交给 <a href="bucket.html">归桶</a> 归纳大类；explanation 列是引用依据，写论文时可直接引用。</p>
+
+    <h2>实现原理（简版）</h2>
+    <ol>
+      <li><strong>配对去重</strong>：circle 与 square 逐行配对，空值跳过；完全相同的配对只问一次，节省成本。</li>
+      <li><strong>提示词</strong>：对每一对，要求模型列出"互斥、具体、带方向"的属性词条——每个词条是一句方向性陈述（如 "circle 比 square 更多地提到 X"、"square 使用了历史证据而 circle 没有"），并附 1–3 句证据，尽量直接引用原文。</li>
+      <li><strong>并行执行与解析</strong>：全部配对并发发送（默认 50 路并行，失败自动重试），模型输出 JSON，每个词条被拆成一行四列。</li>
+      <li><strong>找相似模式</strong>：<code class="inline">differentiate=False</code> 时指令换成"列出相似点"，词条不带方向。</li>
+    </ol>
+
+    <h3>给模型的提示词（概括）</h3>
+    <div class="prompt"><span class="plabel">Compare 提示词结构（简化为要点）</span>
+      条目 circle："<em>…条目1…</em>"<br>
+      条目 square："<em>…条目2…</em>"<br>
+      列出互斥且具体的词条，解释 circle 与 square 的差异。<br>
+      每个词条必须是方向性陈述，如 "circle 比 square 更多地提到 X"、<br>
+      "square 使用历史证据而 circle 没有"，避免 "X vs Y" 式短语。<br>
+      每个词条附 1–3 句证据，尽量直接引用原文。输出 JSON。
+    </div>
+    <p>模型被要求"宁缺毋滥"：没有实质差异就输出零条，也不允许含糊空泛的词条——这保证了输出的每一行都指向一个可检验的差异点。</p>
+
+    <h2>参数设置</h2>
+    <table>
+      <tr><th>参数</th><th>默认值</th><th>说明</th></tr>
+      <tr><td><code>circle_column_name</code></td><td>（必填）</td><td>第一列（circle）的列名。</td></tr>
+      <tr><td><code>square_column_name</code></td><td>（必填）</td><td>第二列（square）的列名。两列按行配对比较。</td></tr>
+      <tr><td><code>save_dir</code></td><td>（必填）</td><td>保存中间产物与结果的目录（自动创建）。</td></tr>
+      <tr><td><code>differentiate</code></td><td>True</td><td>True = 找差异（方向性词条）；False = 找相似点。</td></tr>
+      <tr><td><code>additional_instructions</code></td><td>None</td><td>追加给模型的任何额外指令（如限定比较角度、举例校准）。</td></tr>
+      <tr><td><code>model</code></td><td>gpt-5.4-mini</td><td>使用的模型名；默认从环境变量 <code>LEXIMETER_MODEL</code> 读取。</td></tr>
+      <tr><td><code>n_parallels</code></td><td>50</td><td>同时发送给模型的请求数。API 允许时越高越快。</td></tr>
+      <tr><td><code>modality</code></td><td>"text"</td><td>文本类型提示："text"（段落）或 "entity"（短实体）。影响提示词措辞。</td></tr>
+      <tr><td><code>circle_first</code></td><td>None</td><td>提示词中哪一条目先展示。None 时默认 circle 在前；结果列顺序不变。</td></tr>
+      <tr><td><code>file_name</code></td><td>comparison_responses.csv</td><td>原始响应保存文件名（实际按 <code>_raw_responses.csv</code> 存盘）。</td></tr>
+      <tr><td><code>reset_files</code></td><td>False</td><td>True 时清空 save_dir 重新跑；False 时断点续跑（跳过已完成配对）。</td></tr>
+    </table>
+    <p>完整参数与进阶选项见 <a href="../configuration.html">⚙️ 参数设置</a>。</p>
+
+    <footer><a href="../index.html">← 返回主页</a> · 示例输出来自真实运行（DeepSeek deepseek-v4-flash）</footer>
+  </main>
+</div>
+</body>
+</html>

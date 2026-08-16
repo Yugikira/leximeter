@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>归桶 bucket — Leximeter 使用指南</title>
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+<div class="layout">
+  <nav class="sidebar">
+    <div class="brand">Leximeter<small>文本测量 · 使用指南</small></div>
+    <a href="../index.html">🏠 主页</a>
+    <a href="../getting-started.html">🚀 快速上手</a>
+    <a href="../configuration.html">⚙️ 参数设置</a>
+    <div class="group">测量类任务</div>
+    <a href="rate.html">评分 rate</a>
+    <a href="classify.html">分类 classify</a>
+    <a href="extract.html">抽取 extract</a>
+    <a href="rank.html">排序 rank</a>
+    <a href="debias.html">去偏 debias</a>
+    <div class="group">文本整理类任务</div>
+    <a href="merge.html">合并 merge</a>
+    <a href="deduplicate.html">去重 deduplicate</a>
+    <a href="filter.html">过滤 filter</a>
+    <a href="deidentify.html">脱敏 deidentify</a>
+    <a href="paraphrase.html">改写 paraphrase</a>
+    <div class="group">质性分析类任务</div>
+    <a href="codify.html">编码 codify</a>
+    <a href="bucket.html">归桶 bucket</a>
+    <a href="compare.html">对比 compare</a>
+    <a href="discover.html">特征发现 discover</a>
+    <div class="group">生成类任务</div>
+    <a href="ideate.html">理论生成 ideate</a>
+    <a href="seed.html">样本生成 seed</a>
+    <a href="poll.html">合成调查 poll</a>
+    <a href="whatever.html">任意提示词 whatever</a>
+  </nav>
+
+  <main>
+    <h1>归桶 <code class="inline">bucket</code></h1>
+    <p class="lead">把你的大量原始条目（术语、观点、主题词）自动归纳成一组互斥的"桶"（大类），每个桶附一句带代表条目的定义——开放式编码里的"类别提炼"。</p>
+    <span class="badge">质性分析类</span><span class="badge llm">LLM 核心</span>
+
+    <h2>这是什么</h2>
+    <p>你的数据里可能有成百上千个条目——词频表里的术语、<a href="compare.html">对比</a>任务产出的差异词、访谈中反复出现的主题词。你想把它们归并成 <code class="inline">bucket_count</code> 个互斥、具体的大类。例如把</p>
+    <ul>
+      <li>smartphone、laptop、tablet、desktop computer、e-reader → <strong>个人计算设备</strong></li>
+      <li>wireless earbuds、over-ear headphones、bluetooth speaker → <strong>无线音频设备</strong></li>
+      <li>smartwatch、fitness tracker → <strong>可穿戴健康追踪设备</strong></li>
+    </ul>
+    <p>每个桶都带一句定义（说明"落入该桶意味着什么"，并列出代表条目）。归桶过程不是一次提问，而是<strong>三阶段投票</strong>：先生成大量候选桶，再让模型反复投票归约，最后逐轮锁定最优桶——比单次提问稳定得多，也避免了"其他/杂项"式空桶。</p>
+
+    <div class="tip"><strong>什么时候用</strong>
+      当你条目太多、手工归类不现实时：词频表先归大类再做描述统计；把 <a href="compare.html">compare</a> 输出的差异词归纳成稳定的差异模式（记得 differentiate=True，桶名会保留"哪边更多"的方向）；或给 <a href="codify.html">编码</a> 的动态模式结果做二次归并。逐条目打"是/否"标签用 <a href="classify.html">分类</a>。</div>
+
+    <h2>怎么用</h2>
+    <p>三步：准备条目 → 指定桶数 → 调用。结果写入 <code class="inline">bucket_definitions.csv</code>。</p>
+    <pre><code>import leximeter
+import pandas as pd
+
+# 1. 你的数据：一列"条目"（术语、观点、主题词……）
+terms = pd.DataFrame({"term": [
+    "smartphone", "laptop", "tablet", "smartwatch", "desktop computer",
+    "wireless earbuds", "over-ear headphones", "bluetooth speaker",
+    "fitness tracker", "e-reader",
+]})
+
+# 2. 调用（要求归成 3 个互斥大类）
+result = await leximeter.bucket(
+    terms, "term",
+    bucket_count=3,
+    save_dir="my_study/buckets",
+    model="deepseek-v4-flash",   # 或任何已配置的模型
+)</code></pre>
+    <p>条目也可以带定义（每格是 <code class="inline">{"条目": "定义"}</code>），归桶时定义会一并参与，结果更准。</p>
+
+    <h3>示例结果（真实运行）</h3>
+    <div class="result">
+      <table>
+        <tr><th>bucket</th><th>definition</th></tr>
+        <tr><td>Wireless audio output devices</td><td>Devices focused on audio playback without cables, such as bluetooth speakers, wireless earbuds, and over-ear headphones. Their primary function is delivering sound, separating them from screen-based or health-tracking gadgets.</td></tr>
+        <tr><td>Wearable health and activity trackers</td><td>Wearable devices that monitor fitness and biometric data, like smartwatches and fitness trackers. They are worn on the body and focus on sensor-based health tracking, distinct from devices that prioritize audio or visual computing.</td></tr>
+        <tr><td>Personal computing devices</td><td>Devices with display screens and computing/processing capabilities, including laptops, desktops, tablets, e-readers, and smartphones. They serve as general-purpose or specialized productivity, communication, and content consumption tools.</td></tr>
+      </table>
+      <div class="dim">3 行（该次运行请求 bucket_count=3）：每行 = 桶名 + 定义。10 个电子设备条目被归成 3 个互斥大类，定义中列出代表条目，且彼此不重叠。</div>
+    </div>
+
+    <h3>回到数据里</h3>
+    <p>返回 <code class="inline">bucket</code> + <code class="inline">definition</code> 两列。之后可以把每个原始条目映射到最匹配的桶（例如用一个分类任务），得到"条目 → 大类"的归并表，再做计数与交叉分析。</p>
+
+    <h2>实现原理（简版）</h2>
+    <ol>
+      <li><strong>生成候选</strong>：把条目随机打乱、重复 <code class="inline">repeat_bucketing</code> 次、分批（每批 <code class="inline">n_terms_per_prompt</code> 条），让模型各自提出一组候选桶（带定义）；所有候选去重合并，存 <code class="inline">bucket_generation.csv</code>。</li>
+      <li><strong>投票归约</strong>：多轮"多数投票"——每轮把当前候选分批、抽样条目，让模型从中投票选出最好的桶（每轮重复 <code class="inline">repeat_voting</code> 次），按得票排序后只保留 <code class="inline">max(bucket_count, 现有数 × next_round_frac)</code> 个，循环归约到 3 × bucket_count 以内。</li>
+      <li><strong>终选补足</strong>：继续投票，每轮锁定 <code class="inline">top_k_per_round</code> 个得票最高的桶（已锁定的不再参与投票），直到凑齐 <code class="inline">bucket_count</code> 个。</li>
+      <li><strong>断点续跑</strong>：每一步进度都写进 <code class="inline">bucket_state.json</code>（候选、票数、已锁定桶），中断后重跑会自动接着做；最终文件 <code class="inline">bucket_definitions.csv</code> 已存在时直接返回。条目的内容签名（terms_signature，条目带定义时按 "条目::定义" 计算）一旦变化，旧状态自动作废重跑。</li>
+      <li><strong>方向性</strong>：<code class="inline">differentiate=True</code> 时条目是"两两对比的差异词"，桶名必须明确方向（如 "square entries 比 circle entries 更多地提到 X"），同一属性的两个方向会被当作不同桶。</li>
+    </ol>
+
+    <h3>给模型的提示词（概括）</h3>
+    <div class="prompt"><span class="plabel">Bucket 提示词结构（简化为要点）</span>
+      以下是原始条目："<em>…条目列表…</em>"。<br>
+      提出恰好 N 个更宽泛的"桶"概念：互斥、具体、有实质内容，<br>
+      共同覆盖尽量多的条目；不要 "其他/杂项/单一" 式空桶；<br>
+      宁可过具体，不要过模糊。输出 JSON：<br>
+      <code>{"桶名": "定义（1–3 句，含代表条目）"}</code><br>
+      （投票轮改为：只能从候选桶中选择，已锁定的桶不得再选。）
+    </div>
+    <p>"生成 — 投票 — 锁定"的三阶段设计，让每个候选桶都要过多数票检验，结果比单次提问更稳健、可重复。</p>
+
+    <h2>参数设置</h2>
+    <table>
+      <tr><th>参数</th><th>默认值</th><th>说明</th></tr>
+      <tr><td><code>column_name</code></td><td>（必填）</td><td>数据中条目所在列的列名。单元格可以是字符串，也可以是 {条目: 定义} 字典或条目列表。</td></tr>
+      <tr><td><code>save_dir</code></td><td>（必填）</td><td>保存中间产物（各轮投票、状态文件）与结果的目录（自动创建）。</td></tr>
+      <tr><td><code>bucket_count</code></td><td>10</td><td>最终归成几个互斥大类。</td></tr>
+      <tr><td><code>model</code></td><td>gpt-5.4-mini</td><td>使用的模型名；默认从环境变量 <code>LEXIMETER_MODEL</code> 读取。</td></tr>
+      <tr><td><code>n_parallels</code></td><td>50</td><td>同时发送给模型的请求数。API 允许时越高越快。</td></tr>
+      <tr><td><code>additional_instructions</code></td><td>None</td><td>追加给模型的任何额外指令（如限定归并角度、提供示例校准）。</td></tr>
+      <tr><td><code>differentiate</code></td><td>False</td><td>True 时条目被当作"两类内容之间的差异词"，桶名必须保留方向（square/circle 哪边更多），两个方向视为不同桶。</td></tr>
+      <tr><td><code>n_terms_per_prompt</code></td><td>250</td><td>每次请求最多包含多少个条目（或候选桶）。条目很多会自动分批。</td></tr>
+      <tr><td><code>repeat_bucketing</code></td><td>5</td><td>生成阶段：打乱条目、重复提议候选桶的次数。越大候选池越丰富。</td></tr>
+      <tr><td><code>repeat_voting</code></td><td>25</td><td>每轮投票重复的次数。越大票数越稳。</td></tr>
+      <tr><td><code>next_round_frac</code></td><td>0.25</td><td>归约轮每轮保留的候选比例（下限为 bucket_count）。</td></tr>
+      <tr><td><code>top_k_per_round</code></td><td>1</td><td>终选阶段每轮锁定的最高票桶数。大于 1 可加快凑齐桶数。</td></tr>
+      <tr><td><code>raw_term_definitions</code></td><td>True</td><td>条目是否携带定义参与归桶（影响 terms_signature 的签名内容）。</td></tr>
+      <tr><td><code>file_name</code></td><td>bucket_definitions.csv</td><td>最终结果文件名；已存在时直接返回（断点续跑）。</td></tr>
+      <tr><td><code>reset_files</code></td><td>False</td><td>True 时删除 bucket_state.json 重新跑；False 时从断点继续。</td></tr>
+    </table>
+    <p>完整参数与进阶选项见 <a href="../configuration.html">⚙️ 参数设置</a>。</p>
+
+    <footer><a href="../index.html">← 返回主页</a> · 示例输出来自真实运行（DeepSeek deepseek-v4-flash）</footer>
+  </main>
+</div>
+</body>
+</html>

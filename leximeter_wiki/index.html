@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Leximeter 使用指南 — 社会科学定量文本分析工具</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="layout">
+  <nav class="sidebar">
+    <div class="brand">Leximeter<small>文本测量 · 使用指南</small></div>
+    <a href="index.html">🏠 主页</a>
+    <a href="getting-started.html">🚀 快速上手</a>
+    <a href="configuration.html">⚙️ 参数设置</a>
+    <div class="group">测量类任务</div>
+    <a href="tasks/rate.html">评分 rate</a>
+    <a href="tasks/classify.html">分类 classify</a>
+    <a href="tasks/extract.html">抽取 extract</a>
+    <a href="tasks/rank.html">排序 rank</a>
+    <a href="tasks/debias.html">去偏 debias</a>
+    <div class="group">文本整理类任务</div>
+    <a href="tasks/merge.html">合并 merge</a>
+    <a href="tasks/deduplicate.html">去重 deduplicate</a>
+    <a href="tasks/filter.html">过滤 filter</a>
+    <a href="tasks/deidentify.html">脱敏 deidentify</a>
+    <a href="tasks/paraphrase.html">改写 paraphrase</a>
+    <div class="group">质性分析类任务</div>
+    <a href="tasks/codify.html">编码 codify</a>
+    <a href="tasks/bucket.html">归桶 bucket</a>
+    <a href="tasks/compare.html">对比 compare</a>
+    <a href="tasks/discover.html">特征发现 discover</a>
+    <div class="group">生成类任务</div>
+    <a href="tasks/ideate.html">理论生成 ideate</a>
+    <a href="tasks/seed.html">样本生成 seed</a>
+    <a href="tasks/poll.html">合成调查 poll</a>
+    <a href="tasks/whatever.html">任意提示词 whatever</a>
+  </nav>
+
+  <main>
+    <h1>Leximeter</h1>
+    <p class="lead">从访谈、演讲、评论、档案等<strong>定性文本</strong>中提取<strong>定量测量</strong>——评分、分类、事实、排序——的文本测量工具。</p>
+
+    <div class="note"><strong>这个指南是写给谁的</strong>
+      你不需要会写代码。本指南假设你是一位社会科学研究者：你的素材是文字，你的问题需要数字来回答。你只需要会跟着示例改三处地方——你的数据、你的衡量标准、你的保存位置——就能得到一张可分析的表格。</div>
+
+    <h2>Leximeter 能做什么？</h2>
+    <p>想象你有一堆访谈记录、新闻报道或政策文件。你关心的问题可能是：</p>
+    <table>
+      <tr><th>你的问题</th><th>用哪个功能</th><th>得到什么</th></tr>
+      <tr><td>"每段话对某议题的支持度是多少？"</td><td><a href="tasks/rate.html">评分 rate</a></td><td>每段话一个 0–100 分</td></tr>
+      <tr><td>"这段话属于哪些类别？"</td><td><a href="tasks/classify.html">分类 classify</a></td><td>每段话一组是/否标记</td></tr>
+      <tr><td>"这段提到了哪些事实（人名、年份、价格）？"</td><td><a href="tasks/extract.html">抽取 extract</a></td><td>每段话一张结构化表格</td></tr>
+      <tr><td>"哪些话更乐观？哪些更愤怒？"（两两比较）</td><td><a href="tasks/rank.html">排序 rank</a></td><td>每段话的相对 z 分数</td></tr>
+      <tr><td>"两家公司的名字其实是指同一家？"</td><td><a href="tasks/merge.html">合并 merge</a></td><td>模糊匹配的关联表</td></tr>
+      <tr><td>"哪些术语说的是同一个概念？"</td><td><a href="tasks/deduplicate.html">去重 deduplicate</a></td><td>每个术语→唯一代表</td></tr>
+      <tr><td>"哪些条目符合某个条件？"</td><td><a href="tasks/filter.html">过滤 filter</a></td><td>保留/丢弃标记</td></tr>
+      <tr><td>"怎样安全地分享这些访谈？"</td><td><a href="tasks/deidentify.html">脱敏 deidentify</a></td><td>替换人名的安全文本</td></tr>
+      <tr><td>"把这段话改写成另一种风格？"</td><td><a href="tasks/paraphrase.html">改写 paraphrase</a></td><td>改写后的文本</td></tr>
+      <tr><td>"哪些句子属于这个编码类别？"</td><td><a href="tasks/codify.html">编码 codify</a></td><td>逐字定位的片段列表</td></tr>
+      <tr><td>"这些术语能分成几类？"</td><td><a href="tasks/bucket.html">归桶 bucket</a></td><td>自动生成的分类法</td></tr>
+      <tr><td>"两段话有什么区别？"</td><td><a href="tasks/compare.html">对比 compare</a></td><td>差异属性列表</td></tr>
+      <tr><td>"两类文本靠什么特征区分？"</td><td><a href="tasks/discover.html">特征发现 discover</a></td><td>判别特征 + 净占比</td></tr>
+      <tr><td>"关于这个主题有什么新理论？"</td><td><a href="tasks/ideate.html">理论生成 ideate</a></td><td>结构化理论提案</td></tr>
+      <tr><td>"需要一个有代表性的样本？"</td><td><a href="tasks/seed.html">样本生成 seed</a></td><td>一批代表性实体</td></tr>
+      <tr><td>"没有受访者，想模拟一次调查？"</td><td><a href="tasks/poll.html">合成调查 poll</a></td><td>合成人群的回答分布</td></tr>
+      <tr><td>"测量结果受某个混杂因素影响？"</td><td><a href="tasks/debias.html">去偏 debias</a></td><td>去偏后的分数</td></tr>
+      <tr><td>"想跑一个定制步骤？"</td><td><a href="tasks/whatever.html">任意提示词 whatever</a></td><td>任意 prompt 的批量执行</td></tr>
+    </table>
+
+    <h2>怎么工作的（30 秒版）</h2>
+    <p>Leximeter 做的事情本质上只有三步：</p>
+    <ol>
+      <li><strong>把每一段文本打包成一个"任务"</strong>——例如"请给这段文字的支持度打分 0–100"。</li>
+      <li><strong>交给一个大语言模型执行</strong>——就像请一位认真的研究助理逐条完成，支持并行和断点续跑。</li>
+      <li><strong>把结果整理成一张表格</strong>——评分取平均、分类取多数、抽取转成整洁的数据框，直接可用 Stata / R / Python 分析。</li>
+    </ol>
+    <div class="note"><strong>关于 AI 的诚实说明</strong>
+      测量由大语言模型（默认 DeepSeek，可换成 OpenAI 等）执行，不是确定性计算。同一段话打两次分可能略有不同（可用多次运行取平均降低噪声）。Leximeter 的价值在于把"请研究助理逐条打分"这件事<strong>规模化、可复现、有检查点</strong>——并告诉你每个分数是怎么来的。</div>
+
+    <h2>下一步</h2>
+    <p>
+      <a href="getting-started.html">🚀 快速上手</a> —— 安装、配置、跑通第一个示例（约 10 分钟）<br>
+      <a href="configuration.html">⚙️ 参数设置</a> —— 每个功能所有参数的逐条解释
+    </p>
+
+    <footer>
+      Leximeter 是 GABRIEL（openai/GABRIEL，NBER w34834）的文本专用重构 fork。
+      本指南基于 2026-08 版本，所有示例输出来自真实运行结果。
+    </footer>
+  </main>
+</div>
+</body>
+</html>

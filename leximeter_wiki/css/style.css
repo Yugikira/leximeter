@@ -1,0 +1,202 @@
+/* ============================================================
+   Leximeter Wiki — 面向社会科学研究者的简洁样式
+   ============================================================ */
+:root {
+  --ink: #1f2430;
+  --muted: #5b6472;
+  --paper: #ffffff;
+  --bg: #f6f7f9;
+  --accent: #2b6cb0;
+  --accent-soft: #e8f0fa;
+  --code-bg: #f3f4f6;
+  --border: #e2e5ea;
+  --ok: #227722;
+  --ok-bg: #eaf6ea;
+  --warn: #8a5a00;
+  --warn-bg: #fdf3e0;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: "Segoe UI", "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
+  color: var(--ink);
+  background: var(--bg);
+  line-height: 1.7;
+  font-size: 15px;
+}
+
+/* ---------- 布局：固定侧边栏 + 主内容 ---------- */
+.layout { display: flex; min-height: 100vh; }
+
+.sidebar {
+  width: 240px;
+  flex: 0 0 240px;
+  background: #232a36;
+  color: #cfd6e2;
+  padding: 20px 0;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+}
+.sidebar .brand {
+  font-size: 19px;
+  font-weight: 700;
+  color: #fff;
+  padding: 0 20px 12px;
+  border-bottom: 1px solid #3a4354;
+  margin-bottom: 10px;
+}
+.sidebar .brand small { display: block; font-size: 12px; font-weight: 400; color: #93a0b5; }
+.sidebar a {
+  display: block;
+  color: #c3ccda;
+  text-decoration: none;
+  padding: 6px 20px;
+  font-size: 14px;
+}
+.sidebar a:hover { background: #2f3846; color: #fff; }
+.sidebar .group {
+  padding: 12px 20px 4px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: #7d899d;
+}
+
+main { flex: 1; padding: 36px 48px 72px; max-width: 960px; }
+
+/* ---------- 标题 ---------- */
+h1 { font-size: 28px; margin: 0 0 6px; }
+h2 {
+  font-size: 21px;
+  margin: 40px 0 12px;
+  padding-bottom: 6px;
+  border-bottom: 2px solid var(--border);
+}
+h3 { font-size: 17px; margin: 28px 0 8px; }
+p { margin: 10px 0; }
+.lead { font-size: 16px; color: var(--muted); margin-bottom: 24px; }
+
+/* ---------- 信息框 ---------- */
+.note, .tip, .warn {
+  border-radius: 6px;
+  padding: 12px 16px;
+  margin: 16px 0;
+  font-size: 14px;
+}
+.note { background: var(--accent-soft); border-left: 4px solid var(--accent); }
+.tip  { background: var(--ok-bg); border-left: 4px solid var(--ok); }
+.warn { background: var(--warn-bg); border-left: 4px solid var(--warn); }
+.note strong, .tip strong, .warn strong { display: block; margin-bottom: 2px; }
+
+/* ---------- 代码 ---------- */
+pre {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 14px 16px;
+  overflow-x: auto;
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+code {
+  font-family: Consolas, "Courier New", monospace;
+  background: var(--code-bg);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 13px;
+}
+pre code { background: none; padding: 0; }
+code.inline { color: #8a2f2f; }
+
+/* ---------- 表格（含 Jupyter 风格结果表） ---------- */
+table {
+  border-collapse: collapse;
+  margin: 14px 0;
+  font-size: 13.5px;
+  width: auto;
+  max-width: 100%;
+}
+th, td {
+  border: 1px solid var(--border);
+  padding: 6px 12px;
+  text-align: left;
+  vertical-align: top;
+}
+th { background: #eef1f5; font-weight: 600; }
+tr:nth-child(even) td { background: #fafbfc; }
+
+/* Jupyter 风格的 DataFrame 输出框 */
+.result {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 12px 0;
+  background: var(--paper);
+}
+.result table { margin: 0; font-size: 13px; }
+.result th, .result td { padding: 5px 10px; white-space: nowrap; }
+.result .dim {
+  padding: 5px 12px;
+  font-size: 12px;
+  color: var(--muted);
+  border-top: 1px solid var(--border);
+  background: #fafbfc;
+}
+.result caption {
+  caption-side: top;
+  text-align: left;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ---------- 提示词框 ---------- */
+.prompt {
+  background: #fbfbf5;
+  border: 1px dashed #c9c2a0;
+  border-radius: 6px;
+  padding: 12px 16px;
+  font-size: 13.5px;
+  color: #55523a;
+}
+.prompt .plabel {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: #8a835f;
+  display: block;
+  margin-bottom: 6px;
+}
+
+/* ---------- 标签 / 徽章 ---------- */
+.badge {
+  display: inline-block;
+  font-size: 12px;
+  padding: 2px 10px;
+  border-radius: 12px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  margin-right: 6px;
+}
+.badge.llm { background: var(--warn-bg); color: var(--warn); }
+.badge.math { background: var(--ok-bg); color: var(--ok); }
+
+/* ---------- 页脚 ---------- */
+footer {
+  margin-top: 56px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+/* ---------- 响应式 ---------- */
+@media (max-width: 900px) {
+  .layout { flex-direction: column; }
+  .sidebar { width: 100%; height: auto; position: static; }
+  main { padding: 24px 20px; }
+}

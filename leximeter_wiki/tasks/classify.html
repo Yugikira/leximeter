@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>分类 classify — Leximeter 使用指南</title>
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+<div class="layout">
+  <nav class="sidebar">
+    <div class="brand">Leximeter<small>文本测量 · 使用指南</small></div>
+    <a href="../index.html">🏠 主页</a>
+    <a href="../getting-started.html">🚀 快速上手</a>
+    <a href="../configuration.html">⚙️ 参数设置</a>
+    <div class="group">测量类任务</div>
+    <a href="rate.html">评分 rate</a>
+    <a href="classify.html">分类 classify</a>
+    <a href="extract.html">抽取 extract</a>
+    <a href="rank.html">排序 rank</a>
+    <a href="debias.html">去偏 debias</a>
+    <div class="group">文本整理类任务</div>
+    <a href="merge.html">合并 merge</a>
+    <a href="deduplicate.html">去重 deduplicate</a>
+    <a href="filter.html">过滤 filter</a>
+    <a href="deidentify.html">脱敏 deidentify</a>
+    <a href="paraphrase.html">改写 paraphrase</a>
+    <div class="group">质性分析类任务</div>
+    <a href="codify.html">编码 codify</a>
+    <a href="bucket.html">归桶 bucket</a>
+    <a href="compare.html">对比 compare</a>
+    <a href="discover.html">特征发现 discover</a>
+    <div class="group">生成类任务</div>
+    <a href="ideate.html">理论生成 ideate</a>
+    <a href="seed.html">样本生成 seed</a>
+    <a href="poll.html">合成调查 poll</a>
+    <a href="whatever.html">任意提示词 whatever</a>
+  </nav>
+
+  <main>
+    <h1>分类 <code class="inline">classify</code></h1>
+    <p class="lead">让大语言模型对每段文本逐一判断"哪些标签适用"，得到一列列布尔（是/否）标记，直接把定性文本变成可以做统计的二值变量。</p>
+    <span class="badge">测量类</span><span class="badge llm">LLM 核心</span>
+
+    <h2>这是什么</h2>
+    <p>你有一段段文本，你想给每段文本贴上"标签"——每段文本可以同时命中零个、一个或多个标签。例如：</p>
+    <ul>
+      <li>每条推文是否<strong>讨论政治</strong>、是否<strong>采用第一人称</strong></li>
+      <li>每段新闻是否属于<strong>新闻标题</strong>语体、是否涉及<strong>动物</strong></li>
+      <li>每段访谈回答是否提到了<strong>工作压力</strong>、是否提到了<strong>家庭支持</strong></li>
+    </ul>
+    <p><code class="inline">classify</code> 对每段文本、每个标签给出一个 true/false 判定，并额外附一列 <code class="inline">predicted_classes</code> 汇总该文本命中的所有标签。相当于请一位认真负责的助理，按你写好的标签定义逐条勾选"适用/不适用"。</p>
+
+    <div class="tip"><strong>什么时候用</strong>
+      当你的研究需要把文本变成"是/否"标记时——回归里的哑变量（dummy）、分组比较的依据、筛出符合某条件（如含论点、提到某话题）的样本。如果你需要的是"强弱程度"的连续分数，用 <a href="rate.html">评分</a>；需要从文本里抽出具体事实（年份、价格）用 <a href="extract.html">抽取</a>；需要相对排序用 <a href="rank.html">排序</a>。</div>
+
+    <h2>怎么用</h2>
+    <p>三步：准备数据 → 定义标签 → 调用。数据是一个表格（pandas DataFrame 或 CSV），其中一列是你的文本。</p>
+    <pre><code>import leximeter
+import pandas as pd
+
+# 1. 你的数据：一列"文本"
+df = pd.DataFrame({"text": [
+    "I heard that the new president instituted a law on gun control.",
+    "My dog decided to eat food at 3am.",
+    "Congress passes amended budget for 2026",
+]})
+
+# 2. 定义标签（键 = 标签名，值 = 给模型的判定标准说明）
+labels = {
+    "discusses politics":        "The text discusses politics.",
+    "news headline":             "The text reads like a news headline.",
+    "discusses animals":         "The text discusses animals.",
+    "first person perspective":  "The text is written in the first person.",
+}
+
+# 3. 调用（save_dir 会存下所有中间文件，方便检查与续跑）
+result = await leximeter.classify(
+    df, "text",
+    labels=labels,
+    save_dir="my_study/labels",
+    model="deepseek-v4-flash",   # 或任何已配置的模型
+)</code></pre>
+
+    <h3>示例结果（真实运行）</h3>
+    <div class="result">
+      <table>
+        <tr><th>text（原文）</th><th>predicted_classes</th><th>discusses politics</th><th>news headline</th><th>discusses animals</th><th>first person perspective</th></tr>
+        <tr><td>I heard that the new president instituted a law on gun control.</td><td>discusses politics, first person perspective</td><td>True</td><td>False</td><td>False</td><td>True</td></tr>
+        <tr><td>My dog decided to eat food at 3am.</td><td>discusses animals, first person perspective</td><td>False</td><td>False</td><td>True</td><td>True</td></tr>
+        <tr><td>Congress passes amended budget for 2026</td><td>discusses politics, news headline</td><td>True</td><td>True</td><td>False</td><td>False</td></tr>
+        <tr><td>Why are you so late for class today? Did your dog eat your homework?</td><td>discusses animals</td><td>False</td><td>False</td><td>True</td><td>False</td></tr>
+        <tr><td>Local activists rally outside city hall demanding climate reform.</td><td>discusses politics, news headline</td><td>True</td><td>True</td><td>False</td><td>False</td></tr>
+        <tr><td>Scientists discover new species of frog in the Amazon rainforest.</td><td>discusses animals, news headline</td><td>False</td><td>True</td><td>True</td><td>False</td></tr>
+      </table>
+      <div class="dim">6 行 × 6 列：原文本列 + 每个标签一列 + predicted_classes 汇总列。多标签文本能同时命中多个标签（如新闻标题同时是"政治"与"新闻标题"），疑问句没有被误判为第一人称——与常识一致。</div>
+    </div>
+
+    <h3>回到数据里</h3>
+    <p>返回的表格就是在你原来的表格上追加了每个标签一列（true/false）。可以直接 <code class="inline">result.to_csv("labels.csv")</code> 保存，再导入 Stata / R 做交叉表或回归。</p>
+
+    <h2>实现原理（简版）</h2>
+    <p>整个过程不需要你理解细节，但知道原理有助于判断结果质量：</p>
+    <ol>
+      <li><strong>生成提示词</strong>：对每段文本和全部标签（含你写的判定标准说明），拼出一段标准指令（见下）。相同文本只问一次，结果复用。</li>
+      <li><strong>并行执行</strong>：全部任务并发发送给模型（默认 50 路并行），失败自动重试，完成一批存一批。</li>
+      <li><strong>解析</strong>：模型被要求输出 JSON（<code>{"标签名": true/false}</code>），程序把回答解析成每个标签的布尔值。</li>
+      <li><strong>聚合（多次复测取多数决）</strong>：如果设置了 <code class="inline">n_runs &gt; 1</code>，同一文本会被独立测量多次——就像同一道题让多位评卷老师独立判分：判定为"是"的次数占比达到 <code class="inline">min_frequency</code>（默认 0.6，约等于 5 次里至少 3 次）才最终记为 True，降低单次抽样的随机波动。某标签所有测量都缺失时记为空值。</li>
+    </ol>
+
+    <h3>给模型的提示词（概括）</h3>
+    <div class="prompt"><span class="plabel">Classify 提示词结构（简化为要点）</span>
+      以下是待判断的文本："<em>…文本…</em>"。<br>
+      请逐一判断以下标签是否适用，输出 JSON：<br>
+      <code>{"标签名": true 或 false}</code><br>
+      规则：可多选，命中的标签都标 true；每个标签独立判断，不要互相推断；只依据文本内容判断。<br>
+      每个标签后附上你写的"判定标准说明"，模型据此校准判断。
+    </div>
+    <p>标签定义写得越具体（例如"新闻标题"指什么、边界在哪里），不同文本之间的判定就越一致——这和问卷里把题目措辞写清楚是同一个道理。</p>
+
+    <h2>参数设置</h2>
+    <table>
+      <tr><th>参数</th><th>默认值</th><th>说明</th></tr>
+      <tr><td><code>df</code></td><td>（必填）</td><td>你的数据表格（pandas DataFrame），须包含文本列。</td></tr>
+      <tr><td><code>column_name</code></td><td>（必填）</td><td>数据中文本所在列的列名。</td></tr>
+      <tr><td><code>labels</code></td><td>（必填）</td><td>字典：标签名 → 判定标准说明。定义越具体，判定越一致。</td></tr>
+      <tr><td><code>save_dir</code></td><td>（必填）</td><td>保存中间产物与结果的目录（自动创建）。</td></tr>
+      <tr><td><code>model</code></td><td>gpt-5.4-mini</td><td>使用的模型名；默认从环境变量 <code>LEXIMETER_MODEL</code> 读取。</td></tr>
+      <tr><td><code>n_runs</code></td><td>1</td><td>每段文本判定几次。大于 1 时按多数决聚合，并额外保存逐次明细（可靠性分析用）。</td></tr>
+      <tr><td><code>n_parallels</code></td><td>50</td><td>同时发送给模型的请求数。API 允许时越高越快。</td></tr>
+      <tr><td><code>min_frequency</code></td><td>0.6</td><td>多数决门槛：判"是"的测量占比达到该值才记为 True（0.6 ≈ 5 次里至少 3 次）。</td></tr>
+      <tr><td><code>n_attributes_per_run</code></td><td>None（全部分批）</td><td>每次请求最多包含几个标签。标签很多时模型可能顾此失彼，设小一点更稳。</td></tr>
+      <tr><td><code>additional_instructions</code></td><td>None</td><td>追加给模型的任何额外指令（如带标注示例来校准判定）。</td></tr>
+      <tr><td><code>modality</code></td><td>"text"</td><td>文本类型提示："text"（段落）或 "entity"（短实体，如产品名）。影响提示词措辞。</td></tr>
+      <tr><td><code>file_name</code></td><td>"classify_responses.csv"</td><td>中间结果文件名；最终汇总文件为同名 <code>*_cleaned.csv</code>。</td></tr>
+      <tr><td><code>reset_files</code></td><td>False</td><td>True 时清空 save_dir 重新跑；False 时断点续跑（跳过已完成条目）。</td></tr>
+      <tr><td><code>client / embedding_client / search_tool</code></td><td>None</td><td>底层客户端；默认自动从环境变量配置，一般不用改。</td></tr>
+      <tr><td><code>**engine_kwargs</code></td><td>—</td><td>透传给模型调用的额外参数（如 max_output_tokens、temperature、timeout、max_retries）。</td></tr>
+    </table>
+    <p>完整参数与进阶选项见 <a href="../configuration.html">⚙️ 参数设置</a>。</p>
+
+    <footer><a href="../index.html">← 返回主页</a> · 示例输出来自真实运行（DeepSeek deepseek-v4-flash）</footer>
+  </main>
+</div>
+</body>
+</html>

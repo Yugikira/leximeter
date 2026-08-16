@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>排序 rank — Leximeter 使用指南</title>
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+<div class="layout">
+  <nav class="sidebar">
+    <div class="brand">Leximeter<small>文本测量 · 使用指南</small></div>
+    <a href="../index.html">🏠 主页</a>
+    <a href="../getting-started.html">🚀 快速上手</a>
+    <a href="../configuration.html">⚙️ 参数设置</a>
+    <div class="group">测量类任务</div>
+    <a href="rate.html">评分 rate</a>
+    <a href="classify.html">分类 classify</a>
+    <a href="extract.html">抽取 extract</a>
+    <a href="rank.html">排序 rank</a>
+    <a href="debias.html">去偏 debias</a>
+    <div class="group">文本整理类任务</div>
+    <a href="merge.html">合并 merge</a>
+    <a href="deduplicate.html">去重 deduplicate</a>
+    <a href="filter.html">过滤 filter</a>
+    <a href="deidentify.html">脱敏 deidentify</a>
+    <a href="paraphrase.html">改写 paraphrase</a>
+    <div class="group">质性分析类任务</div>
+    <a href="codify.html">编码 codify</a>
+    <a href="bucket.html">归桶 bucket</a>
+    <a href="compare.html">对比 compare</a>
+    <a href="discover.html">特征发现 discover</a>
+    <div class="group">生成类任务</div>
+    <a href="ideate.html">理论生成 ideate</a>
+    <a href="seed.html">样本生成 seed</a>
+    <a href="poll.html">合成调查 poll</a>
+    <a href="whatever.html">任意提示词 whatever</a>
+  </nav>
+
+  <main>
+    <h1>排序 <code class="inline">rank</code></h1>
+    <p class="lead">让大语言模型两两比较文本之间的相对强弱，再用统计模型换算成可直接比较的排名分数（z 分数）。</p>
+    <span class="badge">测量类</span><span class="badge llm">LLM 核心</span>
+
+    <h2>这是什么</h2>
+    <p>有些属性很难定义"绝对刻度"——比如"这条推文有多乐观？0 分是什么样、100 分是什么样？"说不清楚，但让你比较<strong>两条之间谁更乐观</strong>就容易得多。于是 <code class="inline">rank</code> 换了个思路：</p>
+    <ul>
+      <li>把文本两两配对，请模型对每一对判断"哪一段在某属性上更强"（就像网球积分赛里两两对决）；</li>
+      <li>把所有对决结果交给 Bradley–Terry 统计模型，反推出每段文本的"实力值"（就像根据胜负记录给选手算积分）；</li>
+      <li>最后把实力值标准化成 z 分数（均值 0、标准差 1），每段文本、每个属性得到一列可以直接排序和比较的数值。</li>
+    </ul>
+    <p>每个属性会输出三列：<code class="inline">{属性名}</code>（z 分数，最直观）、<code class="inline">{属性名}_raw</code>（原始实力估计，中心化后均值为 0）、<code class="inline">{属性名}_se</code>（标准误，越小表示估计越有把握）。</p>
+
+    <div class="tip"><strong>什么时候用</strong>
+      当你的研究只需要"谁比谁强"的相对次序（哪条新闻最令人乐观、哪些评语最愤怒、哪个候选人最有吸引力），或属性的绝对刻度难以定义时。如果属性能说清"0 分到 100 分各是什么意思"，直接打分更简单，用 <a href="rate.html">评分</a>。</div>
+
+    <h2>怎么用</h2>
+    <p>三步：准备数据 → 定义属性 → 调用。数据是一个表格（pandas DataFrame 或 CSV），其中一列是你的文本。</p>
+    <pre><code>import leximeter
+import pandas as pd
+
+# 1. 你的数据：一列文本（推文、新闻标题……）
+df = pd.DataFrame({"text": [
+    "Low-key hyped for on-device models - privacy win without the lag.",
+    "That take is clown shoes - learn the basics before posting.",
+    "Empirical evidence suggests platform concentration exacerbates rent extraction.",
+]})
+
+# 2. 定义要排序的属性（键 = 属性名，值 = 给模型的比较标准说明）
+attributes = {
+    "optimism": "How optimistic the text is about technology.",
+    "formality": "How formal the language is.",
+}
+
+# 3. 调用
+result = await leximeter.rank(
+    df, "text",
+    attributes=attributes,
+    save_dir="my_study/rankings",
+    model="deepseek-v4-flash",   # 或任何已配置的模型
+)</code></pre>
+
+    <h3>示例结果（真实运行）</h3>
+    <div class="result">
+      <table>
+        <tr><th>text（原文）</th><th>optimism（z）</th><th>formality（z）</th></tr>
+        <tr><td>While your conclusion is careless, the deployment will likely improve consumer surplus.</td><td>0.04</td><td>0.93</td></tr>
+        <tr><td>R&amp;D intensity rose 12% to 18% YoY; margins may compress before gains materialize.</td><td>-0.54</td><td>0.96</td></tr>
+        <tr><td>Low-key hyped for on-device models—privacy win without the lag.</td><td>1.76</td><td>-0.79</td></tr>
+        <tr><td>@mina you're right; the vendor ghosted us again—unacceptable.</td><td>-0.98</td><td>-0.71</td></tr>
+        <tr><td>Empirical evidence suggests platform concentration exacerbates rent extraction.</td><td>-0.96</td><td>1.64</td></tr>
+      </table>
+      <div class="dim">截取自 7 行结果（小数四舍五入到 2 位便于阅读；原始文件保留完整精度）。z 分数以 0 为"平均"：大于 0 表示比本次文本的平均更乐观/更正式。最乐观的是 "Low-key hyped…"（1.76），最不乐观的是 "@mina…"（-0.98）；正式程度最高的是学术腔的 "Empirical evidence…"（1.64）——与直觉一致。原始文件还包含每属性的 _raw 与 _se 列。</div>
+    </div>
+
+    <h3>回到数据里</h3>
+    <p>返回的表格就是在你原来的表格上追加了每个属性三列。z 分数可直接用来排序、做相关或回归。可以 <code class="inline">result.to_csv("rankings.csv")</code> 保存后导入 Stata / R 分析。</p>
+
+    <h2>实现原理（简版）</h2>
+    <p>想象组织一场网球积分赛：我们不知道选手的水平，就让选手两两对决、看谁赢谁；打足够多场后，根据全部胜负记录就能反推出每个人的"实力值"。<code class="inline">rank</code> 做的正是这件事——只是"对决"由大语言模型当裁判。整个过程：</p>
+    <ol>
+      <li><strong>安排对决</strong>：每一轮挑选"最值得问"的文本对——优先安排实力接近的文本（当前分数排名相邻的）和把握最小的文本（标准误大的），外加少量随机组合，确保每段文本每轮出场固定次数（<code class="inline">matches_per_round</code>）。</li>
+      <li><strong>对决</strong>：把一对文本交给模型，对每个属性判定谁更强。文本在提示词里的左右位置是随机分配的，避免顺序偏差。</li>
+      <li><strong>拟合（Bradley–Terry 模型）</strong>：把<strong>全部</strong>历史对决结果喂给 Bradley–Terry 模型，反推出每段文本的实力值——就像根据所有比赛的胜负记录给选手算积分。平局与"信息不足"同时计入双方。<code class="inline">learning_rate</code> 是拟合时的一个平滑小量，防止出场次数少的文本得分过于极端。</li>
+      <li><strong>中心化与标准化</strong>：把每个属性的实力值减去均值、除以标准差，得到 z 分数（均值 0，约 68% 的文本落在 -1 到 +1 之间），不同文本、不同批次之间可以直接比较。标准误（<code class="inline">_se</code>）表示估计的不确定性。</li>
+      <li><strong>多轮迭代</strong>：默认跑 5 轮，每轮结束都用全部历史重新拟合一次（轮次越多排名越准）。每一轮的对决记录都会存盘，中断后可从断点续跑。</li>
+    </ol>
+
+    <h3>给模型的提示词（概括）</h3>
+    <div class="prompt"><span class="plabel">Rank 提示词结构（简化为要点）</span>
+      以下是两段文本，circle 与 square 只是随机分配的代号，顺序没有任何含义：<br>
+      circle："<em>…文本 A…</em>"　square："<em>…文本 B…</em>"<br>
+      对每个属性判定哪一段更强，输出 JSON：<br>
+      <code>{"属性名": "circle" 或 "square" 或 "draw" 或 "insufficient signal"}</code><br>
+      规则：只依据直接的文本证据，不从其他属性推断；两段都没有直接信号时用 "insufficient signal"；只有确实难分伯仲才用 "draw"。
+    </div>
+    <p>注意四个判定选项的区别："circle/square" 是一方更强，"draw" 是双方都存在信号但难分伯仲，"insufficient signal" 是双方都几乎没有直接信号。每个属性的定义写得越清楚，裁判尺度就越一致。</p>
+
+    <h2>参数设置</h2>
+    <table>
+      <tr><th>参数</th><th>默认值</th><th>说明</th></tr>
+      <tr><td><code>df</code></td><td>（必填）</td><td>你的数据表格（pandas DataFrame），须包含文本列。</td></tr>
+      <tr><td><code>column_name</code></td><td>（必填）</td><td>数据中文本所在列的列名。</td></tr>
+      <tr><td><code>attributes</code></td><td>（必填）</td><td>字典：属性名 → 比较标准说明。定义越具体，判定越一致。</td></tr>
+      <tr><td><code>save_dir</code></td><td>（必填）</td><td>保存中间产物与结果的目录（自动创建）。</td></tr>
+      <tr><td><code>model</code></td><td>gpt-5.4-mini</td><td>使用的模型名；默认从环境变量 <code>LEXIMETER_MODEL</code> 读取。</td></tr>
+      <tr><td><code>n_rounds</code></td><td>5</td><td>对决轮数。每轮结束后用全部历史重新拟合一次，轮次越多排名越稳。</td></tr>
+      <tr><td><code>matches_per_round</code></td><td>3</td><td>每段文本每轮参与的对决场数。</td></tr>
+      <tr><td><code>learning_rate</code></td><td>0.1</td><td>拟合时的小平滑量（伪计数），防止出场次数少的文本得分过于极端。</td></tr>
+      <tr><td><code>n_parallels</code></td><td>50</td><td>同时发送给模型的请求数。API 允许时越高越快。</td></tr>
+      <tr><td><code>additional_instructions</code></td><td>None</td><td>追加给模型的任何额外指令（如补充比较标准）。</td></tr>
+      <tr><td><code>modality</code></td><td>"text"</td><td>文本类型提示："text"（段落）或 "entity"（短实体）。影响提示词措辞。</td></tr>
+      <tr><td><code>n_attributes_per_run</code></td><td>None（全部分批）</td><td>每次对决请求最多包含几个属性。属性很多时模型可能顾此失彼，设小一点更稳。</td></tr>
+      <tr><td><code>circle_first</code></td><td>None</td><td>是否固定把某段文本放在提示词的 circle 位置。None = 每次随机，消除顺序偏差。</td></tr>
+      <tr><td><code>file_name</code></td><td>"rankings"</td><td>结果文件名前缀：最终汇总文件为 <code>{前缀}_final.csv</code>，每轮对决记录为 <code>{前缀}_round{k}.csv</code>。</td></tr>
+      <tr><td><code>reset_files</code></td><td>False</td><td>True 时清空 save_dir 重新跑；False 时断点续跑（回放已完成轮次）。</td></tr>
+      <tr><td><code>client / embedding_client / search_tool</code></td><td>None</td><td>底层客户端；默认自动从环境变量配置，一般不用改。</td></tr>
+      <tr><td><code>**engine_kwargs</code></td><td>—</td><td>透传给模型调用的额外参数（如 max_output_tokens、temperature、timeout、max_retries）。</td></tr>
+    </table>
+    <p>完整参数与进阶选项见 <a href="../configuration.html">⚙️ 参数设置</a>。</p>
+
+    <footer><a href="../index.html">← 返回主页</a> · 示例输出来自真实运行（DeepSeek deepseek-v4-flash）</footer>
+  </main>
+</div>
+</body>
+</html>

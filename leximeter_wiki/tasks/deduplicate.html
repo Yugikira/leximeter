@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>去重 deduplicate — Leximeter 使用指南</title>
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+<div class="layout">
+  <nav class="sidebar">
+    <div class="brand">Leximeter<small>文本测量 · 使用指南</small></div>
+    <a href="../index.html">🏠 主页</a>
+    <a href="../getting-started.html">🚀 快速上手</a>
+    <a href="../configuration.html">⚙️ 参数设置</a>
+    <div class="group">测量类任务</div>
+    <a href="rate.html">评分 rate</a>
+    <a href="classify.html">分类 classify</a>
+    <a href="extract.html">抽取 extract</a>
+    <a href="rank.html">排序 rank</a>
+    <a href="debias.html">去偏 debias</a>
+    <div class="group">文本整理类任务</div>
+    <a href="merge.html">合并 merge</a>
+    <a href="deduplicate.html">去重 deduplicate</a>
+    <a href="filter.html">过滤 filter</a>
+    <a href="deidentify.html">脱敏 deidentify</a>
+    <a href="paraphrase.html">改写 paraphrase</a>
+    <div class="group">质性分析类任务</div>
+    <a href="codify.html">编码 codify</a>
+    <a href="bucket.html">归桶 bucket</a>
+    <a href="compare.html">对比 compare</a>
+    <a href="discover.html">特征发现 discover</a>
+    <div class="group">生成类任务</div>
+    <a href="ideate.html">理论生成 ideate</a>
+    <a href="seed.html">样本生成 seed</a>
+    <a href="poll.html">合成调查 poll</a>
+    <a href="whatever.html">任意提示词 whatever</a>
+  </nav>
+
+  <main>
+    <h1>去重 <code class="inline">deduplicate</code></h1>
+    <p class="lead">把含义相同、写法各异的词全部映射到同一个"代表词"，得到一份干净的类别清单。</p>
+    <span class="badge">文本整理类</span><span class="badge llm">LLM 核心</span>
+
+    <h2>这是什么</h2>
+    <p>自由回答和开放编码产生的原始词往往充满变体——同一个意思可以有几十种写法：</p>
+    <ul>
+      <li>拼写变体："AirPods"、"AirPodss"、"airpods"</li>
+      <li>年份 / 版本后缀："AirPods 2026"、"AirPods 5G"、"AirPods 2.0"、"AirPods mkII"</li>
+      <li>词性变化："Android"、"Androids"、"new Arduino"、"deluxe AirPods"</li>
+    </ul>
+    <p>统计之前，这些变体应该归并成一个词——"AirPods 2026" 和 "AirPods 5G" 在你的类别表里应该算同一个东西。<code class="inline">deduplicate</code> 为每个等价词群选一个<strong>最精确、最具体的代表词</strong>，新增一列把每个词映射到它的代表词；没有重复的词原样保留。相当于请一位对领域很熟的整理员把同义词归到同一个词条下。</p>
+
+    <div class="tip"><strong>什么时候用</strong>
+      你想统计"哪些词出现过几次"，但原始列里同一个概念有大量写法变体；或者你想在 <a href="bucket.html">归桶</a> / 编码之前先把清单归一化。需要跨表连接两个数据源时用 <a href="merge.html">合并 merge</a>；需要按条件筛选行时用 <a href="filter.html">过滤 filter</a>。</div>
+
+    <h2>怎么用</h2>
+    <p>给一个 DataFrame 和列名，返回原表 + 一列 <code class="inline">mapped_&lt;列名&gt;</code>。</p>
+    <pre><code>import leximeter
+import pandas as pd
+
+# 你的数据：一列"词"（可以有重复行）
+df = pd.DataFrame({"tech": [
+    "AirPods", "AirPods 2026", "AirPods 5G", "AirPodss",
+    "AirPods 2.0", "AirPods mkII", "AirPods max", "AirPods ultra",
+    "Android", "Androids", "Android 2026",
+    "Arduino", "new Arduino",
+]})
+
+result = await leximeter.deduplicate(
+    df, "tech",
+    save_dir="my_study/dedup",
+    model="deepseek-v4-flash",       # 或任何已配置的模型
+)</code></pre>
+
+    <h3>示例结果（真实运行）</h3>
+    <div class="result">
+      <table>
+        <tr><th>tech（原词）</th><th>mapped_tech（代表词）</th></tr>
+        <tr><td>AirPods 2026</td><td>AirPods</td></tr>
+        <tr><td>AirPodss</td><td>AirPods</td></tr>
+        <tr><td>AirPods mkII</td><td>AirPods 2.0</td></tr>
+        <tr><td>AirPods ultra</td><td>AirPods max</td></tr>
+        <tr><td>Android 5G</td><td>Android</td></tr>
+        <tr><td>new Arduino</td><td>Arduino</td></tr>
+        <tr><td>Kindle 2026</td><td>Kindle 5G</td></tr>
+        <tr><td>Slacks</td><td>Slacks</td></tr>
+      </table>
+      <div class="dim">501 行真实输出中摘选 8 行。年份 / 5G / 复数 / 拼写错误等变体大多被归并到代表词；注意两处值得抽查的行为：'Kindle 2026' 被并到了 'Kindle 5G'（而非 'Kindle'），'Slacks' 因没有等价词保持原样——归并不是公式化的规则，建议人工抽查代表词质量。</div>
+    </div>
+
+    <h3>回到数据里</h3>
+    <p>新增的 <code class="inline">mapped_tech</code> 列与原文一一对应，行数不变——可以直接对代表词做频数统计（<code class="inline">result["mapped_tech"].value_counts()</code>）。模型的完整回答在 <code class="inline">save_dir/deduplicate_responses.csv</code>。</p>
+
+    <h2>实现原理（简版）</h2>
+    <p>一个难点：词很多时（几千上万个），一次塞给模型不现实。做法是"先分堆，再逐堆细查"：</p>
+    <ol>
+      <li><strong>预筛分组</strong>：当唯一词数 ≥ <code class="inline">group_size</code> 时，先把每个词换算成向量——想象成地图上的一个点，意思相近的词靠得近。聚类算法（kmeans2）把这些点分成若干堆，再切成不超过 <code class="inline">group_size</code> 条的一组。这样同义变体大概率落在同一组里，模型只需在小组内找重复，准确率高且每组的量可控。</li>
+      <li><strong>逐组去重</strong>：每组发一个提示词，让模型穷尽找出所有"大体等价"的子集，并为每个子集指定一个代表词（必须是组内词，要求最精确、最具体）。输出 JSON：<code>{"代表词": ["等价词", ...]}</code>。</li>
+      <li><strong>应用映射</strong>：把映射套回原列——命中的词替换成代表词，没命中的保持原样，得到 <code class="inline">mapped_&lt;列名&gt;</code> 列。</li>
+    </ol>
+    <p>关闭 <code class="inline">use_embeddings=False</code>（或 embedding 服务不可用）时跳过聚类，直接按顺序切块，每块 <code class="inline">group_size</code> 条，走纯 LLM 路径——功能一样，只是同义变体可能被分到不同组而漏配。</p>
+
+    <h3>给模型的提示词（概括）</h3>
+    <div class="prompt"><span class="plabel">Deduplicate 提示词结构（简化为要点）</span>
+      以下是原始词清单。<br>
+      穷尽找出所有"大体等价"的子集，每组选一个<strong>最精确、最具体的代表词</strong>（宁选具体的变体，不选笼统的大词）。<br>
+      没有重复的词不要出现在输出里；词必须逐字照抄。<br>
+      输出 JSON：<code>{"代表词": ["等价词", ...]}</code>；没有重复就输出空 JSON。
+    </div>
+
+    <h2>参数设置</h2>
+    <table>
+      <tr><th>参数</th><th>默认值</th><th>说明</th></tr>
+      <tr><td><code>save_dir</code></td><td>（必填）</td><td>保存中间产物与结果的目录（自动创建）。</td></tr>
+      <tr><td><code>model</code></td><td>gpt-5.4-mini</td><td>使用的模型名；默认从环境变量 <code>LEXIMETER_MODEL</code> 读取。</td></tr>
+      <tr><td><code>n_parallels</code></td><td>50</td><td>同时发送给模型的请求数。API 允许时越高越快。</td></tr>
+      <tr><td><code>additional_instructions</code></td><td>None</td><td>追加给模型的任何额外指令（例如你认可的同义词规则）。</td></tr>
+      <tr><td><code>group_size</code></td><td>500</td><td>每组最多放多少条词。唯一词数达到该值时启用 embedding 聚类预筛。</td></tr>
+      <tr><td><code>modality</code></td><td>"entity"</td><td>"entity"（短实体，如产品名）或 "text"（长文本段落；text 模式要求模型用标识键输出）。</td></tr>
+      <tr><td><code>use_embeddings</code></td><td>True</td><td>是否用向量聚类做预筛分组；False 时按顺序切块（纯 LLM 路径）。</td></tr>
+      <tr><td><code>file_name</code></td><td>deduplicate_responses.csv</td><td>原始模型响应保存的文件名。</td></tr>
+      <tr><td><code>reset_files</code></td><td>False</td><td>True 时清空 save_dir 重新跑；False 时断点续跑（embedding 缓存复用）。</td></tr>
+    </table>
+    <p>完整参数与进阶选项见 <a href="../configuration.html">⚙️ 参数设置</a>。</p>
+
+    <footer><a href="../index.html">← 返回主页</a> · 示例输出来自真实运行（DeepSeek deepseek-v4-flash）</footer>
+  </main>
+</div>
+</body>
+</html>

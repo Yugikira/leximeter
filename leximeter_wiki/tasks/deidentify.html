@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>脱敏 deidentify — Leximeter 使用指南</title>
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+<div class="layout">
+  <nav class="sidebar">
+    <div class="brand">Leximeter<small>文本测量 · 使用指南</small></div>
+    <a href="../index.html">🏠 主页</a>
+    <a href="../getting-started.html">🚀 快速上手</a>
+    <a href="../configuration.html">⚙️ 参数设置</a>
+    <div class="group">测量类任务</div>
+    <a href="rate.html">评分 rate</a>
+    <a href="classify.html">分类 classify</a>
+    <a href="extract.html">抽取 extract</a>
+    <a href="rank.html">排序 rank</a>
+    <a href="debias.html">去偏 debias</a>
+    <div class="group">文本整理类任务</div>
+    <a href="merge.html">合并 merge</a>
+    <a href="deduplicate.html">去重 deduplicate</a>
+    <a href="filter.html">过滤 filter</a>
+    <a href="deidentify.html">脱敏 deidentify</a>
+    <a href="paraphrase.html">改写 paraphrase</a>
+    <div class="group">质性分析类任务</div>
+    <a href="codify.html">编码 codify</a>
+    <a href="bucket.html">归桶 bucket</a>
+    <a href="compare.html">对比 compare</a>
+    <a href="discover.html">特征发现 discover</a>
+    <div class="group">生成类任务</div>
+    <a href="ideate.html">理论生成 ideate</a>
+    <a href="seed.html">样本生成 seed</a>
+    <a href="poll.html">合成调查 poll</a>
+    <a href="whatever.html">任意提示词 whatever</a>
+  </nav>
+
+  <main>
+    <h1>脱敏 <code class="inline">deidentify</code></h1>
+    <p class="lead">把人名、地址、电话等可识别信息替换成风格相近的假数据——保留研究价值，去掉身份线索。</p>
+    <span class="badge">文本整理类</span><span class="badge llm">LLM 核心</span>
+
+    <h2>这是什么</h2>
+    <p>访谈记录、病历叙事、客服对话里通常带着个人身份信息：受访者姓名、家人称呼、住址、电话、邮箱、社保号尾号……研究数据要发布、共享给合作者或存入公开仓库时，这些必须去掉。但直接删掉又会损失信息——你需要的是"替换"而不是"抹除"：</p>
+    <ul>
+      <li>"John Smith called from 555-0142…" → "James Doe called from 555-0199…"（换一个风格相近的假人名和假电话）</li>
+      <li>"Alice Brown lives in Chicago, IL 60601…" → "Emily Carter lives in Minneapolis, MN 55401…"（换成规模相近的另一个城市）</li>
+      <li>同一人、同一地点在全文出现多次时，始终用<strong>同一个</strong>假名替换——后续分析里的共现关系不破坏</li>
+    </ul>
+    <p><code class="inline">deidentify</code> 做的正是这件事：识别可识别信息、生成风格贴近原值的替身、并保证替换一致。它只动"能认出是谁"的信息——兴趣爱好、观点、非敏感细节一律保留。</p>
+
+    <div class="tip"><strong>什么时候用</strong>
+      要把原始文本交给别人、发到网上、或按伦理审查要求做去标识化时。如果你的数据没有真实可识别信息（如公开新闻），不需要脱敏。需要把姓名等实体统一换名后继续编码/测量时，先脱敏再做后续任务。</div>
+
+    <h2>怎么用</h2>
+    <p>给一个 DataFrame 和文本列即可。返回原表 + 两列：<code class="inline">deidentified_text</code>（脱敏后文本）和 <code class="inline">mapping</code>（替换对照表，可直接用于审计）。</p>
+    <pre><code>import leximeter
+import pandas as pd
+
+# 你的数据：一列"文本"（访谈/病历/对话记录）
+df = pd.DataFrame({"text": [
+    "John Smith called from 555-0142 to discuss the lease with Mary Jones.",
+    "You can reach our team at support@acme.example; ask for Dr. Emily Chen.",
+    "Alice Brown lives in Chicago, IL 60601 and her SSN ends in 4412.",
+]})
+
+result = await leximeter.deidentify(
+    df, "text",
+    save_dir="my_study/deidentify",
+    model="deepseek-v4-flash",       # 或任何已配置的模型
+)</code></pre>
+
+    <h3>示例结果（真实运行）</h3>
+    <div class="result">
+      <table>
+        <tr><th>原文</th><th>脱敏后（deidentified_text）</th></tr>
+        <tr><td>John Smith called from 555-0142 to discuss the lease with Mary Jones.</td><td>James Doe called from 555-0199 to discuss the lease with Jane Roe.</td></tr>
+        <tr><td>You can reach our team at support@acme.example; ask for Dr. Emily Chen.</td><td>You can reach our team at support@beamtech.com; ask for Dr. Rachel Wang.</td></tr>
+        <tr><td>Alice Brown lives in Chicago, IL 60601 and her SSN ends in 4412.</td><td>Emily Carter lives in Minneapolis, MN 55401 and her SSN ends in 7391.</td></tr>
+      </table>
+      <table>
+        <tr><th>替换对照（mapping，真实输出）</th><th>原文实体 → 替身</th></tr>
+        <tr><td>John Smith → James Doe</td><td>Mary Jones → Jane Roe</td></tr>
+        <tr><td>555-0142 → 555-0199</td><td>support@acme.example → support@beamtech.com</td></tr>
+        <tr><td>Dr. Emily Chen → Dr. Rachel Wang</td><td>Alice Brown → Emily Carter</td></tr>
+        <tr><td>Chicago, IL 60601 → Minneapolis, MN 55401</td><td>SSN 尾号 4412 → 7391</td></tr>
+      </table>
+      <div class="dim">3 条真实输出。姓名、电话、邮箱、城市、SSN 尾号被替换为风格相近的假值（人名同性别同语气，城市规模相近）；句子结构与其余内容（"to discuss the lease"、"our team"）逐字保留。mapping 列保存了每条文本的全部 real → casted 对照，供审计与恢复对照使用。</div>
+    </div>
+
+    <h3>回到数据里</h3>
+    <p>分析时用 <code class="inline">deidentified_text</code> 列，发布前可删去原文列与 <code class="inline">mapping</code> 列（mapping 留着就等于没脱敏）。mapping 也可以另存一份，万一需要追溯或报告替换规则。</p>
+
+    <h2>实现原理（简版）</h2>
+    <p>核心思路是"先建立替换对照表，再整体替换"——而不是逐词碰运气：</p>
+    <ol>
+      <li><strong>分块</strong>：每段文本按最多 <code class="inline">max_words_per_call</code> 词（默认 7500）切成小块，长文本分多次处理，避免一次放不下。</li>
+      <li><strong>抽取实体、更新映射表</strong>：模型读每一块，识别可识别信息（姓名、关系人称、地址、电话、邮箱、证件号等），输出 JSON 映射——每个实体一个条目：<code>{"描述": {"real forms": [原文出现的各种形态], "casted form": "替身"}}</code>。替身要求"概念上贴近"：同文化背景的人名、规模相近的城市、风格近似的邮箱。昵称、拼写错误、逐字母拼写等所有形态都要记入 real forms，防止漏网。</li>
+      <li><strong>映射表贯穿全组</strong>：默认每行文本独立建表；指定 <code class="inline">grouping_column</code> 后，同一组（如同一受访者的多条记录）共享一张映射表——同一实体全文始终换成同一个替身。已有映射时模型只增补、不丢失旧条目；<code class="inline">mapping_column</code> 可把你已有的映射表带进来续用。</li>
+      <li><strong>替换</strong>：按映射表逐条把原文中的真实形态替换成替身（整词匹配、忽略大小写）。所有未被认定为可识别信息的内容保持原样。</li>
+    </ol>
+    <p>安全边界：只脱敏感信息，不过度分类——年龄、爱好、观点、"我妈妈"这类称呼、大型公共机构（如 Walmart）一律不改；公众人物不改。想多遍复查可调 <code class="inline">n_passes</code>；只使用已有映射（不再调用模型发现新实体）时设 <code class="inline">use_existing_mappings_only=True</code>。</p>
+
+    <h3>给模型的提示词（概括）</h3>
+    <div class="prompt"><span class="plabel">Deidentify 提示词结构（简化为要点）</span>
+      下面是一段文本，以及当前已有的替换对照表（可能为空）。<br>
+      识别其中<strong>可识别个人身份的信息</strong>（姓名、住址、电话、邮箱、证件号……），补充新实体与新形态，保留已有条目。<br>
+      替身要风格贴近原值：同文化背景的名字、规模相近的城市，每次取不同的假值。<br>
+      非识别信息一律不改：爱好、观点、年龄、公共机构、"我妈妈"这类称呼都不入表。<br>
+      输出完整映射 JSON：<code>{"描述": {"real forms": [...], "casted form": "..."}}</code>，原文形态必须逐字照抄。
+    </div>
+
+    <h2>参数设置</h2>
+    <table>
+      <tr><th>参数</th><th>默认值</th><th>说明</th></tr>
+      <tr><td><code>save_dir</code></td><td>（必填）</td><td>保存中间产物与结果的目录（自动创建）。</td></tr>
+      <tr><td><code>grouping_column</code></td><td>None</td><td>按该列分组共享同一张替换表（如受访者 ID）——同一实体全文一致替换。</td></tr>
+      <tr><td><code>mapping_column</code></td><td>None</td><td>已有映射表所在的列（单元格内容是映射字典）；传入后续用旧映射，不重新发现实体。</td></tr>
+      <tr><td><code>model</code></td><td>gpt-5.4-mini</td><td>使用的模型名；默认从环境变量 <code>LEXIMETER_MODEL</code> 读取。</td></tr>
+      <tr><td><code>n_parallels</code></td><td>50</td><td>同时发送给模型的请求数。API 允许时越高越快。</td></tr>
+      <tr><td><code>max_words_per_call</code></td><td>7500</td><td>每次请求最多处理的词数；长文本按此分块。</td></tr>
+      <tr><td><code>additional_instructions</code></td><td>None</td><td>追加给模型的任何额外指令（例如你规定哪些信息必须脱敏）。</td></tr>
+      <tr><td><code>n_passes</code></td><td>1</td><td>脱敏遍数；大于 1 时对文本多轮复查，捕获遗漏的实体。</td></tr>
+      <tr><td><code>use_existing_mappings_only</code></td><td>False</td><td>True 时只按已有映射替换，不再调用模型发现新实体（适合追加处理）。</td></tr>
+      <tr><td><code>file_name</code></td><td>deidentified.csv</td><td>结果文件名（实际存为 <code>deidentified_cleaned.csv</code>）。</td></tr>
+      <tr><td><code>reset_files</code></td><td>False</td><td>True 时清空 save_dir 重新跑；False 时断点续跑。</td></tr>
+    </table>
+    <p>完整参数与进阶选项见 <a href="../configuration.html">⚙️ 参数设置</a>。</p>
+
+    <footer><a href="../index.html">← 返回主页</a> · 示例输出来自真实运行（DeepSeek deepseek-v4-flash）</footer>
+  </main>
+</div>
+</body>
+</html>

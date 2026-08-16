@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import random
 from dataclasses import dataclass
@@ -45,8 +46,15 @@ class Seed(Task):
         entities: list[str] = list(existing_entities or [])
         rng = random.Random(self.cfg.deduplicate_sample_seed)
 
+        # Generation budget: a provider that keeps returning partial results
+        # must give up instead of looping forever.  The nominal batch count
+        # plus two extra attempts bounds the loop.
+        max_batches = max(
+            2,
+            math.ceil(self.cfg.num_entities / self.cfg.entities_per_generation) + 2,
+        )
         batch_idx = 0
-        while len(entities) < self.cfg.num_entities:
+        while len(entities) < self.cfg.num_entities and batch_idx < max_batches:
             sample = (
                 rng.sample(entities, min(self.cfg.existing_entities_cap, len(entities)))
                 if entities
@@ -66,6 +74,11 @@ class Seed(Task):
             entities.extend(new)
             batch_idx += 1
 
+        if len(entities) < self.cfg.num_entities:
+            print(
+                f"[Seed] Stopped after {batch_idx} generation batches with "
+                f"{len(entities)}/{self.cfg.num_entities} entities."
+            )
         entities = entities[: self.cfg.num_entities]
         out = pd.DataFrame(
             {

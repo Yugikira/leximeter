@@ -6,8 +6,9 @@ fork 自 [openai/GABRIEL](https://github.com/openai/GABRIEL)，保留其全部�
 
 - **解耦**：把 6900 行的 `openai_utils.py` 单体切成「厂商协议层 `client/`」+「通用编排层 `engine/`」，并用基类 `Task`/`AttributeTask` 消除各任务间的复制粘贴。
 - **厂商中立**：`LLMClient` 抽象 + 按协议划分的 `ResponsesClient` / `ChatCompletionsClient`，可插拔地接 OpenAI / DeepSeek / MiniMax / Ollama 等任何兼容后端；嵌入（本地 BGE）、联网搜索（Tavily）同样作为独立 provider 可单独配置。
-- **可测试**：所有 provider 可注入假实现，零密钥零联网跑通全链路（44 个测试全绿）。
+- **可测试**：所有 provider 可注入假实现，零密钥零联网跑通全链路（65 个测试全绿）；全部 18 个任务已用真实 provider（DeepSeek）冒烟验证。
 
+> **面向研究者**：使用指南见 [leximeter_wiki/index.html](leximeter_wiki/index.html)（含每个功能的示例代码、真实运行结果、算法与提示词讲解、全部参数说明）。
 > 设计规范见 [research/spec.md](research/spec.md)（含 Backlog 待办），GABRIEL 源码移植笔记见 [research/gabriel-source-notes.md](research/gabriel-source-notes.md)。
 
 ## 安装
@@ -41,8 +42,11 @@ OPENAI_API_KEY=sk-...
 # 嵌入：local（默认，本地 BGE，需 [embeddings]）| openai | none（禁用，merge/deduplicate 自动走纯 LLM 路径）
 LEXIMETER_EMBEDDING_PROVIDER=local
 LEXIMETER_EMBEDDING_MODEL=BAAI/bge-m3
-LEXIMETER_EMBEDDING_BASE_URL=                    # openai 专用：嵌入端点（默认同 LEXIMETER_BASE_URL / OPENAI_BASE_URL）
-LEXIMETER_EMBEDDING_API_KEY=                     # openai 专用：嵌入密钥（默认同 LEXIMETER_API_KEY / OPENAI_API_KEY）
+# openai 专用：嵌入端点/密钥与 LLM 相互独立（可用 SiliconFlow 等独立嵌入服务，
+# 如 LEXIMETER_EMBEDDING_BASE_URL=https://api.siliconflow.cn/v1 + bge-m3 模型）；
+# 不设则默认同 LEXIMETER_BASE_URL / LEXIMETER_API_KEY / OPENAI_BASE_URL
+LEXIMETER_EMBEDDING_BASE_URL=
+LEXIMETER_EMBEDDING_API_KEY=
 
 # 联网搜索：tavily | none（默认）
 LEXIMETER_SEARCH_PROVIDER=none
@@ -203,7 +207,14 @@ python examples/reference.py
 ## 测试
 
 ```bash
-uv run pytest        # 零网络、零密钥，用假 provider 跑全链路（44 tests）
+uv run pytest        # 零网络、零密钥，用假 provider 跑全链路（65 tests）
+```
+
+真实 provider 冒烟（读取 `.env` 配置，逐个任务独立运行，单任务失败不阻塞）：
+
+```bash
+uv run python examples/smoke_tasks.py            # 全跑 18 个任务
+uv run python examples/smoke_tasks.py rank       # 指定单个任务
 ```
 
 ## FAQ
