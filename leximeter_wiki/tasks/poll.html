@@ -45,7 +45,7 @@
     <h2>这是什么</h2>
     <p>没有受访者，也可以先"演"一遍问卷。<code class="inline">poll</code> 分三个阶段完成：</p>
     <ol>
-      <li><strong>生成人群</strong>：按 <code class="inline">population_description</code> 用 <a href="seed.html">seed</a> 生成 <code class="inline">num_personas</code> 条人群种子（也可直接传入你自己的表格，跳过这一步）。</li>
+      <li><strong>生成人群</strong>：按 <code class="inline">population_description</code> 用 <a href="seed.html">seed</a> 生成 <code class="inline">num_personas</code> 条人群种子（也可直接传入你自己的表格，跳过这一步；完整生成会缓存，重跑不重复花钱）。</li>
       <li><strong>扩写传记</strong>：把每条种子扩写成约 750 词的完整人物传记——姓名、家庭、职业、性格、政治观点、人生目标，读起来像一段真实人生。</li>
       <li><strong>逐人提问</strong>：把问卷逐批发给每个 persona，要求完全以该人的视角回答；答案以"答案 + 概率"的分布给出，写进结果表时每个问题一列。</li>
     </ol>
@@ -123,7 +123,8 @@ result = await leximeter.poll(
       <tr><td><code>poll_model</code></td><td>gpt-5.5</td><td>提问阶段使用的模型（同上）。</td></tr>
       <tr><td><code>n_parallels</code></td><td>50</td><td>同时发送给模型的请求数。</td></tr>
       <tr><td><code>file_name</code></td><td>poll_results.csv</td><td>输出文件名。</td></tr>
-      <tr><td><code>reset_files</code></td><td>False</td><td>True 时清空 save_dir 重新跑；False 时断点续跑。</td></tr>
+      <tr><td><code>reset_files</code></td><td>False</td><td>True 时清空 save_dir 与 <code>poll_state.json</code> 重新跑；False 时已完成验证——同人群同问题直接加载 <code>poll_results.csv</code>，零 provider 调用（人群/问题/模型任一变化自动全量重跑）。</td></tr>
+      <tr><td><code>max_retries</code></td><td>0</td><td>整个 run 失败时自动从检查点续跑的次数（如 seed 阶段失败；重试强制 <code>reset_files=False</code>）。</td></tr>
     </table>
     <p>完整参数与进阶选项见 <a href="../configuration.html">⚙️ 参数设置</a>。</p>
 

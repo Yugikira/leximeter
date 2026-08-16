@@ -124,7 +124,8 @@ result = await leximeter.seed(
       <tr><td><code>deduplicate_sample_seed</code></td><td>42</td><td>抽样已有实体样本的随机种子；固定后可复现同一批样本。</td></tr>
       <tr><td><code>file_name</code></td><td>seed_entities.csv</td><td>输出文件名。</td></tr>
       <tr><td><code>existing_entities</code></td><td>None</td><td>（调用时传）已有的实体列表；传入后从该基础上继续生成、避免重复。</td></tr>
-      <tr><td><code>reset_files</code></td><td>False</td><td>True 时清空 save_dir 重新跑；False 时断点续跑。</td></tr>
+      <tr><td><code>reset_files</code></td><td>False</td><td>True 时清空 save_dir 与 <code>seed_state.json</code> 重新跑；False 时已完成验证——完整生成的实体直接读回，零 provider 调用（部分生成不缓存，下次自动补齐/重生成）。</td></tr>
+      <tr><td><code>max_retries</code></td><td>0</td><td>整个生成过程失败时自动重跑次数（整轮重试；单次请求的重试由 SDK 层负责，不叠加）。</td></tr>
     </table>
     <p>完整参数与进阶选项见 <a href="../configuration.html">⚙️ 参数设置</a>。</p>
 

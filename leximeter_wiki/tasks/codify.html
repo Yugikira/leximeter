@@ -132,7 +132,7 @@ result = await leximeter.codify(
       <tr><td><code>max_categories_per_call</code></td><td>8</td><td>每次请求最多包含几个类别。类别很多时模型可能顾此失彼，设小一点更稳。</td></tr>
       <tr><td><code>debug_print</code></td><td>False</td><td>True 时打印每个类别的片段定位命中率等调试信息。</td></tr>
       <tr><td><code>completion_classifier_instructions</code></td><td>None</td><td>补全扫描中给分类器的追加指令（默认"仅在剩余文本仍有清晰可编码片段时返回 True"）。</td></tr>
-      <tr><td><code>reset_files</code></td><td>False</td><td>True 时清空 save_dir 重新跑；False 时断点续跑（跳过已完成请求）。</td></tr>
+      <tr><td><code>reset_files</code></td><td>False</td><td>True 时清空 save_dir 与 <code>codify_state.json</code> 重新跑；False 时已完成验证——同文本同类别直接加载 <code>coded_passages.csv</code>（列表列按 JSON 无损还原），零 provider 调用；输入变化自动清除旧编码检查点全量重跑。</td></tr>
     </table>
     <p>完整参数与进阶选项见 <a href="../configuration.html">⚙️ 参数设置</a>。</p>
 

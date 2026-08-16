@@ -96,7 +96,7 @@ result["buckets"]           # 归并后的标签：{标签: 定义}（也即汇�
 result["bucket_df"]         # 同上，表格形式（bucket / definition 两列）
 result["classification"]    # 原数据 + 每个标签的 {label}_actual / {label}_inverted 两列
 result["summary"]           # pair 模式：每个标签的净占比汇总表</code></pre>
-    <p>所有中间产物都会保存在 <code class="inline">save_dir</code>（compare / bucket / classify 子目录），并打包成 <code class="inline">discover_results_snapshot.json</code> 和 <code class="inline">discover_results_export.zip</code>（zip 内含全部表格的 CSV），方便检查与续跑。</p>
+    <p>所有中间产物都会保存在 <code class="inline">save_dir</code>（compare / bucket / classify 子目录），并打包成 <code class="inline">discover_results_snapshot.json</code> 和 <code class="inline">discover_results_export.zip</code>（zip 内含全部表格的 CSV），方便检查与续跑。<strong>重跑（<code class="inline">reset_files=False</code>）时，<code class="inline">discover_state.json</code> 的输入签名若与本次一致，直接加载 snapshot 返回——零 provider 调用</strong>（真实实测：首次 22 分钟，重跑 0.0 秒且结果一致）；中间产物（compare / bucket / classify 子检查点）在签名失效或中断时自动续跑，已完成的阶段不重做。</p>
 
     <h3>示例结果（真实运行）</h3>
     <p>下面来自一次真实运行：10 对科技主题文本，circle 是"正面立场"句，square 是"负面立场"句（示例代码只展示了 3 对）。先看第一步——模型逐对找出的差异（50 条中摘 3 条）：</p>
@@ -177,7 +177,8 @@ result["summary"]           # pair 模式：每个标签的净占比汇总表</c
       <tr><td><code>next_round_frac</code></td><td>0.25</td><td>归桶多轮缩减时每轮保留的候选比例。</td></tr>
       <tr><td><code>top_k_per_round</code></td><td>1</td><td>归桶每轮每组保留的前几个候选。</td></tr>
       <tr><td><code>raw_term_definitions</code></td><td>True</td><td>True 时把候选特征连同其定义一起喂给归桶（推荐）；False 只喂术语名。</td></tr>
-      <tr><td><code>reset_files</code></td><td>False</td><td>True 时清空 save_dir 重新跑；False 时断点续跑（跳过已完成条目）。</td></tr>
+      <tr><td><code>reset_files</code></td><td>False</td><td>True 时清空 save_dir 与 <code>discover_state.json</code> 重新跑；False 时已完成验证——同数据同参数直接加载 snapshot，零 provider 调用（实测 fresh 22 分钟 → resume 0.0 秒，结果一致）。</td></tr>
+      <tr><td><code>max_retries</code></td><td>0</td><td>整个 run 失败时自动从检查点续跑的次数（重试强制 <code>reset_files=False</code>）。</td></tr>
       <tr><td><code>client</code> / <code>embedding_client</code> / <code>search_tool</code></td><td>None</td><td>注入自定义模型客户端 / 嵌入客户端 / 搜索工具（进阶用法）。</td></tr>
     </table>
     <p>完整参数与进阶选项见 <a href="../configuration.html">⚙️ 参数设置</a>。</p>

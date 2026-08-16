@@ -6,7 +6,7 @@ fork 自 [openai/GABRIEL](https://github.com/openai/GABRIEL)，保留其全部�
 
 - **解耦**：把 6900 行的 `openai_utils.py` 单体切成「厂商协议层 `client/`」+「通用编排层 `engine/`」，并用基类 `Task`/`AttributeTask` 消除各任务间的复制粘贴。
 - **厂商中立**：`LLMClient` 抽象 + 按协议划分的 `ResponsesClient` / `ChatCompletionsClient`，可插拔地接 OpenAI / DeepSeek / MiniMax / Ollama 等任何兼容后端；嵌入（本地 BGE）、联网搜索（Tavily）同样作为独立 provider 可单独配置。
-- **可测试**：所有 provider 可注入假实现，零密钥零联网跑通全链路（65 个测试全绿）；全部 18 个任务已用真实 provider（DeepSeek）冒烟验证。
+- **可测试**：所有 provider 可注入假实现，零密钥零联网跑通全链路（97 个测试全绿）；全部 18 个任务已用真实 provider（DeepSeek）冒烟验证。
 
 > **面向研究者**：使用指南见 [leximeter_wiki/index.html](leximeter_wiki/index.html)（含每个功能的示例代码、真实运行结果、算法与提示词讲解、全部参数说明）。
 > 设计规范见 [research/spec.md](research/spec.md)（含 Backlog 待办），GABRIEL 源码移植笔记见 [research/gabriel-source-notes.md](research/gabriel-source-notes.md)。
@@ -130,9 +130,9 @@ results.head()   # 一列一个属性（0–100）
 
 ### discover（net_pct 汇总）
 
-- `discover(df, *, column_name | circle_column_name+square_column_name, bucket_count=10, ...)` → 8 键 dict：`candidates, buckets, classification, bucket_df, summary, compare|codify`。
+- `discover(df, *, column_name | circle_column_name+square_column_name, bucket_count=10, max_retries=0, ...)` → 8 键 dict：`candidates, buckets, classification, bucket_df, summary, compare|codify`。
 - pair 模式：`build_combined_metadata` 生成 `{lab}_actual`/`{lab}_inverted`（swap_cs 整词互换）；`summary` 列 `label, actual_true, inverted_true, total, actual_pct, inverted_pct, net_pct`。
-- 落盘：`discover_results_snapshot.json` + `discover_results_export.zip`（每键一个 csv）。
+- 落盘：`discover_results_snapshot.json` + `discover_results_export.zip`（每键一个 csv）；`discover_state.json` 记录输入签名——**同输入重跑直接加载 snapshot，零 provider 调用**（实测：fresh 1350s → resume 0.0s）。
 
 ### merge（kmeans2 + attempts 循环）
 
@@ -147,10 +147,10 @@ results.head()   # 一列一个属性（0–100）
 
 ### debias（两步去偏 + 稳健回归）
 
-- `debias(df, column_name, *, measurement_attribute, removal_attribute, attributes, signal_dictionary, removal_method="codify", remaining_signal=True, strip_percentages=None, robust_regression=True, random_seed=12345, run_name=None, ...)` → `DebiasResult(results, metadata, regression)`。
+- `debias(df, column_name, *, measurement_attribute, removal_attribute, attributes, signal_dictionary, removal_method="codify", remaining_signal=True, strip_percentages=None, robust_regression=True, random_seed=12345, run_name=None, max_retries=0, ...)` → `DebiasResult(results, metadata, regression)`。
 - 流程：基线测量 → `_strip_passages`（确定性 RNG，seed 含 random_seed:row:pct:n）剥离 confounder 变体 → 剩余信号测量（恒 Rate）→ 两步去偏 `{attr} (debiased) = y - s + δ·r` + 差异列 `{attr} (raw - stripped)`。
 - 回归：`fit_ols`（statsmodels HC3 → HC1 回退 → numpy 兜底）；`robust_regression` 只影响 SE 不影响系数。
-- 落盘（`run_dir = save_dir/{run_name or debias_{attr}}`）：`debias_results.csv` + `debias_metadata.json`。
+- 落盘（`run_dir = save_dir/{run_name or debias_{attr}}`）：`debias_results.csv` + `debias_metadata.json` + `debias_state.json`（输入签名含**整个输入 df** 与全部关键参数——同输入重跑直接重建 `DebiasResult`，零 provider 调用）。
 
 ### whatever（自定义提示）
 
@@ -163,8 +163,10 @@ results.head()   # 一列一个属性（0–100）
 
 ## 断点续跑与 reset_files
 
-- 所有任务按确定性 identifier（文本哈希 + batch/run/iteration 段）写入检查点 CSV：**已完成的样本不会重跑**（`CountingClient` 在测试中断言无重复调用）。
-- `reset_files=True` 时清空本任务的检查点文件后重跑；`save_dir` 与 column_name 相同即视为同一任务。
+- **逐请求检查点**：所有任务按确定性 identifier（文本哈希 + batch/run/iteration 段）写入检查点 CSV——已完成的样本不会重跑（`CountingClient` 在测试中断言无重复调用）。
+- **任务级已完成验证**（TICKET-001）：`discover` / `debias` / `ideate` / `poll` / `seed` / `codify` 维护 `{task}_state.json`（`input_signature` = 输入数据 + 关键参数的 sha1）。**同输入重跑直接加载结果文件，零 provider 调用**；输入（含数据、`model` 等参数）变化则全量重跑，绝不误用旧结果。
+- **任务级 `max_retries`**（`discover` / `debias` / `ideate` / `poll` / `seed`，默认 0）：整个 run 抛异常时自动从检查点续跑（重试强制 `reset_files=False`），最多重试 `max_retries` 次；参数错误等确定性异常不重试。单次请求的重试由 SDK 层负责（默认 600s 超时 + 2 次重试），不叠加。
+- `reset_files=True` 时清空本任务的检查点文件与 state 后重跑；`save_dir` 与 column_name 相同即视为同一任务。
 - **标识符为 GABRIEL 契约格式**：从旧版 leximeter 升级后 identifier 变化会使旧检查点失效——用 `reset_files=True` 或删除 `save_dir` 重跑（详见 spec「已知偏离与代价」）。
 
 ## Provider 覆盖
@@ -207,7 +209,7 @@ python examples/reference.py
 ## 测试
 
 ```bash
-uv run pytest        # 零网络、零密钥，用假 provider 跑全链路（65 tests）
+uv run pytest        # 零网络、零密钥，用假 provider 跑全链路（97 tests）
 ```
 
 真实 provider 冒烟（读取 `.env` 配置，逐个任务独立运行，单任务失败不阻塞）：
@@ -215,6 +217,7 @@ uv run pytest        # 零网络、零密钥，用假 provider 跑全链路（65
 ```bash
 uv run python examples/smoke_tasks.py            # 全跑 18 个任务
 uv run python examples/smoke_tasks.py rank       # 指定单个任务
+uv run python examples/smoke_tasks.py discover_checkpoint   # checkpoint 复验变体（跑两次：fresh → resume 零调用）
 ```
 
 ## FAQ
@@ -222,7 +225,7 @@ uv run python examples/smoke_tasks.py rank       # 指定单个任务
 - **想换模型？** 改 `.env` 的 `LEXIMETER_MODEL`，或每次调用传 `model=` / `client=`。模型名不校验，协议由 `LEXIMETER_PROTOCOL` 决定。
 - **怎么用本地模型？** 起一个 OpenAI 兼容网关（Ollama / vLLM / LM Studio），`LEXIMETER_PROTOCOL=chat` + `LEXIMETER_BASE_URL=http://localhost:11434/v1`。
 - **嵌入不可用怎么办？** `LEXIMETER_EMBEDDING_PROVIDER=none`（或未装 `[embeddings]`）时，merge/deduplicate 自动回退纯 LLM 路径；merge 的 `use_embeddings=False` 可强制关闭。
-- **运行中断了？** 直接重跑同一命令即可续跑；`bucket_state.json` / `merge_groups_attempt*.json` 让复杂任务的断点续跑粒度更细。
+- **运行中断了？** 直接重跑同一命令即可续跑：已完成的请求按检查点跳过；完整跑过的复杂任务（discover/debias/ideate/poll/seed/codify）重跑同输入直接加载结果（零 API，`{task}_state.json` 命中）；想强制重跑传 `reset_files=True`。
 - **`.env` 不生效？** 确认文件在项目根目录（import leximeter 的进程 CWD 会依次向上找），且同名环境变量未设置（环境变量优先）。
 - **输出列与 GABRIEL 不一致？** 列名严格对齐 GABRIEL 契约；本 fork 的差异只有两处：merge 嵌入缓存为 JSON（安全性）、`view` UI 未移植（见 spec Backlog）。
 

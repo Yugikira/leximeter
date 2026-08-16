@@ -88,7 +88,7 @@ result = await leximeter.ideate(
     <p>整个过程不需要你理解细节，但知道原理有助于判断结果质量：</p>
     <ol>
       <li><strong>生成提示词</strong>：把主题（与附加指令）填进模板，同一提示词复制 <code class="inline">n_ideas</code> 份——各份完全独立、互不影响，天然多样。</li>
-      <li><strong>并行执行</strong>：批处理引擎把全部提示词并发发出（默认 50 路），原始报告边做边存（ideation_raw.csv），中断后断点续跑。</li>
+      <li><strong>并行执行</strong>：批处理引擎把全部提示词并发发出（默认 50 路），原始报告边做边存（ideation_raw.csv），中断后断点续跑；完整跑过（ideate_state.json 输入签名匹配）则直接加载 ideation.csv，零 provider 调用。</li>
       <li><strong>六节解析</strong>：按 Title / In a nutshell / In one paragraph / Illustrative examples / Testable predictions / The full thinking 六个小标题逐行切分，各成一列；缺失的节留空。</li>
       <li><strong>输出</strong>：每行还带 idea_id（idea-00000 起）、topic 与原始报告 report_text，方便追溯。</li>
     </ol>
@@ -114,7 +114,8 @@ result = await leximeter.ideate(
       <tr><td><code>n_parallels</code></td><td>50</td><td>同时发送给模型的请求数。</td></tr>
       <tr><td><code>additional_instructions</code></td><td>None</td><td>追加给模型的任何指令（如理论取向、写作风格）。</td></tr>
       <tr><td><code>file_name</code></td><td>ideation.csv</td><td>输出文件名。</td></tr>
-      <tr><td><code>reset_files</code></td><td>False</td><td>True 时清空 save_dir 重新跑；False 时断点续跑。</td></tr>
+      <tr><td><code>reset_files</code></td><td>False</td><td>True 时清空 save_dir 与 <code>ideate_state.json</code> 重新跑；False 时已完成验证——同主题同参数直接加载 <code>ideation.csv</code>，零 provider 调用（主题/参数变化自动全量重跑）。</td></tr>
+      <tr><td><code>max_retries</code></td><td>0</td><td>整个 run 失败时自动从检查点续跑的次数（重试强制 <code>reset_files=False</code>）。</td></tr>
     </table>
     <p>完整参数与进阶选项见 <a href="../configuration.html">⚙️ 参数设置</a>。</p>
 

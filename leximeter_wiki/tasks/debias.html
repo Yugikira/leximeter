@@ -198,7 +198,8 @@ print(result.regression["stripped_100pct"].stage1_delta)   # 两步去偏的关�
       <tr><td><code>robust_regression</code></td><td>True</td><td>回归使用稳健标准误（HC3，HC1 兜底）。只影响置信区间与 p 值，不影响系数。</td></tr>
       <tr><td><code>random_seed</code></td><td>12345</td><td>剥离片段抽样的随机种子（配合行号与比例派生），保证同一数据可复现。</td></tr>
       <tr><td><code>verbose</code></td><td>True</td><td>打印中间诊断：衰减率、均值变化、各回归表。</td></tr>
-      <tr><td><code>reset_files</code></td><td>False</td><td>True 时清空本次运行目录重新跑；False 时断点续跑（复用已有测量列）。</td></tr>
+      <tr><td><code>reset_files</code></td><td>False</td><td>True 时清空本次运行目录（含 <code>debias_state.json</code>）重新跑；False 时已完成验证——同输入同参数直接重建完整 <code>DebiasResult</code>（输入签名覆盖整个输入 df 与全部关键参数），零 provider 调用。</td></tr>
+      <tr><td><code>max_retries</code></td><td>0</td><td>整个 run 失败时自动从检查点续跑的次数（重试强制 <code>reset_files=False</code>）。</td></tr>
       <tr><td><code>client</code> / <code>embedding_client</code> / <code>search_tool</code></td><td>None</td><td>注入自定义模型客户端 / 嵌入客户端 / 搜索工具（进阶用法）。</td></tr>
     </table>
     <p>完整参数与进阶选项见 <a href="../configuration.html">⚙️ 参数设置</a>。</p>

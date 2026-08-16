@@ -131,7 +131,7 @@ result = await leximeter.compare(
       <tr><td><code>modality</code></td><td>"text"</td><td>文本类型提示："text"（段落）或 "entity"（短实体）。影响提示词措辞。</td></tr>
       <tr><td><code>circle_first</code></td><td>None</td><td>提示词中哪一条目先展示。None 时默认 circle 在前；结果列顺序不变。</td></tr>
       <tr><td><code>file_name</code></td><td>comparison_responses.csv</td><td>原始响应保存文件名（实际按 <code>_raw_responses.csv</code> 存盘）。</td></tr>
-      <tr><td><code>reset_files</code></td><td>False</td><td>True 时清空 save_dir 重新跑；False 时断点续跑（跳过已完成配对）。</td></tr>
+      <tr><td><code>reset_files</code></td><td>False</td><td>True 时清空 save_dir 重新跑；False 时断点续跑（跳过已完成配对；所有配对都完成时直接复用检查点解析返回，零 provider 调用）。</td></tr>
     </table>
     <p>完整参数与进阶选项见 <a href="../configuration.html">⚙️ 参数设置</a>。</p>
 

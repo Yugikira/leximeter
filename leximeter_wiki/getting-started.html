@@ -132,7 +132,7 @@ asyncio.run(main())</code></pre>
       <tr><td>结果可复现吗？</td><td>同一段文本两次打分可能有 ±5 分内的波动。建议 <code>n_runs=2~3</code> 取平均；检查点机制保证"跑过的部分不重跑"。</td></tr>
       <tr><td>可以用自己的词表/量表吗？</td><td>可以。所有属性、分类标签、编码类别都是你定义的自由文本——写清楚定义就是你的测量工具。</td></tr>
       <tr><td>中文文本支持吗？</td><td>支持。所有提示词由模型处理，直接写中文文本即可；<code>attributes</code> 的定义也可以写中文。</td></tr>
-      <tr><td>断网/中断了怎么办？</td><td>重跑同一脚本即可，已完成的条目自动跳过（检查点）。复杂任务的中断恢复正在完善（见项目 TICKET-001）。</td></tr>
+      <tr><td>断网/中断了怎么办？</td><td>重跑同一脚本即可：已完成的条目按检查点跳过；完整跑过的复杂任务（discover / debias / ideate / poll / seed / codify）同输入重跑直接加载结果、零 provider 调用。想强制重跑传 <code>reset_files=True</code>。</td></tr>
     </table>
 
     <footer><a href="index.html">← 返回主页</a> · <a href="configuration.html">下一步：参数设置 →</a></footer>
