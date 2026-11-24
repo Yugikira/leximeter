@@ -1,4 +1,7 @@
-"""Jinja2 filters for randomized prompt rendering."""
+"""Jinja2 filters for randomized prompt rendering.
+
+Ported and modified from openai/GABRIEL's ``utils/jinja.py`` (Apache-2.0).
+"""
 
 from __future__ import annotations
 

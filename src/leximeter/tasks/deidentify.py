@@ -1,4 +1,7 @@
-"""Deidentify task: replace PII with consistent, realistic fake PII."""
+"""Deidentify task: replace PII with consistent, realistic fake PII.
+
+Ported and modified from openai/GABRIEL's ``tasks/deidentify.py`` (Apache-2.0).
+"""
 
 from __future__ import annotations
 

@@ -1,6 +1,7 @@
 """Leximeter: text-only, provider-neutral LLM measurement library.
 
-Forked from openai/GABRIEL and refactored for maintainability. See PLAN.md.
+Forked and modified from openai/GABRIEL (Apache-2.0) for text-only,
+provider-neutral use. See NOTICE and docs/plan.md.
 """
 
 from .config import load_env

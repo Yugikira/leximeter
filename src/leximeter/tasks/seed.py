@@ -1,4 +1,7 @@
-"""Seed task: generate a representative / diverse set of entities."""
+"""Seed task: generate a representative / diverse set of entities.
+
+Ported and modified from openai/GABRIEL's ``tasks/seed.py`` (Apache-2.0).
+"""
 
 from __future__ import annotations
 

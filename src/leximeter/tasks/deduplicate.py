@@ -1,4 +1,7 @@
-"""Deduplicate task: map equivalent terms to one representative."""
+"""Deduplicate task: map equivalent terms to one representative.
+
+Ported and modified from openai/GABRIEL's ``tasks/deduplicate.py`` (Apache-2.0).
+"""
 
 from __future__ import annotations
 

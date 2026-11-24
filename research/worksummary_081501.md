@@ -57,7 +57,7 @@ TavilySearchTool(
 ## 四、如何验证
 
 ```bash
-cd D:\claude\pyapps\sscitext\leximeter
+cd leximeter
 
 # 单元测试（零网络零密钥，假 provider）
 uv run pytest                          # 44 passed

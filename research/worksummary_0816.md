@@ -49,7 +49,7 @@
 ## 四、如何验证
 
 ```bash
-cd D:\claude\pyapps\sscitext\leximeter
+cd leximeter
 
 # 单元测试（零网络零密钥）
 uv run pytest                          # 62 passed

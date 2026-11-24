@@ -1,4 +1,7 @@
-"""Ideate: generate novel ideas/theories on a topic."""
+"""Ideate: generate novel ideas/theories on a topic.
+
+Ported and modified from openai/GABRIEL's ``tasks/ideate.py`` (Apache-2.0).
+"""
 
 from __future__ import annotations
 

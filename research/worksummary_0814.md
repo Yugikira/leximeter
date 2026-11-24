@@ -40,7 +40,7 @@ src/leximeter/
 ## 五、如何测试
 
 ```bash
-cd D:\claude\pyapps\sscitext\leximeter
+cd leximeter
 
 # 单元测试（零网络零密钥，用假 provider）
 uv run pytest

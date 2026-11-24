@@ -27,7 +27,7 @@ Leximeter 保留 GABRIEL 的全部功能（文本部分），重做内部结构�
 | 10 | 基类 | `Task`（模板方法）+ `AttributeTask`（n_runs/均值聚合）；子类只实现 `render_prompt`/`parse_response`/`build_output` |
 | 11 | 复杂任务拆分 | rank/debias/ideate/poll/discover 各拆子包；codify 保持单文件 |
 | 12 | 推进方式 | 方案 B：重建骨架 + 逐个移植，`DummyClient` 边移植边测 |
-| 13 | 脚手架 | `D:\claude\pyapps\sscitext\leximeter`，新 git init，pytest |
+| 13 | 脚手架 | `leximeter/`，新 git init，pytest |
 | 14 | 协议客户端 | ChatCompletions 用 openai SDK |
 
 ## 三、目标结构

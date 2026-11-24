@@ -1,4 +1,7 @@
-"""Rate task: score each item 0-100 on natural-language attributes."""
+"""Rate task: score each item 0-100 on natural-language attributes.
+
+Ported and modified from openai/GABRIEL's ``tasks/rate.py`` (Apache-2.0).
+"""
 
 from __future__ import annotations
 

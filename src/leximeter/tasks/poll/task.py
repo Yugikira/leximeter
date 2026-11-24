@@ -1,4 +1,7 @@
-"""Poll: seed a population, expand into personas, and survey them."""
+"""Poll: seed a population, expand into personas, and survey them.
+
+Ported and modified from openai/GABRIEL's ``tasks/poll.py`` (Apache-2.0).
+"""
 
 from __future__ import annotations
 

@@ -1,4 +1,7 @@
-"""Compare task: list similarities/differences between paired items."""
+"""Compare task: list similarities/differences between paired items.
+
+Ported and modified from openai/GABRIEL's ``tasks/compare.py`` (Apache-2.0).
+"""
 
 from __future__ import annotations
 

@@ -1,4 +1,7 @@
-"""Filter task: high-throughput boolean screening by natural-language condition."""
+"""Filter task: high-throughput boolean screening by natural-language condition.
+
+Ported and modified from openai/GABRIEL's ``tasks/filter.py`` (Apache-2.0).
+"""
 
 from __future__ import annotations
 

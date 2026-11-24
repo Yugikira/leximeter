@@ -1,4 +1,7 @@
-"""Load: prepare a folder of text files into a DataFrame."""
+"""Load: prepare a folder of text files into a DataFrame.
+
+Ported and modified from openai/GABRIEL's ``utils/file_utils.py`` for text-only use (Apache-2.0).
+"""
 
 from __future__ import annotations
 

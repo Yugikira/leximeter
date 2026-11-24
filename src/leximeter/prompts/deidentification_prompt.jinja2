@@ -1,3 +1,4 @@
+{#- Modified from openai/GABRIEL (Apache-2.0) for text-only / provider-neutral use. -#}
 You will be given a block of text belonging to a single individual or group. Your job is to produce or update a JSON mapping from personal or sensitive entities mentioned in the text to anonymized substitutes. Each mapping entry uses a short description of the entity (e.g., "younger son's name", "street address") as the key.
 
 Below is the current mapping dictionary for this group, built from previously processed text chunks. You must preserve all existing entries, adding new real forms of existing entities if they appear in this text, and adding new entries for any additional entities that need anonymization. You may refine a description key (e.g., from "personal name" to "daughter's name") if you learn more detail, but keep the casted form consistent.

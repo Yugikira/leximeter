@@ -238,4 +238,4 @@ uv run python examples/smoke_tasks.py discover_checkpoint   # checkpoint 复验�
 
 ## License
 
-Apache-2.0（同上游）。
+Apache License 2.0（同上游 [openai/GABRIEL](https://github.com/openai/GABRIEL)）。详见 [LICENSE](LICENSE) 与 [NOTICE](NOTICE)。

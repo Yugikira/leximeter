@@ -49,6 +49,9 @@ embeddings = ["sentence-transformers>=2.2.0"]
 search = ["tavily-python>=0.3.0"]
 
 [project.urls]
+Homepage = "https://github.com/Yugikira/leximeter"
+Repository = "https://github.com/Yugikira/leximeter"
+Issues = "https://github.com/Yugikira/leximeter/issues"
 Upstream = "https://github.com/openai/GABRIEL"
 
 [tool.setuptools]

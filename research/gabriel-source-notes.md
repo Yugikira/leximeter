@@ -1,7 +1,7 @@
 # GABRIEL 源码移植参考文档（面向 leximeter 重构）
 
-> **适用范围**：本文档基于一手源码 `D:\claude\pyapps\sscitext\GABRIEL\` 精读而成，服务于 leximeter（openai/GABRIEL 的厂商无关、纯文本 fork）的重构。
-> **路径约定**：除特别注明外，所有 `文件:行号` 均相对于 `D:\claude\pyapps\sscitext\GABRIEL\src\gabriel\`。例如 `api.py:137` 指 `src/gabriel/api.py` 第 137 行。
+> **适用范围**：本文档基于上游 `openai/GABRIEL` 一手源码精读而成，服务于 leximeter（openai/GABRIEL 的厂商无关、纯文本 fork）的重构。
+> **路径约定**：除特别注明外，所有 `文件:行号` 均相对于 `openai/GABRIEL/src/gabriel/`。例如 `api.py:137` 指 `src/gabriel/api.py` 第 137 行。
 > **范围声明**：本档只覆盖**文本**路径。image/audio/pdf 多模态实现细节一律不写；`web_search` 只记录其如何依赖 Responses API 原生 tool（leximeter 将用独立 SearchTool 替换）。**embeddings 必须覆盖**，因为 merge/deduplicate/seed/ideate 依赖 `get_embedding`/`get_all_embeddings`。
 > **准确度声明**：每个可复现行为契约（签名、默认值、输出列名、落盘规则）均给出精确行号。极少数未能确证的地方标记「此处未深究」，不臆造行号。
 
@@ -638,7 +638,7 @@ async def get_all_embeddings(
 
 ## 5. 提示词模板清单
 
-> 目录：`D:\claude\pyapps\sscitext\GABRIEL\src\gabriel\prompts\`（glob 共 **18** 个文件）。加载器见 `utils/jinja.py:25-31`（`Environment(loader=FileSystemLoader(prompts_dir))`，过滤器 `shuffled`/`shuffled_dict`）。`core/prompt_template.py` 的 `resolve_template` 校验自定义模板的变量集与参考模板一致。
+> 目录：`openai/GABRIEL/src/gabriel/prompts/`（glob 共 **18** 个文件）。加载器见 `utils/jinja.py:25-31`（`Environment(loader=FileSystemLoader(prompts_dir))`，过滤器 `shuffled`/`shuffled_dict`）。`core/prompt_template.py` 的 `resolve_template` 校验自定义模板的变量集与参考模板一致。
 
 | 模板 | 用途（任务） | 主要变量 | 备注 |
 |---|---|---|---|
@@ -719,4 +719,4 @@ async def get_all_embeddings(
 
 ---
 
-*文档生成日期：2026-08-14。所有行号基于对 `D:\claude\pyapps\sscitext\GABRIEL\src\gabriel\` 源码的核读。*
+*文档生成日期：2026-08-14。所有行号基于对 `openai/GABRIEL/src/gabriel/` 源码的核读。*
