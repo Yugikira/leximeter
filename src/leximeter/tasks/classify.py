@@ -54,11 +54,13 @@ class ClassifyConfig:
     n_attributes_per_run: int | None = None
     differentiate: bool = False
     circle_first: bool | None = None
+    order_strategy: _common.OrderStrategy = "per_run"
 
     def __post_init__(self) -> None:
         if self.additional_instructions is not None:
             cleaned = str(self.additional_instructions).strip()
             self.additional_instructions = cleaned or None
+        _common.validate_order_strategy(self.order_strategy)
 
 
 class Classify(Task):
@@ -188,8 +190,11 @@ class Classify(Task):
             attribute_batches=[[name for name, _ in b] for b in label_batch_items],
         )
 
-        prompts: list[str] = []
-        ids: list[str] = []
+        if not isinstance(self.cfg.n_runs, int) or self.cfg.n_runs < 1:
+            raise ValueError("n_runs must be an integer >= 1")
+
+        order_strategy = _common.validate_order_strategy(self.cfg.order_strategy)
+
         base_ids: list[str] = []
         id_to_circle_first: dict[str, bool] = {}
         id_to_rows: defaultdict[str, list[int]] = defaultdict(list)
@@ -221,20 +226,6 @@ class Classify(Task):
                 )
                 id_to_circle_first[ident] = circle_first_flag
                 base_ids.append(ident)
-            for batch_idx, batch_labels in enumerate(label_batches):
-                for ident in base_ids:
-                    prompts.append(
-                        self._template.render(
-                            entry_circle=prompt_circles[ident],
-                            entry_square=prompt_squares[ident],
-                            attributes=batch_labels,
-                            additional_instructions=self.cfg.additional_instructions,
-                            differentiate=True,
-                            modality=self.cfg.modality,
-                            circle_first=id_to_circle_first[ident],
-                        )
-                    )
-                    ids.append(f"{ident}_batch{batch_idx}")
         else:
             values = df_proc[column_name].tolist()  # type: ignore[index]
             for row, val in enumerate(values):
@@ -248,22 +239,8 @@ class Classify(Task):
                     str(val) if self.cfg.modality in {"text", "entity", "web"} else ""
                 )
                 base_ids.append(ident)
-            for batch_idx, batch_labels in enumerate(label_batches):
-                for ident in base_ids:
-                    prompts.append(
-                        self._template.render(
-                            text=prompt_texts[ident],
-                            attributes=batch_labels,
-                            additional_instructions=self.cfg.additional_instructions,
-                            modality=self.cfg.modality,
-                        )
-                    )
-                    ids.append(f"{ident}_batch{batch_idx}")
 
-        if not isinstance(self.cfg.n_runs, int) or self.cfg.n_runs < 1:
-            raise ValueError("n_runs must be an integer >= 1")
-
-        existing_ids: set = set()
+        existing_ids: set[str] = set()
         if not reset_files and os.path.exists(csv_path):
             try:
                 existing_df = pd.read_csv(csv_path, usecols=["Identifier"])
@@ -271,24 +248,66 @@ class Classify(Task):
             except (OSError, ValueError):
                 existing_ids = set()
 
-        run_identifier_lists: list[list[str]] = []
-        for run_idx in range(1, self.cfg.n_runs + 1):
-            run_ids: list[str] = []
-            for ident in ids:
-                if run_idx == 1:
-                    legacy_ident = f"{ident}_run1"
-                    run_ids.append(
-                        legacy_ident if legacy_ident in existing_ids else ident
-                    )
-                else:
-                    run_ids.append(f"{ident}_run{run_idx}")
-            run_identifier_lists.append(run_ids)
-
+        # Run-major dispatch: batch -> run -> item
         prompts_all: list[str] = []
         ids_all: list[str] = []
-        for run_ids in run_identifier_lists:
-            prompts_all.extend(prompts)
-            ids_all.extend(run_ids)
+        run_identifier_lists: list[list[str]] = [[] for _ in range(self.cfg.n_runs)]
+        for batch_idx, batch_labels in enumerate(label_batches):
+            for run_idx in range(1, self.cfg.n_runs + 1):
+                run_labels = (
+                    None
+                    if order_strategy == "per_item"
+                    else _common.order_mapping(
+                        batch_labels,
+                        strategy=order_strategy,
+                        run_idx=run_idx,
+                        batch_idx=batch_idx,
+                    )
+                )
+                for ident in base_ids:
+                    call_labels = (
+                        _common.order_mapping(
+                            batch_labels,
+                            strategy="per_item",
+                            run_idx=run_idx,
+                            batch_idx=batch_idx,
+                        )
+                        if run_labels is None
+                        else run_labels
+                    )
+                    ident_batch = f"{ident}_batch{batch_idx}"
+                    if run_idx == 1:
+                        legacy_ident = f"{ident_batch}_run1"
+                        full_ident = (
+                            legacy_ident
+                            if legacy_ident in existing_ids
+                            else ident_batch
+                        )
+                    else:
+                        full_ident = f"{ident_batch}_run{run_idx}"
+                    run_identifier_lists[run_idx - 1].append(full_ident)
+                    ids_all.append(full_ident)
+                    if self.cfg.differentiate:
+                        prompts_all.append(
+                            self._template.render(
+                                entry_circle=prompt_circles[ident],
+                                entry_square=prompt_squares[ident],
+                                attributes=call_labels,
+                                additional_instructions=self.cfg.additional_instructions,
+                                differentiate=True,
+                                modality=self.cfg.modality,
+                                circle_first=id_to_circle_first[ident],
+                            )
+                        )
+                    else:
+                        prompts_all.append(
+                            self._template.render(
+                                text=prompt_texts[ident],
+                                attributes=call_labels,
+                                additional_instructions=self.cfg.additional_instructions,
+                                modality=self.cfg.modality,
+                            )
+                        )
 
         df_resp_all = await batch_execute(
             prompts=prompts_all,

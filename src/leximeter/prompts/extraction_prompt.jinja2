@@ -1,10 +1,8 @@
 {#- Modified from openai/GABRIEL (Apache-2.0) for text-only / provider-neutral use. -#}
-{% import "snippets.jinja2" as snip %}
-{% if modality is not defined or not modality %}
-{% set modality = "entity" %}
-{% endif %}
-{{ snip.single_entry(modality, text) }}
-
+{%- import "snippets.jinja2" as snip -%}
+{%- if modality is not defined or not modality -%}
+{%- set modality = "entity" -%}
+{%- endif -%}
 Your task: for each attribute below, extract the specific information requested (e.g. year of invention, price, death year, product launch date, etc.).
 Provide each value as a string.
 Provide only the extracted datapoint requested in as precise a form as possible.
@@ -13,7 +11,7 @@ Whenever possible/relevant, leave it in a purely numeric string form (e.g. "235"
 If the information cannot be found or is not known, return placeholder "unknown" (always exactly that word).
 
 BEGIN ATTRIBUTES
-{{ attributes | shuffled_dict }}
+{{ attributes | ordered_dict_json }}
 END ATTRIBUTES
 Each attribute key tells you what to extract. If a definition is provided, closely follow it to anchor what you provide; otherwise rely on your best consistent interpretation.
 
@@ -48,7 +46,7 @@ Output JSON only, in following format:
 Usually whole content is just one unified entity, so fill only first entity section with all attributes for whole content (no other entity sections).
 But if input clearly contains multiple relevant distinct entities (e.g. catalog with several product listings), output one top-level entry per entity. Use a short, informative identifier as each entity's key, and place that entity's unique extracted attributes inside its nested dictionary.
 
-Attributes you are extracting info on are: {{ attributes.keys() | shuffled }}
+Attributes you are extracting info on are: {{ attributes.keys() | list }}
 Assess EVERY attribute; use "unknown" if needed but no drops. Use these attribute names verbatim, with absolutely no modification.
 Same case, same spelling, same punctuation, same formatting.
 
@@ -60,3 +58,4 @@ BEGIN ADDITIONAL INSTRUCTIONS/CLARIFICATIONS
 {{ additional_instructions }}
 END ADDITIONAL INSTRUCTIONS/CLARIFICATIONS
 {% endif %}
+{{ snip.single_entry(modality, text) }}

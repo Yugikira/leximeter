@@ -22,6 +22,7 @@ from .client.base import LLMClient
 from .client.embedding import EmbeddingClient
 from .client.search import SearchTool
 from .engine.retry import run_task_with_retry
+from .tasks._common import OrderStrategy
 from .tasks.bucket import Bucket, BucketConfig
 from .tasks.classify import Classify, ClassifyConfig
 from .tasks.codify import Codify, CodifyConfig
@@ -55,6 +56,7 @@ async def rate(
     rating_scale: str | None = None,
     additional_instructions: str | None = None,
     modality: str = "text",
+    order_strategy: OrderStrategy = "per_run",
     file_name: str = "ratings.csv",
     reset_files: bool = False,
     client: LLMClient | None = None,
@@ -77,6 +79,7 @@ async def rate(
         rating_scale=rating_scale,
         additional_instructions=additional_instructions,
         modality=modality,
+        order_strategy=order_strategy,
     )
     task = Rate(
         cfg,
@@ -100,6 +103,7 @@ async def classify(
     n_attributes_per_run: int | None = None,
     additional_instructions: str | None = None,
     modality: str = "text",
+    order_strategy: OrderStrategy = "per_run",
     file_name: str = "classify_responses.csv",
     reset_files: bool = False,
     client: LLMClient | None = None,
@@ -123,6 +127,7 @@ async def classify(
         n_attributes_per_run=n_attributes_per_run,
         additional_instructions=additional_instructions,
         modality=modality,
+        order_strategy=order_strategy,
     )
     task = Classify(
         cfg,
@@ -146,6 +151,7 @@ async def extract(
     additional_instructions: str | None = None,
     modality: str = "entity",
     types: dict[str, Any] | None = None,
+    order_strategy: OrderStrategy = "per_run",
     file_name: str = "extraction.csv",
     reset_files: bool = False,
     client: LLMClient | None = None,
@@ -168,6 +174,7 @@ async def extract(
         additional_instructions=additional_instructions,
         modality=modality,
         types=types,
+        order_strategy=order_strategy,
     )
     task = Extract(
         cfg,
@@ -682,6 +689,7 @@ async def codify(
     max_categories_per_call: int = 8,
     debug_print: bool = False,
     completion_classifier_instructions: str | None = None,
+    order_strategy: OrderStrategy = "per_run",
     reset_files: bool = False,
     client: LLMClient | None = None,
     embedding_client: EmbeddingClient | None = None,
@@ -709,6 +717,7 @@ async def codify(
         max_categories_per_call=max_categories_per_call,
         debug_print=debug_print,
         completion_classifier_instructions=completion_classifier_instructions,
+        order_strategy=order_strategy,
     )
     task = Codify(
         cfg,
@@ -741,6 +750,7 @@ async def rank(
     modality: str = "text",
     n_attributes_per_run: int | None = None,
     circle_first: bool | None = None,
+    order_strategy: OrderStrategy = "per_run",
     file_name: str = "rankings",
     reset_files: bool = False,
     client: LLMClient | None = None,
@@ -768,6 +778,7 @@ async def rank(
         modality=modality,
         n_attributes_per_run=n_attributes_per_run,
         circle_first=circle_first,
+        order_strategy=order_strategy,
     )
     task = Rank(
         cfg,

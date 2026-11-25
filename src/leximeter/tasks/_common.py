@@ -8,14 +8,67 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import random
 from collections.abc import Sequence
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar, cast
 
 import pandas as pd
 
 T = TypeVar("T")
 
 ATTRIBUTE_WARNING_THRESHOLD = 12
+
+OrderStrategy = Literal["per_run", "fixed", "per_item"]
+VALID_ORDER_STRATEGIES: frozenset[str] = frozenset({"per_run", "fixed", "per_item"})
+
+
+def validate_order_strategy(strategy: str) -> OrderStrategy:
+    """Validate an ``order_strategy`` setting and return it typed."""
+    if strategy not in VALID_ORDER_STRATEGIES:
+        raise ValueError(
+            "order_strategy must be one of "
+            f"{sorted(VALID_ORDER_STRATEGIES)}, got {strategy!r}"
+        )
+    return cast(OrderStrategy, strategy)
+
+
+def order_mapping(
+    mapping: dict[str, T],
+    *,
+    strategy: OrderStrategy = "per_run",
+    run_idx: int = 1,
+    batch_idx: int = 0,
+) -> dict[str, T]:
+    """Order a rubric/key dictionary according to ``strategy``.
+
+    - ``"fixed"``: preserve caller insertion order across all items and runs.
+    - ``"per_run"``: preserve caller order on ``run_idx == 1``, reverse on
+      ``run_idx == 2``, and apply a deterministic seeded permutation derived
+      from ``(batch_idx, run_idx)`` on ``run_idx >= 3``.
+    - ``"per_item"``: unseeded per-call shuffle (legacy GABRIEL compatibility).
+    """
+    validate_order_strategy(strategy)
+    items = list(mapping.items())
+    if len(items) <= 1 or strategy == "fixed":
+        return dict(items)
+    if strategy == "per_item":
+        random.shuffle(items)
+        return dict(items)
+    if run_idx <= 1:
+        return dict(items)
+    reversed_items = list(reversed(items))
+    if run_idx == 2:
+        return dict(reversed_items)
+    seed_bytes = hashlib.sha256(f"{batch_idx}:{run_idx}".encode()).digest()[:8]
+    rng = random.Random(int.from_bytes(seed_bytes, "big"))
+    permuted = list(items)
+    rng.shuffle(permuted)
+    if len(items) >= 3:
+        for _ in range(16):
+            if permuted != items and permuted != reversed_items:
+                break
+            rng.shuffle(permuted)
+    return dict(permuted)
 
 
 def hash_identifier(value: Any) -> str:

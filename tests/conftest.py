@@ -38,6 +38,20 @@ class CountingClient(DictClient):
         )
 
 
+class RecordingClient(DictClient):
+    """DictClient that records every rendered prompt in dispatch order."""
+
+    def __init__(self, payload: dict[str, Any]):
+        super().__init__(payload)
+        self.prompts: list[str] = []
+
+    async def complete(self, prompt, *, model, json_mode=False, **kwargs) -> str:
+        self.prompts.append(prompt)
+        return await super().complete(
+            prompt, model=model, json_mode=json_mode, **kwargs
+        )
+
+
 class TextClient(LLMClient):
     """Return a fixed plain-text string for every prompt."""
 

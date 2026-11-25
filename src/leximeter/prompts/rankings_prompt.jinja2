@@ -1,6 +1,5 @@
-{% import "snippets.jinja2" as snip %}
-{{ snip.pair_entries(modality, entry_square, entry_circle, circle_first=circle_first|default(false)) }}
-
+{#- Modified from openai/GABRIEL (Apache-2.0) for text-only / provider-neutral use. -#}
+{%- import "snippets.jinja2" as snip -%}
 Essential: do not confuse or conflate the two entries.
 Fully separate entry square from entry circle in your mind.
 "square" and "circle" labels purely for referencing. Content was randomly assigned to each reference label, so bear no weight on entry order.
@@ -9,7 +8,7 @@ Give both entries full and equal attention. Check yourself; ensure equal compreh
 Your task: for each attribute below, decide which entry (square or circle) manifests that attribute to a greater degree than the other entry.
 
 BEGIN ATTRIBUTES
-{{ attributes | shuffled_dict }}
+{{ attributes | ordered_dict_json }}
 END ATTRIBUTES
 Each dictionary key is an attribute. If a definition is provided, use it to anchor judgment; otherwise use your best consistent definition.
 
@@ -35,7 +34,7 @@ Output JSON only, in following format:
     ...
 }
 
-Attributes you are adjudicating are: {{ attributes.keys() | shuffled }}
+Attributes you are adjudicating are: {{ attributes.keys() | list }}
 Assess EVERY attribute; no drops. Use these attribute names verbatim, with absolutely no modification.
 Same case, same spelling, same punctuation, same formatting.
 
@@ -47,3 +46,4 @@ BEGIN ADDITIONAL INSTRUCTIONS/CLARIFICATIONS
 {{ additional_instructions }}
 END ADDITIONAL INSTRUCTIONS/CLARIFICATIONS
 {% endif %}
+{{ snip.pair_entries(modality, entry_square, entry_circle, circle_first=circle_first|default(false)) }}

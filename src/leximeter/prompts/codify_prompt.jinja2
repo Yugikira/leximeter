@@ -1,9 +1,5 @@
-{% import "snippets.jinja2" as snip %}
-{% if entry_circle is defined %}
-{{ snip.pair_entries(modality, entry_square, entry_circle, circle_first=circle_first|default(false)) }}
-{% else %}
-{{ snip.single_entry(modality, text) }}
-{% endif %}
+{#- Modified from openai/GABRIEL (Apache-2.0) for text-only / provider-neutral use. -#}
+{%- import "snippets.jinja2" as snip -%}
 {% if modality != "text" %}
 Since these inputs are not text, you should not output verbatim excerpts.
 Instead, describe the relevant parts of the entity being coded, in your own words.
@@ -15,7 +11,7 @@ Your task is to act as a passage coder, as is done in the social sciences.
 You are to carefully read and dissect the text, marking the boundaries of snippets/subsections of the text that belong to the following categories/attributes:
 
 BEGIN CATEGORIES/ATTRIBUTES
-{{ categories }}
+{{ categories | ordered_dict_json }}
 END CATEGORIES/ATTRIBUTES
 Follow the specific definitions of the categories in assigning them to snippets/subsections of the text.
 {% else %}
@@ -65,7 +61,7 @@ Output a JSON in the following format:
 }
 
 {% if categories %}
-Again: the categories you are marking are: {{ categories.keys() | shuffled }}
+Again: the categories you are marking are: {{ categories.keys() | list }}
 Ensure you input these category names verbatim into the JSON.
 Exact spelling/capitalization/underscoring/any other formatting of the category names must be preserved.
 Carefully consider the entire text for each and every category; do not skip any (though it is possible that some categories are not present in the text, in which case that category name must still be in the JSON but with an empty list of snippets/subsections).
@@ -92,4 +88,9 @@ If the user indicates a different scope of how large the snippets/subsections sh
 BEGIN ADDITIONAL INSTRUCTIONS
 {{ additional_instructions }}
 END ADDITIONAL INSTRUCTIONS
+{% endif %}
+{% if entry_circle is defined %}
+{{ snip.pair_entries(modality, entry_square, entry_circle, circle_first=circle_first|default(false)) }}
+{% else %}
+{{ snip.single_entry(modality, text) }}
 {% endif %}

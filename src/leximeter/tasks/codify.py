@@ -62,6 +62,7 @@ class CodifyConfig:
     modality: str = "text"
     n_rounds: int = 2  # Total passes incl. the initial run; 1 skips completion sweeps
     completion_classifier_instructions: str | None = None
+    order_strategy: _common.OrderStrategy = "per_run"
     completion_max_rounds: InitVar[int | None] = None
 
     def __post_init__(self, completion_max_rounds: int | None) -> None:
@@ -79,6 +80,7 @@ class CodifyConfig:
             rounds = 1
         rounds = max(rounds, 1)
         self.n_rounds = rounds
+        _common.validate_order_strategy(self.order_strategy)
 
 
 @dataclass
@@ -699,6 +701,7 @@ class Codify(Task):
             if not selected_categories:
                 return {}
 
+        order_strategy = _common.validate_order_strategy(self.cfg.order_strategy)
         requests: list[PromptRequest] = []
         pending_requests: list[dict[str, Any]] = []
 
@@ -712,36 +715,61 @@ class Codify(Task):
         else:
             category_batches = []
 
+        chunked_rows: list[tuple[int, int, str]] = []
         for row_idx, text in row_texts.items():
             text_str = str(text or "")
             if not text_str.strip():
                 continue
             chunks = self.chunk_by_words(text_str, self.cfg.max_words_per_call)
-
             for chunk_idx, chunk in enumerate(chunks):
-                if dynamic_mode:
-                    identifier = f"row{row_idx}_iter{iteration}_chunk{chunk_idx}"
+                chunked_rows.append((row_idx, chunk_idx, chunk))
+
+        if dynamic_mode:
+            for row_idx, chunk_idx, chunk in chunked_rows:
+                identifier = f"row{row_idx}_iter{iteration}_chunk{chunk_idx}"
+                pending_requests.append(
+                    {
+                        "identifier": identifier,
+                        "chunk": chunk,
+                        "row_index": row_idx,
+                        "batch_categories": None,
+                    }
+                )
+        else:
+            # Batch-major grouping keeps all rows/chunks for a category batch consecutive
+            for batch_idx, batch_keys in enumerate(category_batches):
+                assert categories is not None
+                batch_categories = {k: categories[k] for k in batch_keys}
+                iter_categories = (
+                    None
+                    if order_strategy == "per_item"
+                    else _common.order_mapping(
+                        batch_categories,
+                        strategy=order_strategy,
+                        run_idx=iteration + 1,
+                        batch_idx=batch_idx,
+                    )
+                )
+                for row_idx, chunk_idx, chunk in chunked_rows:
+                    call_categories = (
+                        _common.order_mapping(
+                            batch_categories,
+                            strategy="per_item",
+                            run_idx=iteration + 1,
+                            batch_idx=batch_idx,
+                        )
+                        if iter_categories is None
+                        else iter_categories
+                    )
+                    identifier = f"row{row_idx}_iter{iteration}_chunk{chunk_idx}_batch{batch_idx}"
                     pending_requests.append(
                         {
                             "identifier": identifier,
                             "chunk": chunk,
                             "row_index": row_idx,
-                            "batch_categories": None,
+                            "batch_categories": call_categories,
                         }
                     )
-                else:
-                    for batch_idx, batch_keys in enumerate(category_batches):
-                        assert categories is not None
-                        batch_categories = {k: categories[k] for k in batch_keys}
-                        identifier = f"row{row_idx}_iter{iteration}_chunk{chunk_idx}_batch{batch_idx}"
-                        pending_requests.append(
-                            {
-                                "identifier": identifier,
-                                "chunk": chunk,
-                                "row_index": row_idx,
-                                "batch_categories": batch_categories,
-                            }
-                        )
 
         if not pending_requests:
             return {}
@@ -893,6 +921,7 @@ class Codify(Task):
             additional_instructions=base_instruction,
             modality=self.cfg.modality,
             n_attributes_per_run=self.cfg.max_categories_per_call,
+            order_strategy=self.cfg.order_strategy,
         )
         classifier = Classify(classify_cfg, client=self._get_client())
 
