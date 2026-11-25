@@ -26,3 +26,17 @@ uv run ruff format --check src/ tests/
 - **Provider neutrality:** Task layers depend only on the `LLMClient` abstraction (plus optional `EmbeddingClient` / `SearchTool`), never on OpenAI-specific SDK calls or Responses-only fields.
 - **Offline testability:** Every provider is injectable; the full test suite must pass with `DummyClient` (zero API keys, zero network).
 - **Env precedence:** `import leximeter` calls `load_dotenv()` without overriding existing environment variables (`env > .env`). Never commit `.env` or `runs/`.
+
+## Agent skills
+
+### Issue tracker
+
+GitHub Issues on `Yugikira/leximeter` via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Five canonical roles (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context (`GLOSSARY.md` and `docs/adr/` at repo root). See `docs/agents/domain.md`.
