@@ -78,9 +78,16 @@ async def batch_execute(
     reset_files: bool = False,
     max_retries: int = 3,
     timeout: float | None = None,
+    warmup_first: bool | None = None,
     **generation_kwargs: Any,
 ) -> pd.DataFrame:
     """Run ``prompts`` through ``client`` concurrently, resuming from ``save_path``.
+
+    When ``warmup_first`` is ``None`` (default) and
+    ``len(pending) > max(8, n_parallels)``, the first pending prompt is awaited
+    sequentially before launching the remaining items concurrently so provider
+    prefix caches populate before wave 1 fans out.  Explicit ``True`` warms up
+    whenever ``len(pending) > 1``; ``False`` disables warmup.
 
     Returns a DataFrame with ``Identifier``, ``Response``, ``Successful``,
     ``Error Log`` and ``Time Taken`` columns.
@@ -104,8 +111,10 @@ async def batch_execute(
     sem = asyncio.Semaphore(max(1, n_parallels))
     lock = asyncio.Lock()
     new_rows: list[dict[str, Any]] = []
+    flushed = 0
 
     async def worker(ident: str, prompt: str) -> None:
+        nonlocal flushed
         async with sem:
             started = time.monotonic()
             try:
@@ -135,14 +144,29 @@ async def batch_execute(
                 }
             async with lock:
                 new_rows.append(row)
-                if save_path and len(new_rows) % _SAVE_EVERY == 0:
-                    _checkpoint.append_rows(save_path, new_rows[-_SAVE_EVERY:])
+                if save_path and len(new_rows) - flushed >= _SAVE_EVERY:
+                    _checkpoint.append_rows(save_path, new_rows[flushed:])
+                    flushed = len(new_rows)
 
-    if pending:
+    should_warmup = (
+        len(pending) > 1
+        if warmup_first is True
+        else False
+        if warmup_first is False
+        else len(pending) > max(8, n_parallels)
+    )
+
+    if should_warmup:
+        first_ident, first_prompt = pending[0]
+        await worker(first_ident, first_prompt)
+        rest = pending[1:]
+        if rest:
+            await asyncio.gather(*(worker(i, p) for i, p in rest))
+    elif pending:
         await asyncio.gather(*(worker(i, p) for i, p in pending))
 
-    if save_path:
-        _checkpoint.append_rows(save_path, new_rows)
+    if save_path and flushed < len(new_rows):
+        _checkpoint.append_rows(save_path, new_rows[flushed:])
 
     return _checkpoint.merge_with_checkpoint(checkpoint, new_rows)
 

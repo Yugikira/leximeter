@@ -1,6 +1,5 @@
-{% import "snippets.jinja2" as snip %}
-{{ snip.pair_entries(modality, entry_square, entry_circle, circle_first=circle_first|default(false)) }}
-
+{#- Modified from openai/GABRIEL (Apache-2.0) for text-only / provider-neutral use. -#}
+{%- import "snippets.jinja2" as snip -%}
 {% if differentiate %}
 Your task is to list concise, mutually exclusive terms or short phrases that best explain how entry "circle" differs from entry "square".
 These terms should be specific and reflect clear differences observable between these particular entries.
@@ -58,3 +57,4 @@ BEGIN ADDITIONAL INSTRUCTIONS/CLARIFICATIONS
 {{ additional_instructions }}
 END ADDITIONAL INSTRUCTIONS/CLARIFICATIONS
 {% endif %}
+{{ snip.pair_entries(modality, entry_square, entry_circle, circle_first=circle_first|default(false)) }}

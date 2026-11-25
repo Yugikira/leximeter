@@ -1,11 +1,9 @@
 {#- Modified from openai/GABRIEL (Apache-2.0) for text-only / provider-neutral use. -#}
-{% import "snippets.jinja2" as snip %}
-{{ snip.single_entry(modality, text) }}
-
+{%- import "snippets.jinja2" as snip -%}
 Your task: for each attribute below, rate how strongly the provided content manifests it.
 
 BEGIN ATTRIBUTES
-{{ attributes | shuffled_dict }}
+{{ attributes | ordered_dict_json }}
 END ATTRIBUTES
 Each dictionary key is an attribute. If a definition is provided, use it to anchor judgment; otherwise use your best consistent definition.
 
@@ -37,7 +35,7 @@ Output JSON only, in following format:
 	...
 }
 
-Attributes you are measuring in the content are: {{ attributes.keys() | shuffled }}
+Attributes you are measuring in the content are: {{ attributes.keys() | list }}
 Assess EVERY attribute; no drops. Use these attribute names verbatim, with absolutely no modification.
 Same case, same spelling, same punctuation, same formatting.
 
@@ -49,3 +47,4 @@ BEGIN ADDITIONAL INSTRUCTIONS/CLARIFICATIONS
 {{ additional_instructions }}
 END ADDITIONAL INSTRUCTIONS/CLARIFICATIONS
 {% endif %}
+{{ snip.single_entry(modality, text) }}

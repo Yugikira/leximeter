@@ -6,6 +6,7 @@ Ported and modified from openai/GABRIEL's ``tasks/compare.py`` (Apache-2.0).
 from __future__ import annotations
 
 import os
+import random
 from dataclasses import dataclass
 from typing import Any
 
@@ -59,14 +60,17 @@ class Compare(Task):
         for circle, square in unique:
             ident = _common.hash_identifier(f"{circle}\x1f{square}")
             ids.append(ident)
+            circle_first_flag = (
+                self.cfg.circle_first
+                if self.cfg.circle_first is not None
+                else random.random() < 0.5
+            )
             prompts.append(
                 self._template.render(
                     entry_circle=circle,
                     entry_square=square,
                     modality=self.cfg.modality,
-                    circle_first=self.cfg.circle_first
-                    if self.cfg.circle_first is not None
-                    else False,
+                    circle_first=circle_first_flag,
                     differentiate=self.cfg.differentiate,
                     additional_instructions=self.cfg.additional_instructions,
                 )

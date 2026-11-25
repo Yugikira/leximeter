@@ -1,12 +1,8 @@
-Consider the following raw terms:
-BEGIN RAW TERMS
-{{ raw_terms }}
-END RAW TERMS
+{#- Modified from openai/GABRIEL (Apache-2.0) for text-only / provider-neutral use. -#}
+Deduplicate the raw terms provided below.
 {% if modality == "text" %}
 Each raw term is a text snippet. You are deduplicating the texts. In your output, use the identifier keys for each text to denote all representative / mapped texts. Only use those identifier keys in the mapping, not the full texts.
 {% endif %}
-
-Deduplicate these raw terms.
 Do this by exhaustively identifying all subsets of raw terms such that all terms in the subset are largely equivalent to each other.
 For each subset, map the raw terms to a single representative term.
 The representative term must be one of the raw terms in the subset - it should be the best, most specific representative of the subset.
@@ -39,3 +35,7 @@ BEGIN ADDITIONAL INSTRUCTIONS/CLARIFICATIONS
 {{ additional_instructions }}
 END ADDITIONAL INSTRUCTIONS/CLARIFICATIONS
 {% endif %}
+Consider the following raw terms:
+BEGIN RAW TERMS
+{{ raw_terms }}
+END RAW TERMS

@@ -34,11 +34,13 @@ class ExtractConfig:
     additional_instructions: str | None = None
     modality: str = "entity"
     types: dict[str, Any] | None = None
+    order_strategy: _common.OrderStrategy = "per_run"
 
     def __post_init__(self) -> None:
         if self.additional_instructions is not None:
             cleaned = str(self.additional_instructions).strip()
             self.additional_instructions = cleaned or None
+        _common.validate_order_strategy(self.order_strategy)
 
 
 class Extract(Task):
@@ -216,15 +218,10 @@ class Extract(Task):
             attribute_batches=[[name for name, _ in b] for b in attr_batch_items],
         )
 
-        prompts: list[str] = []
-        ids: list[str] = []
-        for batch_idx, batch_attrs in enumerate(attr_batches):
-            for ident in base_ids:
-                prompts.append(self.render_prompt(prompt_texts[ident], batch_attrs))
-                ids.append(f"{ident}_batch{batch_idx}")
-
         if not isinstance(self.cfg.n_runs, int) or self.cfg.n_runs < 1:
             raise ValueError("n_runs must be an integer >= 1")
+
+        order_strategy = _common.validate_order_strategy(self.cfg.order_strategy)
 
         existing_ids: set[str] = set()
         if not reset_files and os.path.exists(csv_path):
@@ -234,24 +231,35 @@ class Extract(Task):
             except (OSError, ValueError):
                 existing_ids = set()
 
-        run_identifier_lists: list[list[str]] = []
-        for run_idx in range(1, self.cfg.n_runs + 1):
-            run_ids: list[str] = []
-            for ident in ids:
-                if run_idx == 1:
-                    legacy_ident = f"{ident}_run1"
-                    run_ids.append(
-                        legacy_ident if legacy_ident in existing_ids else ident
-                    )
-                else:
-                    run_ids.append(f"{ident}_run{run_idx}")
-            run_identifier_lists.append(run_ids)
-
+        # Run-major dispatch: batch -> run -> item
         prompts_all: list[str] = []
         ids_all: list[str] = []
-        for run_ids in run_identifier_lists:
-            prompts_all.extend(prompts)
-            ids_all.extend(run_ids)
+        run_identifier_lists: list[list[str]] = [[] for _ in range(self.cfg.n_runs)]
+        for batch_idx, batch_attrs in enumerate(attr_batches):
+            for run_idx in range(1, self.cfg.n_runs + 1):
+                next_attrs = _common.make_mapping_orderer(
+                    batch_attrs,
+                    strategy=order_strategy,
+                    run_idx=run_idx,
+                    batch_idx=batch_idx,
+                )
+                for ident in base_ids:
+                    call_attrs = next_attrs()
+                    ident_batch = f"{ident}_batch{batch_idx}"
+                    if run_idx == 1:
+                        legacy_ident = f"{ident_batch}_run1"
+                        full_ident = (
+                            legacy_ident
+                            if legacy_ident in existing_ids
+                            else ident_batch
+                        )
+                    else:
+                        full_ident = f"{ident_batch}_run{run_idx}"
+                    run_identifier_lists[run_idx - 1].append(full_ident)
+                    ids_all.append(full_ident)
+                    prompts_all.append(
+                        self.render_prompt(prompt_texts[ident], call_attrs)
+                    )
 
         df_resp_all = await batch_execute(
             prompts=prompts_all,

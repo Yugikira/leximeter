@@ -194,17 +194,26 @@ class AttributeTask(Task):
             attribute_batches=[[name for name, _ in b] for b in batches],
         )
 
-        # 4. build jobs: (batch x unique item x run)
+        # 4. build jobs in run-major order: (batch x run x unique item)
         n_runs = max(1, int(getattr(self.cfg, "n_runs", 1)))
+        order_strategy = _common.validate_order_strategy(
+            getattr(self.cfg, "order_strategy", "per_run")
+        )
         prompts: list[str] = []
         ids: list[str] = []
         meta: list[tuple[str, int, int]] = []  # (base_id, batch_idx, run_idx)
         for batch_idx, batch_items in enumerate(batches):
             batch_attrs = dict(batch_items)
-            for ident in base_ids:
-                for run_idx in range(1, n_runs + 1):
+            for run_idx in range(1, n_runs + 1):
+                next_attrs = _common.make_mapping_orderer(
+                    batch_attrs,
+                    strategy=order_strategy,
+                    run_idx=run_idx,
+                    batch_idx=batch_idx,
+                )
+                for ident in base_ids:
                     ids.append(f"{ident}_batch{batch_idx}_run{run_idx}")
-                    prompts.append(self.render_prompt(id_to_text[ident], batch_attrs))
+                    prompts.append(self.render_prompt(id_to_text[ident], next_attrs()))
                     meta.append((ident, batch_idx, run_idx))
 
         # 5. execute through the provider-agnostic engine

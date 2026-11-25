@@ -322,11 +322,13 @@ class RankConfig:
     modality: str = "text"
     n_attributes_per_run: int | None = None
     circle_first: bool | None = None
+    order_strategy: _common.OrderStrategy = "per_run"
 
     def __post_init__(self) -> None:
         if self.additional_instructions is not None:
             cleaned = str(self.additional_instructions).strip()
             self.additional_instructions = cleaned or None
+        _common.validate_order_strategy(self.order_strategy)
 
 
 class Rank(Task):
@@ -377,7 +379,7 @@ class Rank(Task):
             outcomes = history_pairs[attr]
             if len(outcomes) == 0:
                 continue
-            bt_scores, n_ij, p_ij = fit_bt(
+            fit_result = fit_bt(
                 item_ids=item_ids,
                 outcomes=outcomes,
                 pseudo=self.cfg.learning_rate,
@@ -385,6 +387,8 @@ class Rank(Task):
                 tol=self._TOL,
                 return_info=True,
             )
+            assert isinstance(fit_result, tuple)
+            bt_scores, n_ij, p_ij = fit_result
             for i in item_ids:
                 ratings[i][attr] = bt_scores[i]
             s_vec = np.array([bt_scores[i] for i in item_ids])
@@ -638,12 +642,19 @@ class Rank(Task):
                 **kwargs,
             )
         else:
+            order_strategy = _common.validate_order_strategy(self.cfg.order_strategy)
             prompts: list[str] = []
             for batch_idx, batch in enumerate(attr_batches):
                 attr_def_map = (
                     {a: self.cfg.attributes[a] for a in batch}
                     if isinstance(self.cfg.attributes, dict)
                     else {a: "" for a in batch}
+                )
+                next_attrs = _common.make_mapping_orderer(
+                    attr_def_map,
+                    strategy=order_strategy,
+                    run_idx=rnd + 1,
+                    batch_idx=batch_idx,
                 )
                 for pair_idx, (id_a, id_b) in enumerate(pairs):
                     raw_ident = f"{id_prefix}{rnd}|{batch_idx}|{pair_idx}|{id_a}|{id_b}"
@@ -657,7 +668,7 @@ class Rank(Task):
                         self._template.render(
                             entry_circle=texts_by_id[id_a],
                             entry_square=texts_by_id[id_b],
-                            attributes=attr_def_map,
+                            attributes=next_attrs(),
                             additional_instructions=self.cfg.additional_instructions
                             or "",
                             modality=self.cfg.modality,

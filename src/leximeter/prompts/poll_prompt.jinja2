@@ -1,8 +1,5 @@
+{#- Modified from openai/GABRIEL (Apache-2.0) for text-only / provider-neutral use. -#}
 You must answer the survey below exactly as the described person would answer it.
-
-BEGIN PERSONA
-{{ persona }}
-END PERSONA
 
 Answer authentically from this person's point of view.
 Fully inhabit the person's circumstances, worldview, habits, biases, blind spots, style, and constraints.
@@ -59,3 +56,6 @@ BEGIN ADDITIONAL INSTRUCTIONS/CLARIFICATIONS
 {{ additional_instructions }}
 END ADDITIONAL INSTRUCTIONS/CLARIFICATIONS
 {% endif %}
+BEGIN PERSONA
+{{ persona }}
+END PERSONA

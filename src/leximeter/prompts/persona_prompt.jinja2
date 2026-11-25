@@ -3,15 +3,11 @@ Imagine yourself as a real individual that matches the seed below. The idea is t
 
 The seed below is the basis of the persona. Preserve its core demographic and life-situation signals, and build outward from them. Use it as an anchor rather than ignoring it or drifting into a different person.
 
-BEGIN SEED
-{{ seed }}
-END SEED
-
 {% if population_description %}
 This seed was sampled from the following broader population:
 {{ population_description }}
-{% endif %}
 
+{% endif -%}
 Do not fixate on race or other basic demographics; these are just for basic setup.
 Instead, focus on making a real person with a situation that is relevant to the demographics based on what you know of the population and statistics about the population.
 Regular people are not obsessed with their race, gender, or ethnicity -- they just live their unique lives, and those lives are statistically correlated with the demographics but not obsessed with them.
@@ -109,3 +105,7 @@ Big Five Personality Assessment Score — Openness to Experience: <insert openne
 
 Basic Political Views: <insert basic political views here>
 Life Goals: <insert life goals here>
+
+BEGIN SEED
+{{ seed }}
+END SEED

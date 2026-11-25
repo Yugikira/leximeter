@@ -11,6 +11,7 @@ from typing import Any
 
 from ..templates import load_prompt
 from ..utils.parsing import safe_json
+from ._common import OrderStrategy, validate_order_strategy
 from .base import AttributeTask
 
 
@@ -26,6 +27,10 @@ class RateConfig:
     rating_scale: str | None = None
     additional_instructions: str | None = None
     modality: str = "text"  # "text" or "entity"
+    order_strategy: OrderStrategy = "per_run"
+
+    def __post_init__(self) -> None:
+        validate_order_strategy(self.order_strategy)
 
 
 class Rate(AttributeTask):
@@ -52,9 +57,8 @@ class Rate(AttributeTask):
         if isinstance(obj, dict):
             for attr in attributes:
                 try:
-                    out[attr] = (
-                        float(obj.get(attr)) if obj.get(attr) is not None else None
-                    )
+                    val = obj.get(attr)
+                    out[attr] = float(val) if val is not None else None
                 except (TypeError, ValueError):
                     out[attr] = None
         else:

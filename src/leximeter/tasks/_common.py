@@ -5,17 +5,142 @@ Ported from GABRIEL's ``_run_utils`` / ``_attribute_utils``.
 
 from __future__ import annotations
 
+import functools
 import hashlib
+import itertools
 import json
+import math
 import os
-from collections.abc import Sequence
-from typing import Any, TypeVar
+import random
+from collections.abc import Callable, Sequence
+from typing import Any, Literal, TypeVar, cast
 
 import pandas as pd
 
 T = TypeVar("T")
 
 ATTRIBUTE_WARNING_THRESHOLD = 12
+
+OrderStrategy = Literal["per_run", "fixed", "per_item"]
+VALID_ORDER_STRATEGIES: frozenset[str] = frozenset({"per_run", "fixed", "per_item"})
+
+
+def validate_order_strategy(strategy: str) -> OrderStrategy:
+    """Validate an ``order_strategy`` setting and return it typed."""
+    if strategy not in VALID_ORDER_STRATEGIES:
+        raise ValueError(
+            "order_strategy must be one of "
+            f"{sorted(VALID_ORDER_STRATEGIES)}, got {strategy!r}"
+        )
+    return cast(OrderStrategy, strategy)
+
+
+_EXACT_POOL_MAX_LEN = 6
+
+
+@functools.lru_cache(maxsize=256)
+def _small_permutation_pool(batch_idx: int, n: int) -> tuple[tuple[int, ...], ...]:
+    """Return all ``n!`` index permutations in a deterministic order.
+
+    Index 0 is caller order ``(0, ..., n - 1)`` and index 1 is reversed order
+    ``(n - 1, ..., 0)``; the remaining ``n! - 2`` permutations are shuffled
+    deterministically from ``(batch_idx, n)``.
+    """
+    indices = tuple(range(n))
+    rev_indices = tuple(reversed(indices))
+    others = [
+        perm
+        for perm in itertools.permutations(indices)
+        if perm != indices and perm != rev_indices
+    ]
+    seed_bytes = hashlib.sha256(f"{batch_idx}:{n}".encode()).digest()[:8]
+    rng = random.Random(int.from_bytes(seed_bytes, "big"))
+    rng.shuffle(others)
+    return (indices, rev_indices, *others)
+
+
+def order_mapping(
+    mapping: dict[str, T],
+    *,
+    strategy: OrderStrategy = "per_run",
+    run_idx: int = 1,
+    batch_idx: int = 0,
+) -> dict[str, T]:
+    """Order a rubric/key dictionary according to ``strategy``.
+
+    - ``"fixed"``: preserve caller insertion order across all items and runs.
+    - ``"per_run"``: preserve caller order on ``run_idx == 1``, reverse on
+      ``run_idx == 2``, and yield strictly distinct deterministic permutations
+      across ``run_idx = 1..min(len(mapping)!, n_runs)`` seeded from
+      ``(batch_idx, len(mapping))`` (cycling cleanly modulo ``len(mapping)!``).
+    - ``"per_item"``: unseeded per-call shuffle (legacy GABRIEL compatibility).
+    """
+    validate_order_strategy(strategy)
+    items = list(mapping.items())
+    n = len(items)
+    if n <= 1 or strategy == "fixed":
+        return dict(items)
+    if strategy == "per_item":
+        random.shuffle(items)
+        return dict(items)
+    if run_idx <= 1:
+        return dict(items)
+    if n <= _EXACT_POOL_MAX_LEN:
+        pool = _small_permutation_pool(batch_idx, n)
+        perm = pool[(run_idx - 1) % len(pool)]
+        return dict(items[i] for i in perm)
+
+    effective_run = ((run_idx - 1) % math.factorial(n)) + 1 if n <= 12 else run_idx
+    if effective_run == 1:
+        return dict(items)
+    indices = tuple(range(n))
+    rev_indices = tuple(reversed(indices))
+    if effective_run == 2:
+        return dict(items[i] for i in rev_indices)
+
+    seed_bytes = hashlib.sha256(f"{batch_idx}:{n}".encode()).digest()[:8]
+    rng = random.Random(int.from_bytes(seed_bytes, "big"))
+    seen: set[tuple[int, ...]] = {indices, rev_indices}
+    perm = indices
+    for _ in range(3, effective_run + 1):
+        candidate = list(indices)
+        rng.shuffle(candidate)
+        perm = tuple(candidate)
+        while perm in seen:
+            rng.shuffle(candidate)
+            perm = tuple(candidate)
+        seen.add(perm)
+    return dict(items[i] for i in perm)
+
+
+def make_mapping_orderer(
+    mapping: dict[str, T],
+    *,
+    strategy: OrderStrategy = "per_run",
+    run_idx: int = 1,
+    batch_idx: int = 0,
+) -> Callable[[], dict[str, T]]:
+    """Return a zero-arg callable producing the ordered mapping for each call.
+
+    For ``"fixed"`` and ``"per_run"``, the ordered mapping is computed once and
+    reused across every call in the run so prompt prefixes stay identical.
+    For ``"per_item"``, each invocation returns a fresh random shuffle.
+    """
+    validate_order_strategy(strategy)
+    if strategy == "per_item":
+        return lambda: order_mapping(
+            mapping,
+            strategy="per_item",
+            run_idx=run_idx,
+            batch_idx=batch_idx,
+        )
+    ordered = order_mapping(
+        mapping,
+        strategy=strategy,
+        run_idx=run_idx,
+        batch_idx=batch_idx,
+    )
+    return lambda: ordered
 
 
 def hash_identifier(value: Any) -> str:

@@ -26,3 +26,8 @@ def shuffled_dict(d: dict[str, Any], seed: int | None = None) -> str:
     rnd = random.Random(seed) if seed is not None else random
     rnd.shuffle(items)
     return json.dumps(OrderedDict(items), ensure_ascii=False, indent=2)
+
+
+def ordered_dict_json(d: dict[str, Any]) -> str:
+    """Return a JSON-formatted dict string preserving insertion order."""
+    return json.dumps(OrderedDict(d.items()), ensure_ascii=False, indent=2)

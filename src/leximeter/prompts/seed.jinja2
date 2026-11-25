@@ -19,17 +19,6 @@ For example, if asked to generate novel areas for scientific research, each idea
 Mutual exclusivity and truly different approaches are key; each should chart its own unique path.
 If some topic is overrepresented in the existing entities, avoid that area and go somewhere completely new.
 
-{% if existing_entities %}
-The following are a sample of entities you have already generated.
-In addition to making each element of your generated entity list unique from one another, you must ensure they are unique from these too.
-Carefully read these existing entities to ensure your don't tread the same ground.
-BEGIN EXISTING ENTITIES
-{{ existing_entities }}
-END EXISTING ENTITIES
-Again: your new entities must not repeat what has already been done.
-Your set of entities is ALL of them (existing + new generations); consider the entire set as one.
-{% endif %}
-
 Output in the following JSON format:
 BEGIN OUTPUT FORMAT
 {
@@ -41,3 +30,14 @@ BEGIN OUTPUT FORMAT
 END OUTPUT FORMAT
 
 Ensure you output exactly {{ entities_per_generation }} unique entities.
+{% if existing_entities %}
+
+The following are a sample of entities you have already generated.
+In addition to making each element of your generated entity list unique from one another, you must ensure they are unique from these too.
+Carefully read these existing entities to ensure you don't tread the same ground.
+Again: your new entities must not repeat what has already been done.
+Your set of entities is ALL of them (existing + new generations); consider the entire set as one.
+BEGIN EXISTING ENTITIES
+{{ existing_entities }}
+END EXISTING ENTITIES
+{% endif %}

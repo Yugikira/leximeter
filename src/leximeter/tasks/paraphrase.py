@@ -90,7 +90,7 @@ class ParaphraseConfig:
     decision_model: str | None = None
     # When true, the model will be asked to output JSON only.
     json_mode: bool = False
-    # What kind of input is being paraphrased (text, image, audio, pdf, entity, web).
+    # What kind of input is being paraphrased ("text" or "entity").
     modality: str = "text"
     # Maximum number of parallel requests that will be sent to the
     # underlying API.  Note that classification and paraphrasing share

@@ -14,7 +14,7 @@ re-running completed stages.
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any
 
 import pandas as pd
 
@@ -23,11 +23,13 @@ from .client.decision import DecisionClient
 from .client.embedding import EmbeddingClient
 from .client.search import SearchTool
 from .engine.retry import run_task_with_retry
+from .tasks._common import OrderStrategy
 from .tasks.bucket import Bucket, BucketConfig
 from .tasks.classify import Classify, ClassifyConfig
 from .tasks.codify import Codify, CodifyConfig
 from .tasks.compare import Compare, CompareConfig
 from .tasks.debias import Debias, DebiasConfig, DebiasResult
+from .tasks.debias.task import MeasurementMode, RemovalMethod
 from .tasks.deduplicate import Deduplicate, DeduplicateConfig
 from .tasks.deidentify import Deidentify, DeidentifyConfig
 from .tasks.discover import Discover, DiscoverConfig
@@ -56,6 +58,7 @@ async def rate(
     rating_scale: str | None = None,
     additional_instructions: str | None = None,
     modality: str = "text",
+    order_strategy: OrderStrategy = "per_run",
     file_name: str = "ratings.csv",
     reset_files: bool = False,
     client: LLMClient | None = None,
@@ -78,6 +81,7 @@ async def rate(
         rating_scale=rating_scale,
         additional_instructions=additional_instructions,
         modality=modality,
+        order_strategy=order_strategy,
     )
     task = Rate(
         cfg,
@@ -107,6 +111,7 @@ async def classify(
     square_column_name: str | None = None,
     circle_first: bool | None = None,
     include_probabilities: bool = False,
+    order_strategy: OrderStrategy = "per_run",
     file_name: str = "classify_responses.csv",
     reset_files: bool = False,
     client: LLMClient | None = None,
@@ -137,6 +142,7 @@ async def classify(
         differentiate=differentiate,
         circle_first=circle_first,
         include_probabilities=include_probabilities,
+        order_strategy=order_strategy,
     )
     task = Classify(
         cfg,
@@ -168,6 +174,7 @@ async def extract(
     additional_instructions: str | None = None,
     modality: str = "entity",
     types: dict[str, Any] | None = None,
+    order_strategy: OrderStrategy = "per_run",
     file_name: str = "extraction.csv",
     reset_files: bool = False,
     client: LLMClient | None = None,
@@ -190,6 +197,7 @@ async def extract(
         additional_instructions=additional_instructions,
         modality=modality,
         types=types,
+        order_strategy=order_strategy,
     )
     task = Extract(
         cfg,
@@ -548,6 +556,7 @@ async def merge(
     use_best_auto_match: bool = False,
     candidate_scan_chunks: int = 5,
     verbose: bool = True,
+    order_strategy: OrderStrategy = "per_run",
     file_name: str = "merge_responses.csv",
     reset_files: bool = False,
     client: LLMClient | None = None,
@@ -584,6 +593,7 @@ async def merge(
         use_best_auto_match=use_best_auto_match,
         candidate_scan_chunks=candidate_scan_chunks,
         verbose=verbose,
+        order_strategy=order_strategy,
     )
     task = Merge(
         cfg,
@@ -715,6 +725,7 @@ async def codify(
     max_categories_per_call: int = 8,
     debug_print: bool = False,
     completion_classifier_instructions: str | None = None,
+    order_strategy: OrderStrategy = "per_run",
     reset_files: bool = False,
     client: LLMClient | None = None,
     embedding_client: EmbeddingClient | None = None,
@@ -745,6 +756,7 @@ async def codify(
         max_categories_per_call=max_categories_per_call,
         debug_print=debug_print,
         completion_classifier_instructions=completion_classifier_instructions,
+        order_strategy=order_strategy,
     )
     task = Codify(
         cfg,
@@ -779,6 +791,7 @@ async def rank(
     modality: str = "text",
     n_attributes_per_run: int | None = None,
     circle_first: bool | None = None,
+    order_strategy: OrderStrategy = "per_run",
     file_name: str = "rankings",
     reset_files: bool = False,
     client: LLMClient | None = None,
@@ -813,6 +826,7 @@ async def rank(
         modality=modality,
         n_attributes_per_run=n_attributes_per_run,
         circle_first=circle_first,
+        order_strategy=order_strategy,
     )
     task = Rank(
         cfg,
@@ -1023,12 +1037,12 @@ async def debias(
     column_name: str,
     *,
     save_dir: str = "debias",
-    mode: Literal["rate", "classify", "extract", "rank"] = "rate",
+    mode: MeasurementMode = "rate",
     measurement_attribute: str | None = None,
     removal_attribute: str | None = None,
     attributes: dict[str, str],
     signal_dictionary: dict[str, str],
-    removal_method: Literal["codify", "paraphrase"] = "codify",
+    removal_method: RemovalMethod = "codify",
     remaining_signal: bool = True,
     remaining_signal_attribute: str | None = None,
     remaining_signal_description: str | None = None,
