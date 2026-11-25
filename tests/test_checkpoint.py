@@ -915,6 +915,57 @@ def test_codify_signature_invalidation_purges_checkpoints(tmp_path):
     assert client.calls > calls_after_first
 
 
+def test_codify_order_strategy_change_invalidates_manifest(tmp_path):
+    from leximeter import codify
+
+    df = pd.DataFrame({"text": ["hello world"]})
+    client = CountingClient(
+        {"code1": [{"beginning excerpt": "hello world", "ending excerpt": ""}]}
+    )
+    save_dir = str(tmp_path / "c_order")
+    run(
+        codify(
+            df,
+            "text",
+            categories={"code1": "def1", "code2": "def2"},
+            save_dir=save_dir,
+            client=client,
+            n_rounds=1,
+            order_strategy="per_run",
+        )
+    )
+    calls_after_first = client.calls
+    assert calls_after_first > 0
+
+    # Same order_strategy -> cached manifest reused (zero calls)
+    run(
+        codify(
+            df,
+            "text",
+            categories={"code1": "def1", "code2": "def2"},
+            save_dir=save_dir,
+            client=client,
+            n_rounds=1,
+            order_strategy="per_run",
+        )
+    )
+    assert client.calls == calls_after_first
+
+    # Switching order_strategy -> invalidates codify_state.json and re-executes
+    run(
+        codify(
+            df,
+            "text",
+            categories={"code1": "def1", "code2": "def2"},
+            save_dir=save_dir,
+            client=client,
+            n_rounds=1,
+            order_strategy="fixed",
+        )
+    )
+    assert client.calls > calls_after_first
+
+
 def test_compare_short_circuit_zero_calls(tmp_path):
     from leximeter import compare
 

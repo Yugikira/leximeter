@@ -193,29 +193,15 @@ class AttributeTask(Task):
         for batch_idx, batch_items in enumerate(batches):
             batch_attrs = dict(batch_items)
             for run_idx in range(1, n_runs + 1):
-                run_attrs = (
-                    None
-                    if order_strategy == "per_item"
-                    else _common.order_mapping(
-                        batch_attrs,
-                        strategy=order_strategy,
-                        run_idx=run_idx,
-                        batch_idx=batch_idx,
-                    )
+                next_attrs = _common.make_mapping_orderer(
+                    batch_attrs,
+                    strategy=order_strategy,
+                    run_idx=run_idx,
+                    batch_idx=batch_idx,
                 )
                 for ident in base_ids:
-                    call_attrs = (
-                        _common.order_mapping(
-                            batch_attrs,
-                            strategy="per_item",
-                            run_idx=run_idx,
-                            batch_idx=batch_idx,
-                        )
-                        if run_attrs is None
-                        else run_attrs
-                    )
                     ids.append(f"{ident}_batch{batch_idx}_run{run_idx}")
-                    prompts.append(self.render_prompt(id_to_text[ident], call_attrs))
+                    prompts.append(self.render_prompt(id_to_text[ident], next_attrs()))
                     meta.append((ident, batch_idx, run_idx))
 
         # 5. execute through the provider-agnostic engine

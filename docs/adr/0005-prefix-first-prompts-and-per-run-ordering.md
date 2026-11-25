@@ -10,7 +10,7 @@ Leximeter's upstream `openai/GABRIEL` prompt templates placed dynamic item conte
 
 - **Keep upstream item-first prompts with per-item key shuffling**: Preserves byte-level upstream prompt fidelity, but forfeits `30–60%` automatic input/total cost savings on DeepSeek, OpenAI, Gemini, and vLLM/SGLang prefix caches.
 - **Prefix-first with `"fixed"` key order as the sole mode**: Maximizes cross-run hot-cache reuse (`86.7%` cache hit rate on repeat runs in DeepSeek testing), but our empirical A/B benchmark (`216` calls on `deepseek-flash`; see [kv-cache-experiment-results.md](../../research/kv-cache-experiment-results.md)) measured a small but statistically detectable `+0.92` MAE localized construct-anchoring shift on `rate` when reversing attribute order (`p = 0.029`), whereas layout drift alone was indistinguishable from baseline noise (`p = 0.235`, with zero degradation on `classify` and `codify`).
-- **Explicit `system` / `user` message splitting or vendor cache-control headers**: Couples prompts to protocol-specific message schemas and vendor cache directives (e.g., Anthropic `cache_control`), whereas a single prefix-first user prompt already unlocks automatic prefix caching across provider-neutral `LLMClient` implementations.
+- **Explicit `system` / `user` message splitting or provider cache-control headers**: Couples prompts to protocol-specific message schemas and provider cache directives (e.g., Anthropic `cache_control`), whereas a single prefix-first user prompt already unlocks automatic prefix caching across provider-neutral `LLMClient` implementations.
 
 ## Consequences
 

@@ -438,15 +438,11 @@ class Rank(Task):
                     if isinstance(self.cfg.attributes, dict)
                     else {a: "" for a in batch}
                 )
-                round_attrs = (
-                    None
-                    if order_strategy == "per_item"
-                    else _common.order_mapping(
-                        attr_def_map,
-                        strategy=order_strategy,
-                        run_idx=rnd + 1,
-                        batch_idx=batch_idx,
-                    )
+                next_attrs = _common.make_mapping_orderer(
+                    attr_def_map,
+                    strategy=order_strategy,
+                    run_idx=rnd + 1,
+                    batch_idx=batch_idx,
                 )
                 for pair_idx, (id_a, id_b) in enumerate(pairs_needed):
                     raw_ident = f"catchup|{rnd}|{batch_idx}|{pair_idx}|{id_a}|{id_b}"
@@ -456,21 +452,11 @@ class Rank(Task):
                         if self.cfg.circle_first is not None
                         else self.rng.random() < 0.5
                     )
-                    call_attrs = (
-                        _common.order_mapping(
-                            attr_def_map,
-                            strategy="per_item",
-                            run_idx=rnd + 1,
-                            batch_idx=batch_idx,
-                        )
-                        if round_attrs is None
-                        else round_attrs
-                    )
                     prompts.append(
                         self._template.render(
                             entry_circle=texts_by_id[id_a],
                             entry_square=texts_by_id[id_b],
-                            attributes=call_attrs,
+                            attributes=next_attrs(),
                             additional_instructions=self.cfg.additional_instructions
                             or "",
                             modality=self.cfg.modality,
@@ -869,15 +855,11 @@ class Rank(Task):
                     if isinstance(self.cfg.attributes, dict)
                     else {a: "" for a in batch}
                 )
-                round_attrs = (
-                    None
-                    if order_strategy == "per_item"
-                    else _common.order_mapping(
-                        attr_def_map,
-                        strategy=order_strategy,
-                        run_idx=rnd + 1,
-                        batch_idx=batch_idx,
-                    )
+                next_attrs = _common.make_mapping_orderer(
+                    attr_def_map,
+                    strategy=order_strategy,
+                    run_idx=rnd + 1,
+                    batch_idx=batch_idx,
                 )
                 for pair_idx, ((id_a, t_a), (id_b, t_b)) in enumerate(pairs):
                     raw_ident = f"{rnd}|{batch_idx}|{pair_idx}|{id_a}|{id_b}"
@@ -887,21 +869,11 @@ class Rank(Task):
                         if self.cfg.circle_first is not None
                         else self.rng.random() < 0.5
                     )
-                    call_attrs = (
-                        _common.order_mapping(
-                            attr_def_map,
-                            strategy="per_item",
-                            run_idx=rnd + 1,
-                            batch_idx=batch_idx,
-                        )
-                        if round_attrs is None
-                        else round_attrs
-                    )
                     prompts.append(
                         self._template.render(
                             entry_circle=t_a,
                             entry_square=t_b,
-                            attributes=call_attrs,
+                            attributes=next_attrs(),
                             additional_instructions=self.cfg.additional_instructions
                             or "",
                             modality=self.cfg.modality,

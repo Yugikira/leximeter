@@ -8,7 +8,6 @@ checkpointing (skip already-completed identifiers).
 from __future__ import annotations
 
 import asyncio
-import os
 import time
 from typing import Any
 
@@ -85,12 +84,6 @@ async def batch_execute(
     """
     if len(prompts) != len(identifiers):
         raise ValueError("prompts and identifiers must have the same length")
-
-    if save_path and reset_files and os.path.exists(save_path):
-        try:
-            os.remove(save_path)
-        except OSError:
-            pass
 
     checkpoint = (
         _checkpoint.load_checkpoint(save_path)

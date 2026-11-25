@@ -254,27 +254,14 @@ class Classify(Task):
         run_identifier_lists: list[list[str]] = [[] for _ in range(self.cfg.n_runs)]
         for batch_idx, batch_labels in enumerate(label_batches):
             for run_idx in range(1, self.cfg.n_runs + 1):
-                run_labels = (
-                    None
-                    if order_strategy == "per_item"
-                    else _common.order_mapping(
-                        batch_labels,
-                        strategy=order_strategy,
-                        run_idx=run_idx,
-                        batch_idx=batch_idx,
-                    )
+                next_labels = _common.make_mapping_orderer(
+                    batch_labels,
+                    strategy=order_strategy,
+                    run_idx=run_idx,
+                    batch_idx=batch_idx,
                 )
                 for ident in base_ids:
-                    call_labels = (
-                        _common.order_mapping(
-                            batch_labels,
-                            strategy="per_item",
-                            run_idx=run_idx,
-                            batch_idx=batch_idx,
-                        )
-                        if run_labels is None
-                        else run_labels
-                    )
+                    call_labels = next_labels()
                     ident_batch = f"{ident}_batch{batch_idx}"
                     if run_idx == 1:
                         legacy_ident = f"{ident_batch}_run1"

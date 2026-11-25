@@ -741,38 +741,24 @@ class Codify(Task):
                     }
                 )
         else:
-            # Batch-major grouping keeps all rows/chunks for a category batch consecutive
+            # Batch-major grouping keeps all items/chunks for a code batch consecutive
             for batch_idx, batch_keys in enumerate(category_batches):
                 assert categories is not None
                 batch_categories = {k: categories[k] for k in batch_keys}
-                iter_categories = (
-                    None
-                    if order_strategy == "per_item"
-                    else _common.order_mapping(
-                        batch_categories,
-                        strategy=order_strategy,
-                        run_idx=iteration + 1,
-                        batch_idx=batch_idx,
-                    )
+                next_categories = _common.make_mapping_orderer(
+                    batch_categories,
+                    strategy=order_strategy,
+                    run_idx=iteration + 1,
+                    batch_idx=batch_idx,
                 )
                 for row_idx, chunk_idx, chunk in chunked_rows:
-                    call_categories = (
-                        _common.order_mapping(
-                            batch_categories,
-                            strategy="per_item",
-                            run_idx=iteration + 1,
-                            batch_idx=batch_idx,
-                        )
-                        if iter_categories is None
-                        else iter_categories
-                    )
                     identifier = f"row{row_idx}_iter{iteration}_chunk{chunk_idx}_batch{batch_idx}"
                     pending_requests.append(
                         {
                             "identifier": identifier,
                             "chunk": chunk,
                             "row_index": row_idx,
-                            "batch_categories": call_categories,
+                            "batch_categories": next_categories(),
                         }
                     )
 
@@ -1028,9 +1014,10 @@ class Codify(Task):
 
         categories_dict = categories or {}
 
-        # Input signature covers the coded text plus the category set and
-        # chunking knobs.  A completed run with the same signature is
-        # reloaded from ``coded_passages.csv`` (zero provider calls).
+        # Input signature covers the coded text plus the category set,
+        # chunking knobs, and key ordering strategy.  A completed run with
+        # the same signature is reloaded from ``coded_passages.csv`` (zero
+        # provider calls).
         signature = _common.compute_input_signature(
             original_texts,
             categories_dict,
@@ -1040,6 +1027,7 @@ class Codify(Task):
             self.cfg.max_categories_per_call,
             self.cfg.modality,
             self.cfg.model,
+            self.cfg.order_strategy,
         )
         list_columns = (
             ["coded_passages"] if dynamic_mode else list(categories_dict.keys())

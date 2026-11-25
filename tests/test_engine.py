@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 import pandas as pd
 from conftest import DictClient
 
-from leximeter import seed
+from leximeter import poll, seed
 from leximeter.client.base import LLMClient
+from leximeter.engine import batch as batch_mod
+from leximeter.engine import checkpoint as checkpoint_mod
 from leximeter.engine.batch import batch_execute
 
 
@@ -46,6 +49,7 @@ class ConcurrencyProbeClient(LLMClient):
         *,
         require_wave1_concurrent: bool = False,
         fail_prompts: set[str] | None = None,
+        response_prefix: str = "ok",
     ) -> None:
         self.events: list[tuple[str, str]] = []
         self.in_flight = 0
@@ -55,6 +59,7 @@ class ConcurrencyProbeClient(LLMClient):
         self._require_wave1_concurrent = require_wave1_concurrent
         self._wave1_barrier = asyncio.Event()
         self._fail_prompts = set(fail_prompts or ())
+        self._response_prefix = response_prefix
 
     async def complete(self, prompt, *, model, json_mode=False, **kwargs) -> str:
         assert "warmup_first" not in kwargs
@@ -76,7 +81,7 @@ class ConcurrencyProbeClient(LLMClient):
                     await asyncio.sleep(0)
             if prompt in self._fail_prompts:
                 raise RuntimeError(f"boom:{prompt}")
-            return f"ok:{prompt}"
+            return f"{self._response_prefix}:{prompt}"
         finally:
             self.in_flight -= 1
             if not self._first_done:
@@ -246,12 +251,12 @@ def test_batch_execute_failed_warmup_records_failure_and_runs_rest():
 def test_batch_execute_warmup_respects_checkpoint_and_reset_files(tmp_path):
     save_path = str(tmp_path / "ckpt.csv")
 
-    # Seed checkpoint with id0 and id1 already completed
+    # Seed checkpoint with id0 and id1 already completed (v1)
     run(
         batch_execute(
             ["p0", "p1"],
             ["id0", "id1"],
-            client=ConcurrencyProbeClient(),
+            client=ConcurrencyProbeClient(response_prefix="v1"),
             model="test-model",
             save_path=save_path,
             warmup_first=False,
@@ -259,7 +264,7 @@ def test_batch_execute_warmup_respects_checkpoint_and_reset_files(tmp_path):
     )
 
     # Resume with 4 items and warmup_first=True: id0/id1 skipped, id2 warms up before id3
-    resume_client = ConcurrencyProbeClient()
+    resume_client = ConcurrencyProbeClient(response_prefix="v1")
     resumed = run(
         batch_execute(
             ["p0", "p1", "p2", "p3"],
@@ -279,8 +284,10 @@ def test_batch_execute_warmup_respects_checkpoint_and_reset_files(tmp_path):
     disk_df = pd.read_csv(save_path)
     assert list(disk_df["Identifier"]) == ["id0", "id1", "id2", "id3"]
 
-    # reset_files=True reruns all 4 items with id0 warming up, zero stale duplicates on disk
-    reset_client = ConcurrencyProbeClient()
+    # reset_files=True reruns all 4 items with id0 warming up, appending fresh rows
+    # (never deleting prior batches on disk) without duplicating the warmed-up row,
+    # and load_checkpoint(..., keep="last") cleanly supersedes prior responses.
+    reset_client = ConcurrencyProbeClient(response_prefix="v2")
     rerun = run(
         batch_execute(
             ["p0", "p1", "p2", "p3"],
@@ -296,6 +303,134 @@ def test_batch_execute_warmup_respects_checkpoint_and_reset_files(tmp_path):
     assert reset_client.events[1] == ("end", "p0")
     assert sorted(rerun["Identifier"]) == ["id0", "id1", "id2", "id3"]
     assert len(rerun) == 4
+    assert all(str(r).startswith("v2:") for r in rerun["Response"])
+
+    # Exactly 4 fresh rows appended (4 prior + 4 fresh = 8; no duplicate warmup row)
     disk_after_reset = pd.read_csv(save_path)
-    assert len(disk_after_reset) == 4
-    assert sorted(disk_after_reset["Identifier"]) == ["id0", "id1", "id2", "id3"]
+    assert len(disk_after_reset) == 8
+    assert dict(disk_after_reset["Identifier"].value_counts()) == {
+        "id0": 2,
+        "id1": 2,
+        "id2": 2,
+        "id3": 2,
+    }
+
+    # load_checkpoint supersedes old v1 rows with the fresh v2 rows
+    loaded = checkpoint_mod.load_checkpoint(save_path).set_index("Identifier")
+    assert len(loaded) == 4
+    for i in range(4):
+        assert loaded.loc[f"id{i}", "Response"] == f"v2:p{i}"
+
+    # Subsequent resume makes zero provider calls and returns the fresh v2 responses
+    noop_client = ConcurrencyProbeClient(response_prefix="v3")
+    after_resume = run(
+        batch_execute(
+            ["p0", "p1", "p2", "p3"],
+            ["id0", "id1", "id2", "id3"],
+            client=noop_client,
+            model="test-model",
+            save_path=save_path,
+            reset_files=False,
+            warmup_first=True,
+        )
+    )
+    assert noop_client.events == []
+    by_id = after_resume.set_index("Identifier")
+    for i in range(4):
+        assert by_id.loc[f"id{i}", "Response"] == f"v2:p{i}"
+
+
+def test_batch_execute_warmup_incremental_and_final_flush_non_duplicating(
+    tmp_path, monkeypatch
+):
+    """Warmup + incremental flush + final flush writes every row strictly once."""
+    monkeypatch.setattr(batch_mod, "_SAVE_EVERY", 2)
+    save_path = str(tmp_path / "flush.csv")
+    prompts = [f"p{i}" for i in range(5)]
+    ids = [f"id{i}" for i in range(5)]
+
+    client = ConcurrencyProbeClient()
+    df = run(
+        batch_execute(
+            prompts,
+            ids,
+            client=client,
+            model="test-model",
+            n_parallels=4,
+            save_path=save_path,
+            warmup_first=True,
+        )
+    )
+    assert len(df) == 5
+    disk_df = pd.read_csv(save_path)
+    assert len(disk_df) == 5
+    assert sorted(disk_df["Identifier"]) == ids
+
+
+def test_poll_reset_files_preserves_all_question_batches_in_answers_raw(tmp_path):
+    """Multi-batch Poll with reset_files=True must keep all batches in answers_raw.csv."""
+
+    class MultiBatchPollClient(LLMClient):
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def complete(self, prompt, *, model, json_mode=False, **kwargs) -> str:
+            self.calls += 1
+            if "BEGIN SURVEY QUESTIONS" in prompt:
+                payload = {}
+                for q in ("q1", "q2", "q3", "q4"):
+                    if f"- {q}" in prompt:
+                        payload[q] = [[f"ans_{q}", 1.0]]
+                return json.dumps(payload)
+            return "Synthetic persona bio."
+
+        def estimate_tokens(self, prompt, *, model) -> int:
+            return 0
+
+        def estimate_cost(self, prompt, *, model) -> float:
+            return 0.0
+
+    save_dir = tmp_path / "poll_multi"
+    df = pd.DataFrame({"seed": ["Alice", "Bob"]})
+    questions = ["q1", "q2", "q3", "q4"]
+
+    client = MultiBatchPollClient()
+    res = run(
+        poll(
+            df,
+            "seed",
+            questions=questions,
+            n_questions_per_run=2,
+            save_dir=str(save_dir),
+            client=client,
+            reset_files=True,
+        )
+    )
+    assert list(res.columns) == ["seed", "persona", "q1", "q2", "q3", "q4"]
+    for q in questions:
+        assert list(res[q]) == [f"ans_{q}", f"ans_{q}"]
+
+    answers_path = save_dir / "answers_raw.csv"
+    answers_df = pd.read_csv(answers_path)
+    # 2 seeds x 2 question batches = 4 distinct answer identifiers preserved on disk
+    assert len(answers_df) == 4
+    assert answers_df["Identifier"].nunique() == 4
+
+    # Simulate resuming after interruption before poll_state.json was written:
+    # all 4 cached answers across both question batches must be reused (0 calls).
+    (save_dir / "poll_state.json").unlink()
+    resume_client = MultiBatchPollClient()
+    resumed = run(
+        poll(
+            df,
+            "seed",
+            questions=questions,
+            n_questions_per_run=2,
+            save_dir=str(save_dir),
+            client=resume_client,
+            reset_files=False,
+        )
+    )
+    assert resume_client.calls == 0
+    for q in questions:
+        assert list(resumed[q]) == [f"ans_{q}", f"ans_{q}"]

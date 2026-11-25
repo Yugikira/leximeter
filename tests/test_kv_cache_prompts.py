@@ -30,10 +30,12 @@ from leximeter import (
     poll,
     rank,
     rate,
+    seed,
 )
 from leximeter import (
     filter as lex_filter,
 )
+from leximeter.tasks._common import order_mapping
 from leximeter.tasks.classify import Classify, ClassifyConfig
 
 
@@ -1374,3 +1376,133 @@ def test_filter_prefix_first_across_entity_chunks(tmp_path):
     assert "BEGIN ADDITIONAL INSTRUCTIONS/CLARIFICATIONS" in shared
     assert "ENT_1" not in shared
     assert "ENT_6" not in shared
+
+
+def test_order_mapping_per_run_distinct_permutations(tmp_path):
+    # len(keys) == 3 -> all 3! = 6 permutations strictly distinct across run_idx 1..6
+    m3 = {"a": 1, "b": 2, "c": 3}
+    orders3 = [
+        tuple(order_mapping(m3, strategy="per_run", run_idx=r, batch_idx=0).keys())
+        for r in range(1, 7)
+    ]
+    assert len(set(orders3)) == 6
+    assert orders3[0] == ("a", "b", "c")
+    assert orders3[1] == ("c", "b", "a")
+    # Deterministic across repeats and wraps cleanly after k!
+    assert (
+        tuple(order_mapping(m3, strategy="per_run", run_idx=7, batch_idx=0).keys())
+        == orders3[0]
+    )
+    assert [
+        tuple(order_mapping(m3, strategy="per_run", run_idx=r, batch_idx=0).keys())
+        for r in range(1, 7)
+    ] == orders3
+
+    # len(keys) == 4 -> 10 strictly distinct orders across run_idx 1..10 (and all 24 across 1..24)
+    m4 = {f"k{i}": i for i in range(4)}
+    orders4_10 = [
+        tuple(order_mapping(m4, strategy="per_run", run_idx=r, batch_idx=0).keys())
+        for r in range(1, 11)
+    ]
+    assert len(set(orders4_10)) == 10
+    assert orders4_10[0] == ("k0", "k1", "k2", "k3")
+    assert orders4_10[1] == ("k3", "k2", "k1", "k0")
+    orders4_all = [
+        tuple(order_mapping(m4, strategy="per_run", run_idx=r, batch_idx=0).keys())
+        for r in range(1, 25)
+    ]
+    assert len(set(orders4_all)) == 24
+
+    # len(keys) > 6 (7 keys) -> 10 strictly distinct deterministic orders
+    m7 = {f"k{i}": i for i in range(7)}
+    orders7 = [
+        tuple(order_mapping(m7, strategy="per_run", run_idx=r, batch_idx=2).keys())
+        for r in range(1, 11)
+    ]
+    assert len(set(orders7)) == 10
+    assert orders7[0] == tuple(m7.keys())
+    assert orders7[1] == tuple(reversed(m7.keys()))
+    assert [
+        tuple(order_mapping(m7, strategy="per_run", run_idx=r, batch_idx=2).keys())
+        for r in range(1, 11)
+    ] == orders7
+
+    # End-to-end: rank with 3 attributes and default n_rounds=5 gets 5 distinct orders
+    df = pd.DataFrame({"speech": ["SPEECH_A", "SPEECH_B", "SPEECH_C", "SPEECH_D"]})
+    attrs3 = {"clarity": "d1", "depth": "d2", "novelty": "d3"}
+    client = RecordingClient({k: "circle" for k in attrs3})
+    run(
+        rank(
+            df,
+            "speech",
+            attributes=attrs3,
+            save_dir=str(tmp_path / "rank_3attrs_5rounds"),
+            client=client,
+            n_rounds=5,
+            matches_per_round=1,
+            n_parallels=1,
+        )
+    )
+    seen_round_orders: list[tuple[str, ...]] = []
+    for p in client.prompts:
+        tup = tuple(_extract_json_block_keys(p, "BEGIN ATTRIBUTES", "END ATTRIBUTES"))
+        if not seen_round_orders or seen_round_orders[-1] != tup:
+            seen_round_orders.append(tup)
+    assert len(seen_round_orders) == 5
+    assert len(set(seen_round_orders)) == 5
+
+
+def test_seed_prefix_first_across_generation_batches(tmp_path):
+    class BatchSeedClient(RecordingClient):
+        def __init__(self) -> None:
+            super().__init__({})
+            self._batch = 0
+
+        async def complete(self, prompt, *, model, json_mode=False, **kwargs) -> str:
+            self.prompts.append(prompt)
+            b = self._batch
+            self._batch += 1
+            return json.dumps(
+                {
+                    "entity 1": f"ENTITY_B{b}_ONE",
+                    "entity 2": f"ENTITY_B{b}_TWO",
+                }
+            )
+
+    client = BatchSeedClient()
+    res = run(
+        seed(
+            "Representative US small-business owners",
+            save_dir=str(tmp_path / "seed_prefix"),
+            client=client,
+            num_entities=6,
+            entities_per_generation=2,
+        )
+    )
+    assert len(res) == 6
+    assert len(client.prompts) == 3
+
+    # Batch 0 (no existing entities) carries static instructions + output format + count rule
+    batch0 = client.prompts[0]
+    assert "BEGIN ENTITY INSTRUCTIONS" in batch0
+    assert "BEGIN OUTPUT FORMAT" in batch0
+    assert "Ensure you output exactly 2 unique entities." in batch0
+    assert "BEGIN EXISTING ENTITIES" not in batch0
+
+    # Batches 1 and 2 begin with batch 0's exact static prefix, share an identical prefix
+    # right up to BEGIN EXISTING ENTITIES, and place dynamic existing entities at the suffix.
+    later_prompts = client.prompts[1:]
+    for p in later_prompts:
+        assert p.startswith(batch0)
+        assert p.index("BEGIN OUTPUT FORMAT") < p.index("BEGIN EXISTING ENTITIES")
+        assert p.rstrip().endswith("END EXISTING ENTITIES")
+
+    later_prefixes = [
+        _prefix_before(p, "BEGIN EXISTING ENTITIES") for p in later_prompts
+    ]
+    assert len(set(later_prefixes)) == 1
+    shared_later = later_prefixes[0]
+    assert "BEGIN ENTITY INSTRUCTIONS" in shared_later
+    assert "BEGIN OUTPUT FORMAT" in shared_later
+    assert "ENTITY_B0_ONE" not in shared_later
+    assert "ENTITY_B1_ONE" not in shared_later
