@@ -597,3 +597,150 @@ def test_classify_end_to_end_with_systemone_mock_transport_and_non_ascii_labels(
     assert res[f"{k1}_prob"].iloc[0] == pytest.approx(0.91)
     assert res[f"{k2}_prob"].iloc[0] == pytest.approx(0.12)
     assert res["predicted_classes"].iloc[0] == [k1]
+
+
+def test_classify_differentiate_square_primary_label_polarity(tmp_path) -> None:
+    """Square-primary directional pairs bind 'square' -> actual and 'circle' -> inverted."""
+    actual_key = "square entries emphasize cost more than circle entries_actual"
+    inverted_key = "circle entries emphasize cost more than square entries_inverted"
+    labels = {
+        actual_key: "Square emphasizes cost more than Circle",
+        inverted_key: "Circle emphasizes cost more than Square",
+    }
+    df = pd.DataFrame(
+        {
+            "c": ["focus on quality", "focus on price and budget"],
+            "s": ["focus on price and budget", "focus on quality"],
+        }
+    )
+
+    seen_questions: list[ChoiceQuestion] = []
+
+    def handler(state: Any, key: str, question: Any) -> dict[str, float]:
+        assert isinstance(question, ChoiceQuestion)
+        seen_questions.append(question)
+        assert set(question.criteria.keys()) == {"circle", "square", "neither"}
+        assert question.criteria["square"] == "Square emphasizes cost more than Circle"
+        assert question.criteria["circle"] == "Circle emphasizes cost more than Square"
+        assert "feature" not in str(question.instructions).lower()
+        assert "feature" not in str(question.criteria["neither"]).lower()
+        # Evaluate faithfully against the state: whichever side mentions "price" wins
+        if "price" in state["square"]:
+            return {"circle": 0.05, "square": 0.90, "neither": 0.05}
+        return {"circle": 0.85, "square": 0.05, "neither": 0.10}
+
+    dc = CountingDecisionClient(handler=handler)
+    res = run(
+        classify(
+            df,
+            labels=labels,
+            save_dir=str(tmp_path / "cls_sq_primary"),
+            differentiate=True,
+            circle_column_name="c",
+            square_column_name="s",
+            include_probabilities=True,
+            decision_client=dc,
+        )
+    )
+
+    # Collapsed into 1 ChoiceQuestion per row (2 calls total, not 4)
+    assert dc.calls == 2
+    assert len(seen_questions) == 2
+    # Row 0: Square genuinely emphasizes cost more than Circle -> actual=True, inverted=False
+    assert bool(res[actual_key].iloc[0]) is True
+    assert bool(res[inverted_key].iloc[0]) is False
+    assert res[f"{actual_key}_prob"].iloc[0] == pytest.approx(0.90)
+    assert res[f"{inverted_key}_prob"].iloc[0] == pytest.approx(0.05)
+    # Row 1: Circle genuinely emphasizes cost more than Square -> actual=False, inverted=True
+    assert bool(res[actual_key].iloc[1]) is False
+    assert bool(res[inverted_key].iloc[1]) is True
+    assert res[f"{actual_key}_prob"].iloc[1] == pytest.approx(0.05)
+    assert res[f"{inverted_key}_prob"].iloc[1] == pytest.approx(0.85)
+
+
+def test_classify_resume_rechunks_when_provider_cap_shrinks(tmp_path) -> None:
+    """Resuming with a smaller max_questions_per_call re-chunks instead of violating the cap."""
+    # 1. Single-column (noul) mode
+    labels = {"a": "desc a", "b": "desc b", "c": "desc c"}
+    save_single = str(tmp_path / "resume_cap_single")
+    c_large = CountingDecisionClient(
+        {"a": 0.9, "b": 0.2, "c": 0.8}, max_questions_per_call=64
+    )
+    run(
+        classify(
+            pd.DataFrame({"text": ["item_1"]}),
+            "text",
+            labels=labels,
+            save_dir=save_single,
+            decision_client=c_large,
+        )
+    )
+    assert c_large.calls == 1
+    assert len(c_large.requests[0][1]) == 3
+
+    c_small = CountingDecisionClient(
+        {"a": 0.9, "b": 0.2, "c": 0.8}, max_questions_per_call=2
+    )
+    res_single = run(
+        classify(
+            pd.DataFrame({"text": ["item_1", "item_2"]}),
+            "text",
+            labels=labels,
+            save_dir=save_single,
+            reset_files=False,
+            decision_client=c_small,
+        )
+    )
+    assert c_small.calls > 0
+    assert all(len(qs) <= 2 for _, qs, _ in c_small.requests)
+    assert list(res_single["a"]) == [True, True]
+    assert list(res_single["b"]) == [False, False]
+    assert list(res_single["c"]) == [True, True]
+
+    # 2. Differentiate (choice) mode
+    pair_labels = {
+        "p1_actual": "Circle has p1",
+        "p1_inverted": "Square has p1",
+        "p2_actual": "Circle has p2",
+        "p2_inverted": "Square has p2",
+        "p3_actual": "Circle has p3",
+        "p3_inverted": "Square has p3",
+    }
+    save_diff = str(tmp_path / "resume_cap_diff")
+    cd_large = CountingDecisionClient(
+        {"p1": "circle", "p2": "square", "p3": "circle"}, max_questions_per_call=64
+    )
+    run(
+        classify(
+            pd.DataFrame({"c": ["c1"], "s": ["s1"]}),
+            labels=pair_labels,
+            save_dir=save_diff,
+            differentiate=True,
+            circle_column_name="c",
+            square_column_name="s",
+            decision_client=cd_large,
+        )
+    )
+    assert cd_large.calls == 1
+    assert len(cd_large.requests[0][1]) == 3
+
+    cd_small = CountingDecisionClient(
+        {"p1": "circle", "p2": "square", "p3": "circle"}, max_questions_per_call=2
+    )
+    res_diff = run(
+        classify(
+            pd.DataFrame({"c": ["c1", "c2"], "s": ["s1", "s2"]}),
+            labels=pair_labels,
+            save_dir=save_diff,
+            differentiate=True,
+            circle_column_name="c",
+            square_column_name="s",
+            reset_files=False,
+            decision_client=cd_small,
+        )
+    )
+    assert cd_small.calls > 0
+    assert all(len(qs) <= 2 for _, qs, _ in cd_small.requests)
+    assert list(res_diff["p1_actual"]) == [True, True]
+    assert list(res_diff["p2_inverted"]) == [True, True]
+    assert list(res_diff["p3_actual"]) == [True, True]

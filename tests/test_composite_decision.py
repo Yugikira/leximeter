@@ -21,11 +21,20 @@ import json
 from typing import Any
 
 import pandas as pd
+import pytest
 from conftest import CountingDecisionClient
 from test_tasks import DebiasClient, StageClient
 
 from leximeter import codify, debias, discover, paraphrase
-from leximeter.client import ChoiceQuestion, LLMClient, NoulAnswer, NoulQuestion
+from leximeter.client import (
+    ChoiceAnswer,
+    ChoiceQuestion,
+    DecisionClient,
+    DecisionResult,
+    LLMClient,
+    NoulAnswer,
+    NoulQuestion,
+)
 
 
 def run(coro: Any) -> Any:
@@ -1468,3 +1477,248 @@ def test_debias_without_decision_client_falls_back_to_llm_unchanged(
     assert llm_rank.calls > 0
     assert "brand" in res_rank.results.columns
     assert "brand (stripped)" in res_rank.results.columns
+
+
+def test_discover_pair_square_primary_label_yields_positive_net_pct(tmp_path) -> None:
+    """Square-primary bucket label in paired discover yields actual=True and net_pct > 0."""
+    label = "square entries emphasize cost more than circle entries"
+    df = pd.DataFrame(
+        {
+            "circle": ["focus on design quality", "focus on craftsmanship"],
+            "square": ["focus on low price and cost", "focus on budget savings"],
+        }
+    )
+    llm = RecordingStageClient(
+        {
+            "compare": {label: "Square emphasizes cost more than Circle"},
+            "bucket": {label: "Square emphasizes cost more than Circle"},
+            "classify": {},
+            "codify": {},
+        }
+    )
+
+    def decide_cost(state: Any, key: str, question: Any) -> dict[str, float]:
+        assert isinstance(question, ChoiceQuestion)
+        assert question.criteria["square"] == "Square emphasizes cost more than Circle"
+        assert question.criteria["circle"] == "circle emphasizes cost more than square"
+        # Square genuinely emphasizes cost more than Circle in both rows
+        return {"circle": 0.05, "square": 0.90, "neither": 0.05}
+
+    dc = CountingDecisionClient(handler=decide_cost)
+    res = run(
+        discover(
+            df,
+            circle_column_name="circle",
+            square_column_name="square",
+            save_dir=str(tmp_path / "disc_sq_primary"),
+            model="gen-model",
+            decision_model="dec-model",
+            bucket_count=1,
+            client=llm,
+            decision_client=dc,
+        )
+    )
+
+    clf_df = res["classification"]
+    assert list(clf_df[f"{label}_actual"]) == [True, True]
+    assert list(clf_df[f"{label}_inverted"]) == [False, False]
+    summary = res["summary"]
+    assert summary["label"].iloc[0] == label
+    assert summary["actual_pct"].iloc[0] == 100.0
+    assert summary["inverted_pct"].iloc[0] == 0.0
+    assert summary["net_pct"].iloc[0] == 100.0
+
+
+def test_discover_mid_stage_classify_crash_resumes_with_zero_duplicate_calls(
+    tmp_path, monkeypatch
+) -> None:
+    """Mid-stage crash in discover Stage 3 classify preserves checkpointed items on resume."""
+    import leximeter.engine.batch as batch_mod
+
+    monkeypatch.setattr(batch_mod, "_SAVE_EVERY", 1)
+
+    class _SimulatedCrash(BaseException):
+        pass
+
+    class CrashOnSecondRowClient(DecisionClient):
+        def __init__(self) -> None:
+            self.seen_circles: list[str] = []
+            self.should_crash = True
+
+        async def decide(self, state, questions, *, model, **kwargs):
+            circle_text = state["circle"]
+            self.seen_circles.append(circle_text)
+            if self.should_crash and circle_text == "rainy":
+                raise _SimulatedCrash("simulated mid-stage process crash")
+            qkey = next(iter(questions))
+            return DecisionResult(
+                answers={
+                    qkey: ChoiceAnswer(
+                        choice="circle",
+                        probabilities={"circle": 0.9, "square": 0.05, "neither": 0.05},
+                        confidence=0.9,
+                    )
+                },
+                model=model,
+            )
+
+    df = _discover_pair_df()
+    save_dir = str(tmp_path / "disc_mid_crash")
+    llm = RecordingStageClient(_discover_pair_payloads())
+    dc = CrashOnSecondRowClient()
+
+    with pytest.raises(_SimulatedCrash):
+        run(
+            discover(
+                df,
+                circle_column_name="circle",
+                square_column_name="square",
+                save_dir=save_dir,
+                model="gen-model",
+                decision_model="dec-model",
+                bucket_count=1,
+                n_parallels=1,
+                client=llm,
+                decision_client=dc,
+            )
+        )
+
+    assert dc.seen_circles == ["sunny", "rainy"]
+    meta_path = (
+        tmp_path
+        / "disc_mid_crash"
+        / "classify"
+        / "classify_responses_run_metadata.json"
+    )
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    assert meta["decision_provider"] is True
+    assert meta["model"] == "dec-model"
+
+    llm_after_crash = llm.calls
+    dc.should_crash = False
+    dc.seen_circles.clear()
+
+    resumed = run(
+        discover(
+            df,
+            circle_column_name="circle",
+            square_column_name="square",
+            save_dir=save_dir,
+            model="gen-model",
+            decision_model="dec-model",
+            bucket_count=1,
+            n_parallels=1,
+            reset_files=False,
+            client=llm,
+            decision_client=dc,
+        )
+    )
+
+    assert llm.calls == llm_after_crash  # Stages 1 & 2 reused from checkpoints
+    assert dc.seen_circles == ["rainy"]  # "sunny" reused with ZERO duplicate calls
+    assert resumed["summary"]["net_pct"].iloc[0] == 100.0
+
+
+def test_debias_mid_stage_rank_crash_resumes_with_zero_duplicate_calls(
+    tmp_path,
+) -> None:
+    """Mid-stage crash in debias(mode='rank') preserves Round 0 checkpoint on resume."""
+
+    class _SimulatedCrash(BaseException):
+        pass
+
+    save_dir = tmp_path / "db_rank_mid_crash"
+    round0_csv = save_dir / "debias_brand" / "original" / "rankings_round0.csv"
+    round1_csv = save_dir / "debias_brand" / "original" / "rankings_round1.csv"
+
+    class CrashOnRound1Client(DecisionClient):
+        def __init__(self) -> None:
+            self.should_crash = True
+            self.orig_calls = 0
+
+        async def decide(self, state, questions, *, model, **kwargs):
+            if "CEO" in state["circle"]:
+                if self.should_crash and round0_csv.exists():
+                    raise _SimulatedCrash("simulated crash at start of Round 1")
+                self.orig_calls += 1
+            qkey = next(iter(questions))
+            return DecisionResult(
+                answers={
+                    qkey: ChoiceAnswer(
+                        choice="circle",
+                        probabilities={
+                            "circle": 0.9,
+                            "square": 0.05,
+                            "draw": 0.025,
+                            "insufficient_signal": 0.025,
+                        },
+                        confidence=0.9,
+                    )
+                },
+                model=model,
+            )
+
+    df = _debias_df()
+    llm = RecordingDebiasClient()
+    dc = CrashOnRound1Client()
+
+    with pytest.raises(_SimulatedCrash):
+        run(
+            debias(
+                df,
+                "text",
+                save_dir=str(save_dir),
+                mode="rank",
+                attributes={"brand": "overall brand strength"},
+                signal_dictionary={"ceo": "mentions of the chief executive"},
+                removal_method="codify",
+                remaining_signal=False,
+                measurement_kwargs={"n_rounds": 2, "matches_per_round": 2},
+                removal_kwargs={"n_rounds": 1},
+                model="gen-model",
+                decision_model="dec-rank-model",
+                client=llm,
+                decision_client=dc,
+                verbose=False,
+            )
+        )
+
+    assert round0_csv.exists()
+    meta = json.loads(
+        (
+            save_dir / "debias_brand" / "original" / "rankings_run_metadata.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert meta["decision_provider"] is True
+    assert meta["model"] == "dec-rank-model"
+
+    dc.should_crash = False
+    dc.orig_calls = 0
+
+    res = run(
+        debias(
+            df,
+            "text",
+            save_dir=str(save_dir),
+            mode="rank",
+            attributes={"brand": "overall brand strength"},
+            signal_dictionary={"ceo": "mentions of the chief executive"},
+            removal_method="codify",
+            remaining_signal=False,
+            measurement_kwargs={"n_rounds": 2, "matches_per_round": 2},
+            removal_kwargs={"n_rounds": 1},
+            model="gen-model",
+            decision_model="dec-rank-model",
+            reset_files=False,
+            client=llm,
+            decision_client=dc,
+            verbose=False,
+        )
+    )
+
+    assert round1_csv.exists()
+    r1_rows = len(pd.read_csv(round1_csv))
+    # Only Round 1 executed for original rank; Round 0 replayed with ZERO duplicate calls!
+    assert dc.orig_calls == r1_rows
+    assert "brand" in res.results.columns
+    assert "brand (stripped)" in res.results.columns

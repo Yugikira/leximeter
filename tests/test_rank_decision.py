@@ -841,3 +841,48 @@ def test_rank_end_to_end_with_systemone_mock_transport_non_ascii_and_refusal(
     assert (res[f"{k1}_se"] > 0).all()
     assert (res[k2] == 0.0).all()
     assert res[f"{k2}_se"].isna().all()
+
+
+def test_rank_resume_rechunks_when_provider_cap_shrinks(tmp_path) -> None:
+    """Resuming rank with a smaller max_questions_per_call re-chunks instead of violating cap."""
+    df = pd.DataFrame({"speech": ["low", "mid", "high"]})
+    attributes = {"a": "desc a", "b": "desc b", "c": "desc c"}
+    save_dir = str(tmp_path / "rank_resume_cap")
+
+    c_large = CountingDecisionClient(
+        {"a": "circle", "b": "square", "c": "draw"}, max_questions_per_call=64
+    )
+    run(
+        rank(
+            df,
+            "speech",
+            attributes=attributes,
+            save_dir=save_dir,
+            n_rounds=1,
+            matches_per_round=2,
+            decision_client=c_large,
+        )
+    )
+    assert c_large.calls > 0
+    assert all(len(qs) == 3 for _, qs, _ in c_large.requests)
+
+    c_small = CountingDecisionClient(
+        {"a": "circle", "b": "square", "c": "draw"}, max_questions_per_call=2
+    )
+    res = run(
+        rank(
+            df,
+            "speech",
+            attributes=attributes,
+            save_dir=save_dir,
+            n_rounds=2,
+            matches_per_round=2,
+            reset_files=False,
+            decision_client=c_small,
+        )
+    )
+    assert c_small.calls > 0
+    assert all(len(qs) <= 2 for _, qs, _ in c_small.requests)
+    assert {len(qs) for _, qs, _ in c_small.requests} == {1, 2}
+    for attr in ("a", "b", "c"):
+        assert res[f"{attr}_se"].notna().all()

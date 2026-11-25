@@ -439,11 +439,6 @@ class Discover(Task):
                 reset_files=classify_reset,
                 **kwargs,
             )
-            _common.update_run_metadata(
-                classify_dir,
-                "classify_responses",
-                decision_provider=decision_client is not None,
-            )
 
             actual_combined_labels = dict(clf.cfg.labels)
             if set(actual_combined_labels.keys()) != set(combined_labels.keys()):
@@ -545,11 +540,6 @@ class Discover(Task):
                 column_name,  # type: ignore[arg-type]
                 reset_files=classify_reset,
                 **kwargs,
-            )
-            _common.update_run_metadata(
-                classify_dir,
-                "classify_responses",
-                decision_provider=decision_client is not None,
             )
             actual_labels = dict(clf.cfg.labels)
             if actual_labels != labels:

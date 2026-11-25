@@ -501,3 +501,74 @@ def test_batch_decide_retries_honoring_retry_after_and_fails_fast_on_400(
     assert len(flaky.timestamps["retry_me"]) == 2
     assert flaky.timestamps["retry_me"][1] - flaky.timestamps["retry_me"][0] >= 0.04
     assert len(flaky.timestamps["bad_req"]) == 1  # failed fast, no wasted retries
+
+
+def test_batch_decide_with_systemone_no_nested_retry_amplification(tmp_path) -> None:
+    """SystemOneClient x batch_decide executes a single retry layer (never N x M)."""
+    from leximeter.engine import batch_decide
+
+    q = {"ok": NoulQuestion(instructions="ok?")}
+
+    # 1. Default SystemOneClient() has max_retries=0; batch_decide(max_retries=2) -> 3 HTTP calls
+    default_calls = 0
+
+    def always_429_default(request: httpx.Request) -> httpx.Response:
+        nonlocal default_calls
+        default_calls += 1
+        return httpx.Response(
+            429, headers={"Retry-After": "0"}, json={"error": "rate_limited"}
+        )
+
+    client_default = SystemOneClient(
+        base_url="https://api.typesafe.ai",
+        api_key="test-key",
+        transport=httpx.MockTransport(always_429_default),
+    )
+    assert client_default._max_retries == 0
+
+    df_default = run(
+        batch_decide(
+            states=["sample"],
+            question_sets=[q],
+            identifiers=["id_1"],
+            client=client_default,
+            model="jev-latest",
+            max_retries=2,
+            save_path=str(tmp_path / "single_layer_default.csv"),
+        )
+    )
+    assert default_calls == 3  # 1 initial + 2 retries (never 9 or 12)
+    assert bool(df_default["Successful"].iloc[0]) is False
+
+    # 2. Explicit SystemOneClient(max_retries=2) inside batch_decide(max_retries=3) -> still 3 HTTP calls
+    explicit_calls = 0
+
+    def always_503_explicit(request: httpx.Request) -> httpx.Response:
+        nonlocal explicit_calls
+        explicit_calls += 1
+        return httpx.Response(
+            503, headers={"Retry-After": "0"}, json={"error": "unavailable"}
+        )
+
+    client_explicit = SystemOneClient(
+        base_url="https://api.typesafe.ai",
+        api_key="test-key",
+        max_retries=2,
+        backoff_base=0.0,
+        transport=httpx.MockTransport(always_503_explicit),
+    )
+    df_explicit = run(
+        batch_decide(
+            states=["sample"],
+            question_sets=[q],
+            identifiers=["id_1"],
+            client=client_explicit,
+            model="jev-latest",
+            max_retries=3,
+            save_path=str(tmp_path / "single_layer_explicit.csv"),
+        )
+    )
+    assert (
+        explicit_calls == 3
+    )  # client layer handles retries; batch_decide does not stack
+    assert bool(df_explicit["Successful"].iloc[0]) is False

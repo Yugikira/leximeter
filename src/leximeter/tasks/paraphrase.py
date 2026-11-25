@@ -492,11 +492,6 @@ class Paraphrase(Task):
                     column_name="text",
                     reset_files=validation_reset if round_number == 0 else reset_files,
                 )
-                _common.update_run_metadata(
-                    validation_dir,
-                    "classify_responses",
-                    decision_provider=decision_client is not None,
-                )
             else:
                 cand_res_df = pd.DataFrame()
 

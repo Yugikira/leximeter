@@ -607,11 +607,6 @@ class Debias(Task):
                 column_name,
                 reset_files=reset_files_local,
             )
-            _common.update_run_metadata(
-                save_dir,
-                base_name,
-                decision_provider=decision_client is not None,
-            )
         elif mode == "extract":
             kwargs.pop("decision_model", None)
             kwargs.pop("decision_client", None)
@@ -665,11 +660,6 @@ class Debias(Task):
                 df_reset,
                 column_name,
                 reset_files=reset_files_local,
-            )
-            _common.update_run_metadata(
-                save_dir,
-                base_name,
-                decision_provider=decision_client is not None,
             )
         else:  # pragma: no cover - defensive
             raise ValueError(f"Unsupported mode: {mode}")
@@ -742,13 +732,7 @@ class Debias(Task):
                 "[Debias] Measuring remaining-signal prevalence on "
                 f"variant '{info['display']}'."
             )
-        rate_allowed = {f.name for f in fields(RateConfig)} | {
-            "reset_files",
-            "response_fn",
-            "get_all_responses_fn",
-            "use_dummy",
-            "template_path",
-        }
+        rate_allowed = {f.name for f in fields(RateConfig)} | {"reset_files"}
         remaining_kwargs = {
             k: v
             for k, v in (self.cfg.measurement_kwargs or {}).items()

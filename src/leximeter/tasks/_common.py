@@ -317,17 +317,30 @@ def resolve_attribute_batches(
     requested_n: int | None,
     metadata: dict[str, Any],
     reset_files: bool,
+    max_batch_size: int | None = None,
 ) -> tuple[list[list[tuple[str, T]]], int | None]:
     """Split attribute items into prompt batches, reusing any saved plan.
 
     ``requested_n`` is the max attributes per prompt (``None`` = one batch).
+    ``max_batch_size`` is an optional hard cap (e.g. a Decision Provider's
+    ``max_questions_per_call``); any persisted plan containing a batch larger
+    than ``max_batch_size`` is rejected and re-chunked.
     """
     if requested_n is not None and (
         not isinstance(requested_n, int) or requested_n < 1
     ):
         raise ValueError("n_attributes_per_run must be None or an integer >= 1")
+    if max_batch_size is not None and (
+        not isinstance(max_batch_size, int) or max_batch_size < 1
+    ):
+        raise ValueError("max_batch_size must be None or an integer >= 1")
+    effective_n = (
+        min(requested_n, max_batch_size)
+        if requested_n is not None and max_batch_size is not None
+        else (requested_n if requested_n is not None else max_batch_size)
+    )
     if not items:
-        return [], requested_n
+        return [], effective_n
 
     # Reuse a previously-persisted batch plan so resuming lines up with cache.
     if not reset_files and isinstance(metadata.get("attribute_batches"), list):
@@ -336,6 +349,9 @@ def resolve_attribute_batches(
         valid = True
         for batch in metadata["attribute_batches"]:
             if not isinstance(batch, list):
+                valid = False
+                break
+            if max_batch_size is not None and len(batch) > max_batch_size:
                 valid = False
                 break
             if any(name not in lookup for name in batch):
@@ -347,13 +363,13 @@ def resolve_attribute_batches(
         ]:
             return batches, metadata.get("n_attributes_per_run")
 
-    if requested_n is None and len(items) > ATTRIBUTE_WARNING_THRESHOLD:
+    if effective_n is None and len(items) > ATTRIBUTE_WARNING_THRESHOLD:
         print(
             f"Processing {len(items)} attributes in one prompt. "
             "Set n_attributes_per_run=12 (or lower) for more consistent outputs."
         )
 
-    return chunk_items(items, requested_n), requested_n
+    return chunk_items(items, effective_n), effective_n
 
 
 def _coerce_json_obj(raw: Any) -> Any:

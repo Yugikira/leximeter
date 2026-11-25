@@ -70,7 +70,7 @@ def _build_rank_choice(
     circle_first: bool,
 ) -> ChoiceQuestion:
     """Build a 4-way ``ChoiceQuestion`` adjudicating Circle vs Square on ``attr``."""
-    noun = "entity" if modality == "entity" else "entry"
+    noun = "entity" if modality == "entity" else "passage"
     desc = str(definition).strip() if definition is not None else ""
     attr_clause = f"'{attr}' ({desc})" if desc else f"'{attr}'"
     circle_desc = (
@@ -934,6 +934,7 @@ class Rank(Task):
             or self.cfg.n_attributes_per_run < 1
         ):
             raise ValueError("n_attributes_per_run must be None or an integer >= 1")
+        provider_cap: int | None = None
         if decision_client is not None:
             provider_cap = max(
                 1, int(getattr(decision_client, "max_questions_per_call", 64))
@@ -954,6 +955,7 @@ class Rank(Task):
                 requested_n=requested_batch_size,
                 metadata=run_metadata,
                 reset_files=reset_files,
+                max_batch_size=provider_cap,
             )
         )
         attr_batches: list[list[str]] = [
@@ -977,6 +979,7 @@ class Rank(Task):
             self.cfg.save_dir,
             base_name,
             model=effective_model,
+            decision_provider=decision_client is not None,
             n_attributes_per_run=effective_n_attributes_per_run,
             attribute_batches=[[name for name, _ in b] for b in attr_batch_items],
         )

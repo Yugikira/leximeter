@@ -44,6 +44,20 @@ from .base import Task
 
 _FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
 _CIRCLE_SQUARE_RE = re.compile(r"(?i)circle|square")
+_CIRCLE_SQUARE_WORD_RE = re.compile(
+    r"(?<![A-Za-z])(circle|square)(?![A-Za-z])", re.IGNORECASE
+)
+
+
+def _is_square_primary(actual_label: str, actual_desc: str) -> bool:
+    """Return ``True`` when the actual label or definition describes Square over Circle."""
+    for text in (actual_label, actual_desc):
+        if not text:
+            continue
+        match = _CIRCLE_SQUARE_WORD_RE.search(str(text))
+        if match is not None:
+            return match.group(1).lower() == "square"
+    return False
 
 
 @dataclass(frozen=True)
@@ -55,6 +69,25 @@ class _DifferentiatePair:
     actual_desc: str
     inverted_label: str | None
     inverted_desc: str | None
+    square_primary: bool = False
+
+    @property
+    def circle_label(self) -> str | None:
+        return self.inverted_label if self.square_primary else self.actual_label
+
+    @property
+    def square_label(self) -> str | None:
+        return self.actual_label if self.square_primary else self.inverted_label
+
+    @property
+    def circle_desc(self) -> str:
+        raw = self.inverted_desc if self.square_primary else self.actual_desc
+        return str(raw).strip() if raw is not None else ""
+
+    @property
+    def square_desc(self) -> str:
+        raw = self.actual_desc if self.square_primary else self.inverted_desc
+        return str(raw).strip() if raw is not None else ""
 
 
 def _collect_predictions(row: pd.Series) -> list[str]:
@@ -121,11 +154,41 @@ def _group_differentiate_labels(labels: dict[str, str]) -> list[_DifferentiatePa
             inv_cand = f"{base}_inverted"
             if inv_cand in labels and inv_cand not in visited:
                 actual_key, inverted_key, base_name = key, inv_cand, base
+            else:
+                swapped_base = _swap_circle_square(base)
+                if swapped_base.lower() != base.lower():
+                    swapped_inv = f"{swapped_base}_inverted"
+                    swapped_inv_key = (
+                        swapped_inv
+                        if swapped_inv in labels
+                        else lower_lookup.get(swapped_inv.lower())
+                    )
+                    if swapped_inv_key is not None and swapped_inv_key not in visited:
+                        actual_key, inverted_key, base_name = (
+                            key,
+                            swapped_inv_key,
+                            base,
+                        )
         elif key.endswith("_inverted"):
             base = key[: -len("_inverted")]
             act_cand = f"{base}_actual"
             if act_cand in labels and act_cand not in visited:
                 actual_key, inverted_key, base_name = act_cand, key, base
+            else:
+                swapped_base = _swap_circle_square(base)
+                if swapped_base.lower() != base.lower():
+                    swapped_act = f"{swapped_base}_actual"
+                    swapped_act_key = (
+                        swapped_act
+                        if swapped_act in labels
+                        else lower_lookup.get(swapped_act.lower())
+                    )
+                    if swapped_act_key is not None and swapped_act_key not in visited:
+                        actual_key, inverted_key, base_name = (
+                            swapped_act_key,
+                            key,
+                            swapped_act_key[: -len("_actual")],
+                        )
         elif f"{key} (inverted)" in labels and f"{key} (inverted)" not in visited:
             actual_key, inverted_key, base_name = key, f"{key} (inverted)", key
         elif key.endswith(" (inverted)"):
@@ -158,6 +221,7 @@ def _group_differentiate_labels(labels: dict[str, str]) -> list[_DifferentiatePa
                 inverted_desc=(
                     labels[inverted_key] if inverted_key is not None else None
                 ),
+                square_primary=_is_square_primary(actual_key, labels[actual_key]),
             )
         )
     return pairs
@@ -166,21 +230,32 @@ def _group_differentiate_labels(labels: dict[str, str]) -> list[_DifferentiatePa
 def _build_differentiate_choice(
     pair: _DifferentiatePair, *, circle_first: bool
 ) -> ChoiceQuestion:
-    actual_desc = str(pair.actual_desc).strip() if pair.actual_desc is not None else ""
-    inverted_desc = (
-        str(pair.inverted_desc).strip() if pair.inverted_desc is not None else ""
-    )
-    circle_text = (
-        actual_desc
-        or f"Circle clearly manifests '{pair.question_key}' more than Square."
-    )
-    square_text = (
-        inverted_desc
-        or f"Square clearly manifests '{pair.question_key}' more than Circle."
-    )
+    circle_desc = pair.circle_desc
+    square_desc = pair.square_desc
+    if not circle_desc and square_desc:
+        swapped = _swap_circle_square(square_desc)
+        circle_desc = swapped if swapped.lower() != square_desc.lower() else ""
+    if not square_desc and circle_desc:
+        swapped = _swap_circle_square(circle_desc)
+        square_desc = swapped if swapped.lower() != circle_desc.lower() else ""
+
+    if pair.square_primary:
+        circle_fallback = f"The label '{pair.circle_label or _swap_circle_square(pair.question_key)}' applies."
+        square_fallback = (
+            f"The label '{pair.square_label or pair.question_key}' applies."
+        )
+    else:
+        circle_fallback = (
+            f"Circle clearly manifests '{pair.question_key}' more than Square."
+        )
+        square_fallback = (
+            f"Square clearly manifests '{pair.question_key}' more than Circle."
+        )
+    circle_text = circle_desc or circle_fallback
+    square_text = square_desc or square_fallback
     neither_text = (
-        "Neither applies: the feature is absent from both Circle and Square, "
-        "or equally present in both."
+        "Neither applies: the label does not distinguish Circle from Square "
+        "(absent from both, or equally present in both)."
     )
     if circle_first:
         criteria: dict[str, str | None] = {
@@ -195,10 +270,10 @@ def _build_differentiate_choice(
             "neither": neither_text,
         }
     instructions = (
-        f"Compare Circle and Square on '{pair.question_key}'. "
-        "Choose 'circle' if Circle clearly manifests this feature more than Square, "
-        "'square' if Square clearly manifests it more than Circle, "
-        "or 'neither' if absent or equally present in both."
+        f"Compare Circle and Square on the label '{pair.question_key}'. "
+        "Choose 'circle' if the 'circle' description applies clearly, "
+        "'square' if the 'square' description applies clearly, "
+        "or 'neither' if neither applies or both are equal."
     )
     return ChoiceQuestion(instructions=instructions, criteria=criteria)
 
@@ -227,10 +302,16 @@ def _resolve_pair_batches(
     effective_limit: int,
     metadata: dict[str, Any],
     reset_files: bool,
+    max_batch_size: int | None = None,
 ) -> list[list[_DifferentiatePair]]:
     """Chunk differentiate pairs while reusing any valid saved batch plan on resume."""
     if not pairs:
         return []
+    limit = (
+        min(effective_limit, max_batch_size)
+        if max_batch_size is not None
+        else effective_limit
+    )
     if not reset_files and isinstance(metadata.get("attribute_batches"), list):
         pair_by_actual = {pair.actual_label: pair for pair in pairs}
         rebuilt: list[list[_DifferentiatePair]] = []
@@ -254,12 +335,15 @@ def _resolve_pair_batches(
                     break
                 batch_pairs.append(pair)
                 seen_pairs.append(pair)
-            if not valid:
+            if not valid or (
+                max_batch_size is not None and len(batch_pairs) > max_batch_size
+            ):
+                valid = False
                 break
             rebuilt.append(batch_pairs)
         if valid and seen_pairs == pairs:
             return rebuilt
-    return _common.chunk_items(pairs, effective_limit)
+    return _common.chunk_items(pairs, limit)
 
 
 @dataclass
@@ -420,6 +504,7 @@ class Classify(Task):
             self.cfg.save_dir,
             base_name,
             model=self.cfg.model,
+            decision_provider=False,
             n_attributes_per_run=effective_n_attributes_per_run,
             attribute_batches=[[name for name, _ in b] for b in label_batch_items],
         )
@@ -789,11 +874,13 @@ class Classify(Task):
                 effective_limit=effective_limit,
                 metadata=run_metadata,
                 reset_files=reset_files,
+                max_batch_size=provider_cap,
             )
             _common.update_run_metadata(
                 self.cfg.save_dir,
                 base_name,
                 model=effective_model,
+                decision_provider=True,
                 n_attributes_per_run=effective_limit,
                 attribute_batches=[
                     [
@@ -827,12 +914,14 @@ class Classify(Task):
                 requested_n=effective_limit,
                 metadata=run_metadata,
                 reset_files=reset_files,
+                max_batch_size=provider_cap,
             )
             label_batches = [dict(b) for b in label_batch_items]
             _common.update_run_metadata(
                 self.cfg.save_dir,
                 base_name,
                 model=effective_model,
+                decision_provider=True,
                 n_attributes_per_run=effective_n_per_run,
                 attribute_batches=[[name for name, _ in b] for b in label_batch_items],
             )
@@ -919,26 +1008,28 @@ class Classify(Task):
                         triple = run_triples[ident][pair.question_key]
                         id_pair_runs[ident][pair.question_key].append(triple)
                         if triple is None:
-                            rec[pair.actual_label] = None
-                            rec[f"{pair.actual_label}_prob"] = None
-                            if pair.inverted_label is not None:
-                                rec[pair.inverted_label] = None
-                                rec[f"{pair.inverted_label}_prob"] = None
+                            if pair.circle_label is not None:
+                                rec[pair.circle_label] = None
+                                rec[f"{pair.circle_label}_prob"] = None
+                            if pair.square_label is not None:
+                                rec[pair.square_label] = None
+                                rec[f"{pair.square_label}_prob"] = None
                         else:
                             p_c, p_s, p_n = triple
-                            rec[pair.actual_label] = bool(
-                                p_c > p_s
-                                and p_c > p_n
-                                and p_c >= self.cfg.min_frequency
-                            )
-                            rec[f"{pair.actual_label}_prob"] = p_c
-                            if pair.inverted_label is not None:
-                                rec[pair.inverted_label] = bool(
+                            if pair.circle_label is not None:
+                                rec[pair.circle_label] = bool(
+                                    p_c > p_s
+                                    and p_c > p_n
+                                    and p_c >= self.cfg.min_frequency
+                                )
+                                rec[f"{pair.circle_label}_prob"] = p_c
+                            if pair.square_label is not None:
+                                rec[pair.square_label] = bool(
                                     p_s > p_c
                                     and p_s > p_n
                                     and p_s >= self.cfg.min_frequency
                                 )
-                                rec[f"{pair.inverted_label}_prob"] = p_s
+                                rec[f"{pair.square_label}_prob"] = p_s
                     full_records.append(rec)
 
             if self.cfg.n_runs > 1 and full_records:
@@ -962,26 +1053,30 @@ class Classify(Task):
                         if t is not None
                     ]
                     if not valid_t:
-                        bool_vals[pair.actual_label] = None
-                        prob_vals[pair.actual_label] = None
-                        if pair.inverted_label is not None:
-                            bool_vals[pair.inverted_label] = None
-                            prob_vals[pair.inverted_label] = None
+                        if pair.circle_label is not None:
+                            bool_vals[pair.circle_label] = None
+                            prob_vals[pair.circle_label] = None
+                        if pair.square_label is not None:
+                            bool_vals[pair.square_label] = None
+                            prob_vals[pair.square_label] = None
                     else:
                         p_c = sum(t[0] for t in valid_t) / len(valid_t)
                         p_s = sum(t[1] for t in valid_t) / len(valid_t)
                         p_n = sum(t[2] for t in valid_t) / len(valid_t)
-                        bool_vals[pair.actual_label] = bool(
-                            p_c > p_s and p_c > p_n and p_c >= self.cfg.min_frequency
-                        )
-                        prob_vals[pair.actual_label] = p_c
-                        if pair.inverted_label is not None:
-                            bool_vals[pair.inverted_label] = bool(
+                        if pair.circle_label is not None:
+                            bool_vals[pair.circle_label] = bool(
+                                p_c > p_s
+                                and p_c > p_n
+                                and p_c >= self.cfg.min_frequency
+                            )
+                            prob_vals[pair.circle_label] = p_c
+                        if pair.square_label is not None:
+                            bool_vals[pair.square_label] = bool(
                                 p_s > p_c
                                 and p_s > p_n
                                 and p_s >= self.cfg.min_frequency
                             )
-                            prob_vals[pair.inverted_label] = p_s
+                            prob_vals[pair.square_label] = p_s
                 row_data: dict[str, Any] = {"_gid": ident}
                 for lab in all_labels:
                     row_data[lab] = bool_vals.get(lab)

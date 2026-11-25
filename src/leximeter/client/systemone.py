@@ -137,7 +137,7 @@ class SystemOneClient(DecisionClient):
         send_noul_criteria: bool = True,
         long_context: bool = False,
         timeout: float = 60.0,
-        max_retries: int = 2,
+        max_retries: int = 0,
         backoff_base: float = 0.5,
         headers: dict[str, str] | None = None,
         transport: httpx.AsyncBaseTransport | None = None,

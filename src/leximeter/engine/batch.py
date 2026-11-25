@@ -173,8 +173,16 @@ async def decide_with_retry(
     **decision_kwargs: Any,
 ) -> DecisionResult:
     """Call ``client.decide``, retrying transient errors and honoring ``Retry-After``."""
+    client_retries = getattr(client, "_max_retries", 0)
+    effective_retries = (
+        0
+        if isinstance(client_retries, int)
+        and not isinstance(client_retries, bool)
+        and client_retries > 0
+        else max(0, int(max_retries))
+    )
     last_exc: Exception | None = None
-    for attempt in range(max(0, int(max_retries)) + 1):
+    for attempt in range(effective_retries + 1):
         try:
             coro = client.decide(state, questions, model=model, **decision_kwargs)
             if timeout:
@@ -186,13 +194,13 @@ async def decide_with_retry(
             if not exc.retryable:
                 raise
             last_exc = exc
-            if attempt < max_retries:
+            if attempt < effective_retries:
                 retry_after = _extract_retry_after(exc)
                 delay = retry_after if retry_after is not None else min(2**attempt, 30)
                 await asyncio.sleep(delay)
         except Exception as exc:  # noqa: BLE001 - provider errors are not typed
             last_exc = exc
-            if attempt < max_retries:
+            if attempt < effective_retries:
                 retry_after = _extract_retry_after(exc)
                 delay = retry_after if retry_after is not None else min(2**attempt, 30)
                 await asyncio.sleep(delay)
