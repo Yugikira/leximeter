@@ -755,6 +755,7 @@ async def rank(
     attributes: dict[str, str],
     save_dir: str,
     model: str = "gpt-5.4-mini",
+    decision_model: str | None = None,
     n_rounds: int = 5,
     matches_per_round: int = 3,
     learning_rate: float = 0.1,
@@ -768,9 +769,15 @@ async def rank(
     client: LLMClient | None = None,
     embedding_client: EmbeddingClient | None = None,
     search_tool: SearchTool | None = None,
+    decision_client: DecisionClient | None = None,
     **engine_kwargs: Any,
 ) -> pd.DataFrame:
     """Run pairwise tournaments and fit Bradley–Terry ratings per attribute.
+
+    When a :class:`DecisionClient` is injected (or configured via environment),
+    pairwise matches are adjudicated via parallel 4-way ``choice`` questions
+    (``circle``, ``square``, ``draw``, ``insufficient_signal``); otherwise the
+    generative ``LLMClient`` path executes unchanged.
 
     Returns ``df`` with, per attribute, a z-score column ``{attr}``, the
     centred Bradley–Terry estimate ``{attr}_raw`` and its standard error
@@ -782,6 +789,7 @@ async def rank(
         save_dir=save_dir,
         file_name=file_name,
         model=model,
+        decision_model=decision_model,
         n_rounds=n_rounds,
         matches_per_round=matches_per_round,
         learning_rate=learning_rate,
@@ -796,6 +804,7 @@ async def rank(
         client=client,
         embedding_client=embedding_client,
         search_tool=search_tool,
+        decision_client=decision_client,
     )
     return await task.run(df, column_name, reset_files=reset_files, **engine_kwargs)
 

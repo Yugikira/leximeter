@@ -10,8 +10,33 @@ a covariance matrix that respects the sum-to-zero identifiability constraint.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Literal, overload
 
 import numpy as np
+
+
+@overload
+def fit_bt(
+    item_ids: Sequence[str],
+    outcomes: Sequence[tuple[str, str]],
+    *,
+    pseudo: float = 0.1,
+    max_iter: int = 1000,
+    tol: float = 1e-6,
+    return_info: Literal[False] = False,
+) -> dict[str, float]: ...
+
+
+@overload
+def fit_bt(
+    item_ids: Sequence[str],
+    outcomes: Sequence[tuple[str, str]],
+    *,
+    pseudo: float = 0.1,
+    max_iter: int = 1000,
+    tol: float = 1e-6,
+    return_info: Literal[True],
+) -> tuple[dict[str, float], np.ndarray, np.ndarray]: ...
 
 
 def fit_bt(
