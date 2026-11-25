@@ -207,6 +207,7 @@ async def filter(
     condition: str,
     save_dir: str,
     model: str = "gpt-5.4-nano",
+    decision_model: str | None = None,
     n_runs: int = 1,
     n_parallels: int = 50,
     entities_per_call: int = 150,
@@ -219,18 +220,21 @@ async def filter(
     client: LLMClient | None = None,
     embedding_client: EmbeddingClient | None = None,
     search_tool: SearchTool | None = None,
+    decision_client: DecisionClient | None = None,
     **engine_kwargs: Any,
 ) -> pd.DataFrame:
     """Keep items whose natural-language ``condition`` holds.
 
     Returns ``df`` with a boolean ``keep`` column and a ``score`` column (the
-    proportion of runs marking the item as meeting the condition).
+    proportion of runs marking the item as meeting the condition, or the
+    calibrated probability from a Decision Provider).
     """
     cfg = FilterConfig(
         condition=condition,
         save_dir=save_dir,
         file_name=file_name,
         model=model,
+        decision_model=decision_model,
         n_runs=n_runs,
         n_parallels=n_parallels,
         entities_per_call=entities_per_call,
@@ -244,6 +248,7 @@ async def filter(
         client=client,
         embedding_client=embedding_client,
         search_tool=search_tool,
+        decision_client=decision_client,
     )
     return await task.run(df, column_name, reset_files=reset_files, **engine_kwargs)
 
