@@ -28,7 +28,7 @@ import os
 import random
 import re
 import warnings
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from typing import Any, Literal
 
 import numpy as np
@@ -53,6 +53,11 @@ def _dump_json(path: str, payload: dict, *, indent: int | None = None) -> None:
     """Write JSON to disk (sync; run via ``asyncio.to_thread``)."""
     with open(path, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=indent)
+
+
+def _to_float_series(series: pd.Series) -> pd.Series:
+    """Coerce numeric or boolean values to float64 (safe for subtraction & OLS)."""
+    return pd.to_numeric(series, errors="coerce").astype(float)
 
 
 @dataclass
@@ -118,6 +123,7 @@ class DebiasConfig:
     strip_percentages: list[int] | None = None
     categories_to_strip: list[str] | None = None
     model: str = "gpt-5.4-mini"
+    decision_model: str | None = None
     n_parallels: int = 50
     measurement_kwargs: dict[str, Any] = field(default_factory=dict)
     removal_kwargs: dict[str, Any] = field(default_factory=dict)
@@ -294,18 +300,28 @@ class Debias(Task):
         if column_name not in df.columns:
             raise ValueError(f"Column '{column_name}' not found in DataFrame")
 
+        decision_client = self._get_decision_client()
+        effective_decision_model = _common.effective_decision_model(
+            decision_client,
+            self.cfg.decision_model,
+            fallback=self.cfg.model,
+        )
+
         # Input signature covers the whole input frame (the result embeds
-        # every input column) plus every config field that shapes the run;
-        # a completed run with the same signature is reloaded from disk
+        # every input column) plus every config field that shapes the run
+        # (including the effective decision model / provider mode); a
+        # completed run with the same signature is reloaded from disk
         # (zero provider calls) instead of re-measuring.
+        cfg_for_sig = {
+            k: v
+            for k, v in asdict(self.cfg).items()
+            if k not in ("save_dir", "run_name")
+        }
+        cfg_for_sig["decision_model"] = effective_decision_model
         signature = _common.compute_input_signature(
             df,
             column_name,
-            {
-                k: v
-                for k, v in asdict(self.cfg).items()
-                if k not in ("save_dir", "run_name")
-            },
+            cfg_for_sig,
         )
         if reset_files:
             _common.clear_task_state(self.run_dir, "debias")
@@ -440,17 +456,17 @@ class Debias(Task):
             )
             regression_info[key] = summary
 
-        metadata = {
+        results_path = os.path.join(self.run_dir, "debias_results.csv")
+        metadata: dict[str, Any] = {
             "config": self._serialise_config(),
             "variants": [regression_info[k].as_dict() for k in regression_info],
-            "result_path": os.path.join(self.run_dir, "debias_results.csv"),
+            "result_path": results_path,
         }
         metadata_path = os.path.join(self.run_dir, "debias_metadata.json")
         await asyncio.to_thread(_dump_json, metadata_path, metadata, indent=2)
         metadata["metadata_path"] = metadata_path
 
         results_df = df_master.reset_index(drop=True)
-        results_path = metadata["result_path"]
         save_dataframe_with_fallback(
             results_df, results_path, index=False, label="Debias"
         )
@@ -538,60 +554,122 @@ class Debias(Task):
         reset_files_local = bool(kwargs.pop("reset_files", False)) or bool(reset_files)
         df_reset = df[[column_name]].reset_index()
         if mode == "rate":
-            cfg = RateConfig(
+            kwargs.pop("decision_model", None)
+            kwargs.pop("decision_client", None)
+            rate_cfg = RateConfig(
                 attributes=attributes or {},
                 save_dir=save_dir,
                 model=kwargs.pop("model", default_model),
                 n_parallels=kwargs.pop("n_parallels", self.cfg.n_parallels),
                 **kwargs,
             )
-            runner = Rate(cfg, client=self._get_client())
-            result = await runner.run(
+            rate_runner = Rate(rate_cfg, client=self._get_client())
+            result = await rate_runner.run(
                 df_reset,
                 column_name,
                 reset_files=reset_files_local,
             )
         elif mode == "classify":
-            cfg = ClassifyConfig(
+            decision_client = (
+                kwargs.pop("decision_client", None) or self._get_decision_client()
+            )
+            model_local = kwargs.pop("model", default_model)
+            decision_model_local = kwargs.pop("decision_model", self.cfg.decision_model)
+            classify_cfg = ClassifyConfig(
                 labels=attributes or {},
                 save_dir=save_dir,
-                model=kwargs.pop("model", default_model),
+                model=model_local,
+                decision_model=decision_model_local,
                 n_parallels=kwargs.pop("n_parallels", self.cfg.n_parallels),
                 **kwargs,
             )
-            runner = Classify(cfg, client=self._get_client())
-            result = await runner.run(
+            base_name = os.path.splitext(classify_cfg.file_name)[0]
+            expected_model = (
+                _common.effective_decision_model(
+                    decision_client, decision_model_local, fallback=model_local
+                )
+                or model_local
+            )
+            reset_files_local = _common.should_reset_substage_checkpoint(
+                save_dir,
+                base_name,
+                expected_model=expected_model,
+                decision_provider=decision_client is not None,
+                reset_files=reset_files_local,
+            )
+            classify_runner = Classify(
+                classify_cfg,
+                client=self._get_client(),
+                decision_client=decision_client,
+            )
+            result = await classify_runner.run(
                 df_reset,
                 column_name,
                 reset_files=reset_files_local,
             )
+            _common.update_run_metadata(
+                save_dir,
+                base_name,
+                decision_provider=decision_client is not None,
+            )
         elif mode == "extract":
-            cfg = ExtractConfig(
+            kwargs.pop("decision_model", None)
+            kwargs.pop("decision_client", None)
+            extract_cfg = ExtractConfig(
                 attributes=attributes or {},
                 save_dir=save_dir,
                 model=kwargs.pop("model", default_model),
                 n_parallels=kwargs.pop("n_parallels", self.cfg.n_parallels),
                 **kwargs,
             )
-            runner = Extract(cfg, client=self._get_client())
-            result = await runner.run(
+            extract_runner = Extract(extract_cfg, client=self._get_client())
+            result = await extract_runner.run(
                 df_reset,
                 column_name,
                 reset_files=reset_files_local,
             )
         elif mode == "rank":
-            cfg = RankConfig(
+            decision_client = (
+                kwargs.pop("decision_client", None) or self._get_decision_client()
+            )
+            model_local = kwargs.pop("model", default_model)
+            decision_model_local = kwargs.pop("decision_model", self.cfg.decision_model)
+            rank_cfg = RankConfig(
                 attributes=attributes or {},
                 save_dir=save_dir,
-                model=kwargs.pop("model", default_model),
+                model=model_local,
+                decision_model=decision_model_local,
                 n_parallels=kwargs.pop("n_parallels", self.cfg.n_parallels),
                 **kwargs,
             )
-            runner = Rank(cfg, client=self._get_client())
-            result = await runner.run(
+            base_name = os.path.splitext(rank_cfg.file_name)[0]
+            expected_model = (
+                _common.effective_decision_model(
+                    decision_client, decision_model_local, fallback=model_local
+                )
+                or model_local
+            )
+            reset_files_local = _common.should_reset_substage_checkpoint(
+                save_dir,
+                base_name,
+                expected_model=expected_model,
+                decision_provider=decision_client is not None,
+                reset_files=reset_files_local,
+            )
+            rank_runner = Rank(
+                rank_cfg,
+                client=self._get_client(),
+                decision_client=decision_client,
+            )
+            result = await rank_runner.run(
                 df_reset,
                 column_name,
                 reset_files=reset_files_local,
+            )
+            _common.update_run_metadata(
+                save_dir,
+                base_name,
+                decision_provider=decision_client is not None,
             )
         else:  # pragma: no cover - defensive
             raise ValueError(f"Unsupported mode: {mode}")
@@ -664,13 +742,25 @@ class Debias(Task):
                 "[Debias] Measuring remaining-signal prevalence on "
                 f"variant '{info['display']}'."
             )
+        rate_allowed = {f.name for f in fields(RateConfig)} | {
+            "reset_files",
+            "response_fn",
+            "get_all_responses_fn",
+            "use_dummy",
+            "template_path",
+        }
+        remaining_kwargs = {
+            k: v
+            for k, v in (self.cfg.measurement_kwargs or {}).items()
+            if k in rate_allowed
+        }
         remaining_df = await self._run_measurement(
             df_master,
             column_name=info["text_column"],
             mode="rate",
             save_label=f"{save_label}_remaining_signal",
             attributes=attrs,
-            extra_kwargs=self.cfg.measurement_kwargs,
+            extra_kwargs=remaining_kwargs,
             default_model=self.cfg.model,
             reset_files=reset_files,
         )
@@ -710,13 +800,21 @@ class Debias(Task):
         os.makedirs(save_dir, exist_ok=True)
         additional_instructions = kwargs.pop("additional_instructions", "")
         kwargs.setdefault("n_rounds", 3)
+        decision_client = (
+            kwargs.pop("decision_client", None) or self._get_decision_client()
+        )
         cfg = CodifyConfig(
             save_dir=save_dir,
             model=kwargs.pop("model", self.cfg.model),
+            decision_model=kwargs.pop("decision_model", self.cfg.decision_model),
             n_parallels=kwargs.pop("n_parallels", self.cfg.n_parallels),
             **kwargs,
         )
-        runner = Codify(cfg, client=self._get_client())
+        runner = Codify(
+            cfg,
+            client=self._get_client(),
+            decision_client=decision_client,
+        )
         codify_df = await runner.run(
             df.reset_index(),
             column_name,
@@ -787,15 +885,23 @@ class Debias(Task):
             if replacement is not None:
                 response_kwargs["n_rounds"] = replacement
         response_kwargs.setdefault("n_rounds", 3)
+        decision_client = (
+            kwargs.pop("decision_client", None) or self._get_decision_client()
+        )
         cfg = ParaphraseConfig(
             instructions=instructions,
             revised_column_name=revised_name,
             save_dir=save_dir,
             model=kwargs.pop("model", self.cfg.model),
+            decision_model=kwargs.pop("decision_model", self.cfg.decision_model),
             n_parallels=kwargs.pop("n_parallels", self.cfg.n_parallels),
             **kwargs,
         )
-        runner = Paraphrase(cfg, client=self._get_client())
+        runner = Paraphrase(
+            cfg,
+            client=self._get_client(),
+            decision_client=decision_client,
+        )
         paraphrased = await runner.run(
             df.reset_index(),
             column_name,
@@ -899,7 +1005,7 @@ class Debias(Task):
         if remaining_signal_column:
             cols.append(remaining_signal_column)
         measurement_attr = self.cfg.measurement_attribute
-        reg_df = df[cols].apply(pd.to_numeric, errors="coerce")
+        reg_df = df[cols].apply(_to_float_series)
         reg_df = reg_df.dropna(subset=[original_column, stripped_column])
         if len(reg_df) < 3:
             if self.cfg.verbose:
@@ -1043,8 +1149,7 @@ class Debias(Task):
         remaining_signal_column: str,
     ) -> tuple[pd.Index, pd.Series, pd.Series, pd.Series]:
         tmp = df[[original_column, stripped_column, remaining_signal_column]].apply(
-            pd.to_numeric,
-            errors="coerce",
+            _to_float_series
         )
         tmp = tmp.dropna()
         return (
@@ -1071,8 +1176,8 @@ class Debias(Task):
             stripped_col = column_map.get(attr)
             if not stripped_col or attr not in df.columns:
                 continue
-            raw_series = pd.to_numeric(df[attr], errors="coerce")
-            stripped_series = pd.to_numeric(df[stripped_col], errors="coerce")
+            raw_series = _to_float_series(df[attr])
+            stripped_series = _to_float_series(df[stripped_col])
             tmp = pd.concat([raw_series, stripped_series], axis=1).dropna()
             if tmp.empty:
                 continue
@@ -1100,8 +1205,8 @@ class Debias(Task):
         original: pd.Series,
         stripped: pd.Series,
     ) -> float | None:
-        mean_original = float(pd.to_numeric(original, errors="coerce").mean())
-        mean_stripped = float(pd.to_numeric(stripped, errors="coerce").mean())
+        mean_original = float(_to_float_series(original).mean())
+        mean_stripped = float(_to_float_series(stripped).mean())
         if np.isclose(mean_original, 0.0):
             return None
         return float((mean_original - mean_stripped) / mean_original * 100.0)
@@ -1112,8 +1217,8 @@ class Debias(Task):
         raw: pd.Series,
         debiased: pd.Series,
     ) -> tuple[float, float]:
-        raw_num = pd.to_numeric(raw, errors="coerce")
-        deb_num = pd.to_numeric(debiased, errors="coerce")
+        raw_num = _to_float_series(raw)
+        deb_num = _to_float_series(debiased)
         pct = (deb_num - raw_num) / raw_num * 100.0
         pct = pct.replace([np.inf, -np.inf], np.nan)
         pct = pct[raw_num != 0]
@@ -1130,10 +1235,7 @@ class Debias(Task):
     ) -> tuple[dict[str, Any] | None, float | None]:
         stage1_df = (
             df[[stripped_column, remaining_signal_column]]
-            .apply(
-                pd.to_numeric,
-                errors="coerce",
-            )
+            .apply(_to_float_series)
             .dropna()
         )
         if len(stage1_df) < 3:
@@ -1181,14 +1283,7 @@ class Debias(Task):
         debiased_column: str,
         title: str,
     ) -> dict[str, Any]:
-        reg_df = (
-            df[[original_column, debiased_column]]
-            .apply(
-                pd.to_numeric,
-                errors="coerce",
-            )
-            .dropna()
-        )
+        reg_df = df[[original_column, debiased_column]].apply(_to_float_series).dropna()
         if len(reg_df) < 3:
             return {}
         y_vals = reg_df[original_column].values

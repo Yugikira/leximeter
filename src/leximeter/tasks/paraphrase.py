@@ -34,6 +34,7 @@ import pandas as pd
 
 from ..templates import load_prompt
 from ..utils.file_utils import save_dataframe_with_fallback
+from . import _common
 from .base import Task
 
 
@@ -81,8 +82,12 @@ class ParaphraseConfig:
     # validated responses will be written using the same stem with
     # ``_cleaned.csv`` appended.
     file_name: str = "paraphrase_responses.csv"
-    # Model used for both paraphrasing and classification.
+    # Model used for paraphrasing (and validation classification when no
+    # Decision Provider is active).
     model: str = "gpt-5.4-mini"
+    # Optional model override for the Decision Provider during recursive
+    # validation (explicit > LEXIMETER_DECISION_MODEL > model).
+    decision_model: str | None = None
     # When true, the model will be asked to output JSON only.
     json_mode: bool = False
     # What kind of input is being paraphrased (text, image, audio, pdf, entity, web).
@@ -309,14 +314,32 @@ class Paraphrase(Task):
                     "Return False if key requirements are missing, contradicted, or only weakly addressed."
                 )
             }
+        decision_client = self._get_decision_client()
+        effective_decision_model = _common.effective_decision_model(
+            decision_client,
+            self.cfg.decision_model,
+            fallback=self.cfg.model,
+        )
+        validation_reset = _common.should_reset_substage_checkpoint(
+            validation_dir,
+            "classify_responses",
+            expected_model=effective_decision_model or self.cfg.model,
+            decision_provider=decision_client is not None,
+            reset_files=reset_files,
+        )
         classify_cfg = ClassifyConfig(
             labels=labels,
             save_dir=validation_dir,
             model=self.cfg.model,
+            decision_model=self.cfg.decision_model,
             n_parallels=self.cfg.n_parallels,
             n_runs=1,
         )
-        classifier = Classify(classify_cfg, client=self._get_client())
+        classifier = Classify(
+            classify_cfg,
+            client=self._get_client(),
+            decision_client=decision_client,
+        )
 
         def _flag_passes(flag: Any) -> bool:
             """None / NA (uncertain) counts as a pass; only False fails."""
@@ -465,7 +488,14 @@ class Paraphrase(Task):
             if cand_prompts:
                 cand_df = pd.DataFrame({"text": cand_prompts})
                 cand_res_df = await classifier.run(
-                    cand_df, column_name="text", reset_files=reset_files
+                    cand_df,
+                    column_name="text",
+                    reset_files=validation_reset if round_number == 0 else reset_files,
+                )
+                _common.update_run_metadata(
+                    validation_dir,
+                    "classify_responses",
+                    decision_provider=decision_client is not None,
                 )
             else:
                 cand_res_df = pd.DataFrame()

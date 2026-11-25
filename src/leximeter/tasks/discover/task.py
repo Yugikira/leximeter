@@ -47,6 +47,7 @@ class DiscoverConfig:
 
     save_dir: str = "discover"
     model: str = "gpt-5.4-mini"
+    decision_model: str | None = None
     n_parallels: int = 50
     n_runs: int = 1
     min_frequency: float = 0.6
@@ -198,16 +199,26 @@ class Discover(Task):
                 "Provide either column_name or both circle_column_name and square_column_name"
             )
 
+        decision_client = self._get_decision_client()
+        effective_decision_model = _common.effective_decision_model(
+            decision_client,
+            self.cfg.decision_model,
+            fallback=self.cfg.model,
+        )
+
         # Input signature covers the frame plus every config field that
-        # shapes the pipeline.  A completed run with the same signature is
+        # shapes the pipeline (including the effective decision model /
+        # provider mode).  A completed run with the same signature is
         # reloaded from the persisted snapshot (zero provider calls).
         # Computed before the cfg mutation below so it is stable across runs.
+        cfg_for_sig = {k: v for k, v in asdict(self.cfg).items() if k != "save_dir"}
+        cfg_for_sig["decision_model"] = effective_decision_model
         signature = _common.compute_input_signature(
             df,
             column_name,
             circle_column_name,
             square_column_name,
-            {k: v for k, v in asdict(self.cfg).items() if k != "save_dir"},
+            cfg_for_sig,
         )
         if reset_files:
             _common.clear_task_state(self.cfg.save_dir, "discover")
@@ -327,11 +338,20 @@ class Discover(Task):
         # ── 3. classification ──────────────────────────────────────────
         classify_result: pd.DataFrame
         summary_df: pd.DataFrame | None = None
+        classify_dir = os.path.join(self.cfg.save_dir, "classify")
+        classify_reset = _common.should_reset_substage_checkpoint(
+            classify_dir,
+            "classify_responses",
+            expected_model=effective_decision_model or self.cfg.model,
+            decision_provider=decision_client is not None,
+            reset_files=reset_files,
+        )
         if not labels:
             classify_result = df.reset_index(drop=True).copy()
         elif pair:
             base_cfg = {
                 "model": self.cfg.model,
+                "decision_model": self.cfg.decision_model,
                 "n_parallels": self.cfg.n_parallels,
                 "n_runs": self.cfg.n_runs,
                 "min_frequency": self.cfg.min_frequency,
@@ -402,18 +422,27 @@ class Discover(Task):
 
             clf_cfg = ClassifyConfig(
                 labels=combined_labels,
-                save_dir=os.path.join(self.cfg.save_dir, "classify"),
+                save_dir=classify_dir,
                 **base_cfg,  # type: ignore[arg-type]
             )
 
-            clf = Classify(clf_cfg, client=self._get_client())
+            clf = Classify(
+                clf_cfg,
+                client=self._get_client(),
+                decision_client=decision_client,
+            )
 
             combined_df = await clf.run(
                 df,
                 circle_column_name=circle_column_name,  # type: ignore[arg-type]
                 square_column_name=square_column_name,  # type: ignore[arg-type]
-                reset_files=reset_files,
+                reset_files=classify_reset,
                 **kwargs,
+            )
+            _common.update_run_metadata(
+                classify_dir,
+                "classify_responses",
+                decision_provider=decision_client is not None,
             )
 
             actual_combined_labels = dict(clf.cfg.labels)
@@ -496,8 +525,9 @@ class Discover(Task):
         else:
             clf_cfg = ClassifyConfig(
                 labels=labels,
-                save_dir=os.path.join(self.cfg.save_dir, "classify"),
+                save_dir=classify_dir,
                 model=self.cfg.model,
+                decision_model=self.cfg.decision_model,
                 n_parallels=self.cfg.n_parallels,
                 n_runs=self.cfg.n_runs,
                 min_frequency=self.cfg.min_frequency,
@@ -505,12 +535,21 @@ class Discover(Task):
                 modality=self.cfg.modality,
                 n_attributes_per_run=None,
             )
-            clf = Classify(clf_cfg, client=self._get_client())
+            clf = Classify(
+                clf_cfg,
+                client=self._get_client(),
+                decision_client=decision_client,
+            )
             classify_result = await clf.run(
                 df,
                 column_name,  # type: ignore[arg-type]
-                reset_files=reset_files,
+                reset_files=classify_reset,
                 **kwargs,
+            )
+            _common.update_run_metadata(
+                classify_dir,
+                "classify_responses",
+                decision_provider=decision_client is not None,
             )
             actual_labels = dict(clf.cfg.labels)
             if actual_labels != labels:

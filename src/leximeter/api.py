@@ -366,6 +366,7 @@ async def paraphrase(
     instructions: str,
     save_dir: str,
     model: str = "gpt-5.4-mini",
+    decision_model: str | None = None,
     n_parallels: int = 50,
     modality: str = "text",
     json_mode: bool = False,
@@ -380,6 +381,7 @@ async def paraphrase(
     client: LLMClient | None = None,
     embedding_client: EmbeddingClient | None = None,
     search_tool: SearchTool | None = None,
+    decision_client: DecisionClient | None = None,
     **engine_kwargs: Any,
 ) -> pd.DataFrame:
     """Rewrite each item per ``instructions``.
@@ -388,7 +390,8 @@ async def paraphrase(
     ``<column_name>_revised``; suffixed ``_1.._n`` when ``n_runs > 1``) plus
     a ``<col>_approved`` column per output.  With ``n_rounds > 1`` a
     recursive validation loop re-generates failed candidates (classifier
-    compares original vs. modified text) until they pass or the round
+    compares original vs. modified text, delegating to ``decision_client``
+    with ``decision_model`` when configured) until they pass or the round
     budget runs out (unapproved candidates then get a random fallback).
     """
     cfg = ParaphraseConfig(
@@ -396,6 +399,7 @@ async def paraphrase(
         save_dir=save_dir,
         file_name=file_name,
         model=model,
+        decision_model=decision_model,
         n_parallels=n_parallels,
         modality=modality,
         json_mode=json_mode,
@@ -411,6 +415,7 @@ async def paraphrase(
         client=client,
         embedding_client=embedding_client,
         search_tool=search_tool,
+        decision_client=decision_client,
     )
     return await task.run(df, column_name, reset_files=reset_files, **engine_kwargs)
 
@@ -701,6 +706,7 @@ async def codify(
     categories: dict[str, str] | None = None,
     additional_instructions: str = "",
     model: str = "gpt-5.4-mini",
+    decision_model: str | None = None,
     n_parallels: int = 50,
     modality: str = "text",
     file_name: str = "coding_results.csv",
@@ -713,6 +719,7 @@ async def codify(
     client: LLMClient | None = None,
     embedding_client: EmbeddingClient | None = None,
     search_tool: SearchTool | None = None,
+    decision_client: DecisionClient | None = None,
     **engine_kwargs: Any,
 ) -> pd.DataFrame:
     """Mark snippets matching each qualitative code.
@@ -722,13 +729,15 @@ async def codify(
     (``categories=None`` + ``additional_instructions``) returns a single
     ``coded_passages`` column mapping discovered labels to snippet lists.
     When ``n_rounds > 1`` a completion loop re-codes remaining text until
-    nothing new is found.  The final frame is always written to
-    ``coded_passages.csv``.
+    nothing new is found (its internal completion-check classifier delegates
+    to ``decision_client`` with ``decision_model`` when configured).  The
+    final frame is always written to ``coded_passages.csv``.
     """
     cfg = CodifyConfig(
         save_dir=save_dir,
         file_name=file_name,
         model=model,
+        decision_model=decision_model,
         n_parallels=n_parallels,
         modality=modality,
         n_rounds=n_rounds,
@@ -742,6 +751,7 @@ async def codify(
         client=client,
         embedding_client=embedding_client,
         search_tool=search_tool,
+        decision_client=decision_client,
     )
     return await task.run(
         df,
@@ -823,6 +833,7 @@ async def discover(
     save_dir: str,
     bucket_count: int = 10,
     model: str = "gpt-5.4-mini",
+    decision_model: str | None = None,
     n_parallels: int = 50,
     n_runs: int = 1,
     min_frequency: float = 0.6,
@@ -841,17 +852,21 @@ async def discover(
     client: LLMClient | None = None,
     embedding_client: EmbeddingClient | None = None,
     search_tool: SearchTool | None = None,
+    decision_client: DecisionClient | None = None,
     **engine_kwargs: Any,
 ) -> dict[str, Any]:
     """Contrast two columns (or mine one) and bucket distinguishing features.
 
     Pipeline: candidate discovery (dynamic :func:`codify` for a single
     column, :func:`compare` for a circle/square pair) → :func:`bucket`
-    taxonomy → :func:`classify` back onto the data.  For pairs the result
-    includes a per-label ``summary`` DataFrame with ``actual_pct``,
-    ``inverted_pct`` and ``net_pct`` (actual − inverted, percentage
-    points).  Results are persisted to ``discover_results_snapshot.json``
-    and ``discover_results_export.zip``.
+    taxonomy → :func:`classify` back onto the data.  When a
+    :class:`DecisionClient` is injected (or configured via environment),
+    Stage 3 classification delegates to it using ``decision_model`` while
+    generative discovery and bucketing stay on ``LLMClient`` (``model``).
+    For pairs the result includes a per-label ``summary`` DataFrame with
+    ``actual_pct``, ``inverted_pct`` and ``net_pct`` (actual − inverted,
+    percentage points).  Results are persisted to
+    ``discover_results_snapshot.json`` and ``discover_results_export.zip``.
 
     ``max_retries`` retries the whole pipeline from its checkpoints when a
     run raises; a completed run with unchanged inputs is reloaded from the
@@ -860,6 +875,7 @@ async def discover(
     cfg = DiscoverConfig(
         save_dir=save_dir,
         model=model,
+        decision_model=decision_model,
         n_parallels=n_parallels,
         n_runs=n_runs,
         min_frequency=min_frequency,
@@ -880,6 +896,7 @@ async def discover(
         client=client,
         embedding_client=embedding_client,
         search_tool=search_tool,
+        decision_client=decision_client,
     )
     return await run_task_with_retry(
         task,
@@ -1019,6 +1036,7 @@ async def debias(
     strip_percentages: list[int] | None = None,
     categories_to_strip: list[str] | None = None,
     model: str = "gpt-5.4-mini",
+    decision_model: str | None = None,
     n_parallels: int = 50,
     measurement_kwargs: dict[str, Any] | None = None,
     removal_kwargs: dict[str, Any] | None = None,
@@ -1030,6 +1048,7 @@ async def debias(
     client: LLMClient | None = None,
     embedding_client: EmbeddingClient | None = None,
     search_tool: SearchTool | None = None,
+    decision_client: DecisionClient | None = None,
     **engine_kwargs: Any,
 ) -> DebiasResult:
     """Measure a signal, strip a confounder, re-measure, and regress out bias.
@@ -1044,9 +1063,13 @@ async def debias(
     snippets deterministically across ``strip_percentages``; ``"paraphrase"``
     rewrites), re-measures the variants, optionally measures the remaining
     signal, and computes simple-difference and two-step debiased columns
-    ``"{attr} (raw - stripped)"`` / ``"{attr} (debiased)"``.  Regression
-    diagnostics use robust HC3 standard errors (HC1 fallback) via
-    :mod:`leximeter.utils.regression`.
+    ``"{attr} (raw - stripped)"`` / ``"{attr} (debiased)"``.  When a
+    :class:`DecisionClient` is injected (or configured via environment),
+    internal ``classify`` and ``rank`` stages delegate to it using
+    ``decision_model`` while snippet extraction, paraphrasing, ``rate``,
+    ``extract``, and remaining-signal stages stay on ``LLMClient``
+    (``model``).  Regression diagnostics use robust HC3 standard errors
+    (HC1 fallback) via :mod:`leximeter.utils.regression`.
 
     Returns a :class:`DebiasResult` with ``results``, ``metadata`` and
     ``regression``; results are saved under ``save_dir/run_name`` as
@@ -1067,6 +1090,7 @@ async def debias(
         strip_percentages=strip_percentages,
         categories_to_strip=categories_to_strip,
         model=model,
+        decision_model=decision_model,
         n_parallels=n_parallels,
         measurement_kwargs=measurement_kwargs or {},
         removal_kwargs=removal_kwargs or {},
@@ -1079,6 +1103,7 @@ async def debias(
         client=client,
         embedding_client=embedding_client,
         search_tool=search_tool,
+        decision_client=decision_client,
     )
     # Debias.run takes no engine kwargs; forwarding only the explicit args
     # keeps the retry wrapper generic while preserving existing behaviour.

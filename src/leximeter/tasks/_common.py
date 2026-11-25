@@ -66,6 +66,40 @@ def update_run_metadata(save_dir: str, base_name: str, **updates: Any) -> None:
         pass
 
 
+def effective_decision_model(
+    decision_client: Any | None,
+    decision_model: str | None,
+    *,
+    fallback: str,
+) -> str | None:
+    """Return the resolved decision model when a Decision Provider is active, else ``None``."""
+    if decision_client is None:
+        return None
+    from ..client.resolve import resolve_decision_model
+
+    return resolve_decision_model(decision_model, fallback=fallback) or fallback
+
+
+def should_reset_substage_checkpoint(
+    save_dir: str,
+    base_name: str,
+    *,
+    expected_model: str,
+    decision_provider: bool,
+    reset_files: bool,
+) -> bool:
+    """Return ``True`` when a sub-stage checkpoint must reset due to model/provider change."""
+    if reset_files:
+        return True
+    prev_meta = load_run_metadata(save_dir, base_name, reset_files=False)
+    if not prev_meta:
+        return False
+    return (
+        prev_meta.get("model") != expected_model
+        or bool(prev_meta.get("decision_provider", False)) != decision_provider
+    )
+
+
 def task_state_path(save_dir: str, task_name: str) -> str:
     return os.path.join(save_dir, f"{task_name}_state.json")
 

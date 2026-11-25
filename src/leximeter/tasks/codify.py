@@ -55,6 +55,7 @@ class CodifyConfig:
     save_dir: str
     file_name: str = "coding_results.csv"
     model: str = "gpt-5.4-mini"
+    decision_model: str | None = None
     n_parallels: int = 50
     max_words_per_call: int = 1000
     max_categories_per_call: int = 8
@@ -143,7 +144,7 @@ class Codify(Task):
                 start_pos, end_pos, match_type = self._find_actual_position_with_type(
                     text, beginning_excerpt
                 )
-                if start_pos is not None:
+                if start_pos is not None and end_pos is not None:
                     # Always ensure word boundaries and add some context
                     start_pos = self._find_word_start(text, start_pos)
                     end_pos = self._find_word_end(text, end_pos)
@@ -177,7 +178,7 @@ class Codify(Task):
             begin_start, begin_end, _ = self._find_actual_position_with_type(
                 text, beginning_excerpt
             )
-            if begin_start is not None:
+            if begin_start is not None and begin_end is not None:
                 word_end = self._find_word_end(text, begin_end)
                 words_after = self._get_n_words_after(text, word_end, 20)
 
@@ -207,7 +208,12 @@ class Codify(Task):
                 text, ending_excerpt
             )
 
-            if begin_start is not None and end_start is not None:
+            if (
+                begin_start is not None
+                and begin_end is not None
+                and end_start is not None
+                and end_end is not None
+            ):
                 # Expand fallback matches
                 if begin_type in ["first_20", "last_20", "first_half", "second_half"]:
                     begin_start, begin_end = self._expand_fallback_match(
@@ -477,12 +483,12 @@ class Codify(Task):
                     snippets.append(snippet)
                     found += 1
             else:
-                begin_match = strict_find(original_text, beginning)
+                strict_begin_match = strict_find(original_text, beginning)
                 if ending and ending.strip():
-                    end_match = strict_find(original_text, ending)
-                    if not end_match:
+                    strict_end_match = strict_find(original_text, ending)
+                    if not strict_end_match:
                         end_fail_count += 1
-                if not begin_match:
+                if not strict_begin_match:
                     begin_fail_count += 1
                 failed.append((beginning, ending))
 
@@ -828,7 +834,7 @@ class Codify(Task):
         else:
             for row_idx in row_texts:
                 chunk_results = chunk_results_by_row.get(row_idx, [])
-                row_map: dict[str, list[str]] = {}
+                row_map = {}
                 for category in selected_categories:
                     snippets = self.consolidate_snippets(
                         original_texts[row_idx],
@@ -888,13 +894,18 @@ class Codify(Task):
             save_dir=validation_dir,
             file_name=file_name,
             model=self.cfg.model,
+            decision_model=self.cfg.decision_model,
             n_parallels=self.cfg.n_parallels,
             n_runs=1,
             additional_instructions=base_instruction,
             modality=self.cfg.modality,
             n_attributes_per_run=self.cfg.max_categories_per_call,
         )
-        classifier = Classify(classify_cfg, client=self._get_client())
+        classifier = Classify(
+            classify_cfg,
+            client=self._get_client(),
+            decision_client=self._get_decision_client(),
+        )
 
         cls_df = pd.DataFrame({"text": remaining_texts})
         results_df = await classifier.run(
@@ -908,7 +919,8 @@ class Codify(Task):
             flagged_categories = {
                 category
                 for category in categories
-                if bool(results_df.at[idx, category])
+                if pd.notna(results_df.at[idx, category])
+                and bool(results_df.at[idx, category])
             }
             if flagged_categories:
                 flagged[row_idx] = flagged_categories
@@ -993,10 +1005,23 @@ class Codify(Task):
             )
 
         categories_dict = categories or {}
+        uses_completion_classifier = (
+            not dynamic_mode and bool(categories_dict) and self.cfg.n_rounds > 1
+        )
+        effective_decision_model = (
+            _common.effective_decision_model(
+                self._get_decision_client(),
+                self.cfg.decision_model,
+                fallback=self.cfg.model,
+            )
+            if uses_completion_classifier
+            else None
+        )
 
-        # Input signature covers the coded text plus the category set and
-        # chunking knobs.  A completed run with the same signature is
-        # reloaded from ``coded_passages.csv`` (zero provider calls).
+        # Input signature covers the coded text plus the category set,
+        # chunking knobs, and effective decision model.  A completed run with
+        # the same signature is reloaded from ``coded_passages.csv`` (zero
+        # provider calls).
         signature = _common.compute_input_signature(
             original_texts,
             categories_dict,
@@ -1006,6 +1031,7 @@ class Codify(Task):
             self.cfg.max_categories_per_call,
             self.cfg.modality,
             self.cfg.model,
+            effective_decision_model,
         )
         list_columns = (
             ["coded_passages"] if dynamic_mode else list(categories_dict.keys())
