@@ -26,12 +26,204 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from ...client.decision import (
+    ChoiceAnswer,
+    ChoiceQuestion,
+    DecisionClient,
+    DecisionQuestion,
+    DecisionResult,
+)
+from ...client.resolve import resolve_decision_model
 from ...templates import load_prompt
 from ...utils.file_utils import save_dataframe_with_fallback
 from ...utils.parsing import safest_json
 from .. import _common
 from ..base import Task
 from .bt import bt_standard_errors, fit_bt
+
+_VALID_CHOICE_OUTCOMES = frozenset({"circle", "square", "draw", "insufficient_signal"})
+
+
+def _build_pair_state(
+    entry_circle: str,
+    entry_square: str,
+    *,
+    circle_first: bool,
+    additional_instructions: str | None,
+) -> dict[str, Any]:
+    """Build the Circle/Square state dict, preserving ``circle_first`` key order."""
+    state: dict[str, Any] = (
+        {"circle": entry_circle, "square": entry_square}
+        if circle_first
+        else {"square": entry_square, "circle": entry_circle}
+    )
+    if additional_instructions:
+        state["additional_instructions"] = additional_instructions
+    return state
+
+
+def _build_rank_choice(
+    attr: str,
+    definition: str,
+    *,
+    modality: str,
+    circle_first: bool,
+) -> ChoiceQuestion:
+    """Build a 4-way ``ChoiceQuestion`` adjudicating Circle vs Square on ``attr``."""
+    noun = "entity" if modality == "entity" else "entry"
+    desc = str(definition).strip() if definition is not None else ""
+    attr_clause = f"'{attr}' ({desc})" if desc else f"'{attr}'"
+    circle_desc = (
+        f"Circle {noun} shows stronger direct signal of {attr_clause} than Square."
+    )
+    square_desc = (
+        f"Square {noun} shows stronger direct signal of {attr_clause} than Circle."
+    )
+    draw_desc = (
+        f"Draw: Circle and Square show indistinguishable strength on {attr_clause}."
+    )
+    insufficient_desc = (
+        "Insufficient signal: neither Circle nor Square shows direct signal "
+        f"for {attr_clause}."
+    )
+    if circle_first:
+        criteria: dict[str, str | None] = {
+            "circle": circle_desc,
+            "square": square_desc,
+            "draw": draw_desc,
+            "insufficient_signal": insufficient_desc,
+        }
+    else:
+        criteria = {
+            "square": square_desc,
+            "circle": circle_desc,
+            "draw": draw_desc,
+            "insufficient_signal": insufficient_desc,
+        }
+    instructions = (
+        f"Compare Circle and Square on {attr_clause}. "
+        "Choose 'circle' if Circle shows stronger direct signal than Square, "
+        "'square' if Square shows stronger direct signal than Circle, "
+        "'draw' if their strength is indistinguishable, or "
+        "'insufficient_signal' if neither shows direct signal."
+    )
+    return ChoiceQuestion(instructions=instructions, criteria=criteria)
+
+
+def _resolve_choice_winner(ans: ChoiceAnswer) -> str | None:
+    """Resolve a :class:`ChoiceAnswer` into one of the 4 rank outcomes or ``None``."""
+    if ans.refused:
+        return None
+    if ans.probabilities:
+        norm_probs: dict[str, float] = {}
+        for opt, prob in ans.probabilities.items():
+            key = str(opt).strip().lower()
+            if key in _VALID_CHOICE_OUTCOMES:
+                norm_probs[key] = float(prob)
+        if norm_probs:
+            max_prob = max(norm_probs.values())
+            winners = [k for k, v in norm_probs.items() if v == max_prob]
+            if len(winners) == 1:
+                return winners[0]
+            if "circle" in winners and "square" in winners:
+                return "draw"
+            if ans.choice is not None:
+                choice_norm = str(ans.choice).strip().lower()
+                if choice_norm in winners:
+                    return choice_norm
+            return "draw"
+    if ans.choice is not None:
+        choice_norm = str(ans.choice).strip().lower()
+        if choice_norm in _VALID_CHOICE_OUTCOMES:
+            return choice_norm
+    return None
+
+
+def _is_decision_result_payload(obj: dict[str, Any]) -> bool:
+    """Return ``True`` when ``obj`` is a serialized :class:`DecisionResult`."""
+    raw_answers = obj.get("answers")
+    if not isinstance(raw_answers, dict) or "model" not in obj:
+        return False
+    if not raw_answers:
+        return "input_tokens" in obj and "output_tokens" in obj
+    return all(
+        isinstance(item, dict) and item.get("type") in {"noul", "choice", "score"}
+        for item in raw_answers.values()
+    )
+
+
+def _decision_result_to_winners(
+    result: DecisionResult,
+    batch_attrs: list[str],
+) -> dict[str, str]:
+    """Extract ``{attr: winner}`` from a :class:`DecisionResult`, skipping refusals."""
+    winners: dict[str, str] = {}
+    lower_answers = {str(k).strip().lower(): v for k, v in result.answers.items()}
+    for attr in batch_attrs:
+        ans = result.answers.get(attr)
+        if ans is None:
+            ans = lower_answers.get(str(attr).strip().lower())
+        if not isinstance(ans, ChoiceAnswer):
+            continue
+        winner = _resolve_choice_winner(ans)
+        if winner is not None:
+            winners[attr] = winner
+    return winners
+
+
+async def _decode_round_outcomes(
+    resp_raw: Any,
+    batch_attrs: list[str],
+) -> dict[str, Any]:
+    """Decode one round CSV ``Response`` cell (DecisionResult JSON or LLM JSON)."""
+    if isinstance(resp_raw, DecisionResult):
+        return _decision_result_to_winners(resp_raw, batch_attrs)
+    safe_obj = await _coerce_dict(resp_raw)
+    if not safe_obj:
+        return {}
+    if _is_decision_result_payload(safe_obj):
+        parsed = DecisionResult.from_dict(safe_obj)
+        return _decision_result_to_winners(parsed, batch_attrs)
+    return safe_obj
+
+
+def _is_completed_round_csv(path: str) -> bool:
+    """Return ``True`` when a round CSV carries completed round metadata."""
+    try:
+        header = pd.read_csv(path, nrows=1)
+    except (OSError, ValueError):
+        return False
+    if {"Batch", "IdA", "IdB"}.issubset(header.columns):
+        return True
+    if "Identifier" in header.columns and not header.empty:
+        return len(str(header["Identifier"].iloc[0]).split("|")) == 5
+    return False
+
+
+def _attach_round_metadata(
+    resp_df: pd.DataFrame,
+    meta_map: dict[str, tuple[int, int, str, str]],
+) -> pd.DataFrame:
+    """Attach ``Batch``/``Pair``/``IdA``/``IdB`` metadata while preserving existing rows."""
+    idents = resp_df["Identifier"].astype(str)
+    for col, idx, default in (
+        ("Batch", 0, np.nan),
+        ("Pair", 1, np.nan),
+        ("IdA", 2, ""),
+        ("IdB", 3, ""),
+    ):
+        if col in resp_df.columns:
+            existing = resp_df[col].tolist()
+            resp_df[col] = [
+                meta_map[ident][idx] if ident in meta_map else prev
+                for ident, prev in zip(idents, existing)
+            ]
+        else:
+            resp_df[col] = [
+                meta_map[ident][idx] if ident in meta_map else default
+                for ident in idents
+            ]
+    return resp_df
 
 
 def _is_missing_scalar(value: Any) -> bool:
@@ -121,6 +313,7 @@ class RankConfig:
     save_dir: str = "rank"
     file_name: str = "rankings"
     model: str = "gpt-5.4-mini"
+    decision_model: str | None = None
     n_parallels: int = 50
     n_rounds: int = 5
     matches_per_round: int = 3
@@ -276,13 +469,13 @@ class Rank(Task):
             for j in ids_sorted[lower:upper]:
                 if i_id == j:
                     continue
-                candidate_pairs_set.add(tuple(sorted((i_id, j))))
+                candidate_pairs_set.add((i_id, j) if i_id < j else (j, i_id))
         for hs in high_se_ids:
             others = [x for x in item_ids if x != hs]
             k = min(candidate_neighbors, len(others))
             samp = self.rng.sample(others, k)
             for j in samp:
-                candidate_pairs_set.add(tuple(sorted((hs, j))))
+                candidate_pairs_set.add((hs, j) if hs < j else (j, hs))
         remaining_capacity = max_pairs - len(candidate_pairs_set)
         n_random_targets = int(self._EXPLORE_FRAC * n * mpr)
         if remaining_capacity > 0:
@@ -291,7 +484,7 @@ class Rank(Task):
                 if n < 2:
                     break
                 a, b = self.rng.sample(item_ids, 2)
-                candidate_pairs_set.add(tuple(sorted((a, b))))
+                candidate_pairs_set.add((a, b) if a < b else (b, a))
         partners_count = {i: 0 for i in item_ids}
         for a, b in candidate_pairs_set:
             partners_count[a] += 1
@@ -302,7 +495,7 @@ class Rank(Task):
                 if not potential:
                     break
                 j = self.rng.choice(potential)
-                pair = tuple(sorted((i_id, j)))
+                pair = (i_id, j) if i_id < j else (j, i_id)
                 if pair not in candidate_pairs_set:
                     candidate_pairs_set.add(pair)
                     partners_count[i_id] += 1
@@ -371,6 +564,136 @@ class Rank(Task):
         )
 
     # ------------------------------------------------------------------
+    # Shared adjudication helper (normal rounds + catch-up)
+    # ------------------------------------------------------------------
+    async def _adjudicate_pairs(
+        self,
+        *,
+        pairs: list[tuple[str, str]],
+        texts_by_id: dict[str, str],
+        attr_batches: list[list[str]],
+        rnd: int,
+        id_prefix: str,
+        round_path: str,
+        reset_files: bool,
+        decision_client: DecisionClient | None,
+        effective_model: str,
+        history_pairs: dict[str, list[tuple[str, str]]],
+        **kwargs: Any,
+    ) -> None:
+        """Adjudicate ``pairs`` across ``attr_batches``, checkpoint, and record outcomes."""
+        from ...engine.batch import batch_decide, batch_execute
+
+        if not pairs or not attr_batches:
+            return
+        ids: list[str] = []
+        meta_map: dict[str, tuple[int, int, str, str]] = {}
+        if decision_client is not None:
+            states: list[str | dict[str, Any]] = []
+            question_sets: list[dict[str, DecisionQuestion]] = []
+            for batch_idx, batch in enumerate(attr_batches):
+                attr_def_map = (
+                    {a: self.cfg.attributes[a] for a in batch}
+                    if isinstance(self.cfg.attributes, dict)
+                    else {a: "" for a in batch}
+                )
+                for pair_idx, (id_a, id_b) in enumerate(pairs):
+                    raw_ident = f"{id_prefix}{rnd}|{batch_idx}|{pair_idx}|{id_a}|{id_b}"
+                    hashed_ident = _common.hash_identifier(raw_ident)
+                    circle_first_flag = (
+                        self.cfg.circle_first
+                        if self.cfg.circle_first is not None
+                        else self.rng.random() < 0.5
+                    )
+                    states.append(
+                        _build_pair_state(
+                            texts_by_id[id_a],
+                            texts_by_id[id_b],
+                            circle_first=circle_first_flag,
+                            additional_instructions=self.cfg.additional_instructions,
+                        )
+                    )
+                    question_sets.append(
+                        {
+                            attr: _build_rank_choice(
+                                attr,
+                                attr_def_map[attr],
+                                modality=self.cfg.modality,
+                                circle_first=circle_first_flag,
+                            )
+                            for attr in batch
+                        }
+                    )
+                    ids.append(hashed_ident)
+                    meta_map[hashed_ident] = (batch_idx, pair_idx, id_a, id_b)
+            resp_df = await batch_decide(
+                states=states,
+                question_sets=question_sets,
+                identifiers=ids,
+                client=decision_client,
+                model=effective_model,
+                n_parallels=self.cfg.n_parallels,
+                save_path=round_path,
+                reset_files=reset_files,
+                **kwargs,
+            )
+        else:
+            prompts: list[str] = []
+            for batch_idx, batch in enumerate(attr_batches):
+                attr_def_map = (
+                    {a: self.cfg.attributes[a] for a in batch}
+                    if isinstance(self.cfg.attributes, dict)
+                    else {a: "" for a in batch}
+                )
+                for pair_idx, (id_a, id_b) in enumerate(pairs):
+                    raw_ident = f"{id_prefix}{rnd}|{batch_idx}|{pair_idx}|{id_a}|{id_b}"
+                    hashed_ident = _common.hash_identifier(raw_ident)
+                    circle_first_flag = (
+                        self.cfg.circle_first
+                        if self.cfg.circle_first is not None
+                        else self.rng.random() < 0.5
+                    )
+                    prompts.append(
+                        self._template.render(
+                            entry_circle=texts_by_id[id_a],
+                            entry_square=texts_by_id[id_b],
+                            attributes=attr_def_map,
+                            additional_instructions=self.cfg.additional_instructions
+                            or "",
+                            modality=self.cfg.modality,
+                            circle_first=circle_first_flag,
+                        )
+                    )
+                    ids.append(hashed_ident)
+                    meta_map[hashed_ident] = (batch_idx, pair_idx, id_a, id_b)
+            resp_df = await batch_execute(
+                prompts=prompts,
+                identifiers=ids,
+                client=self._get_client(),
+                model=self.cfg.model,
+                json_mode=self.cfg.modality != "audio",
+                n_parallels=self.cfg.n_parallels,
+                save_path=round_path,
+                reset_files=reset_files,
+                **kwargs,
+            )
+
+        resp_df = _attach_round_metadata(resp_df, meta_map)
+        resp_df.to_csv(round_path, index=False)
+
+        for ident, resp in zip(resp_df.Identifier, resp_df.Response):
+            meta = meta_map.get(str(ident))
+            if not meta:
+                continue
+            batch_idx, _, id_a, id_b = meta
+            safe_obj = await _decode_round_outcomes(resp, attr_batches[batch_idx])
+            if not safe_obj:
+                continue
+            _record_outcomes(
+                safe_obj, attr_batches[batch_idx], id_a, id_b, history_pairs
+            )
+
+    # ------------------------------------------------------------------
     # Resume: catch up new items on already-completed rounds
     # ------------------------------------------------------------------
     async def _catch_up_existing_rounds(
@@ -387,6 +710,8 @@ class Rank(Task):
         base_name: str,
         _write_checkpoint: Callable[[], None],
         reset_files: bool,
+        decision_client: DecisionClient | None,
+        effective_model: str,
         **kwargs: Any,
     ) -> None:
         """Give ``new_ids`` the matches they missed in already-completed rounds."""
@@ -424,76 +749,19 @@ class Rank(Task):
                     pairs_needed.append((nid, opp))
             if not pairs_needed:
                 continue
-            prompts: list[str] = []
-            ids: list[str] = []
-            meta_map: dict[str, tuple[int, int, str, str]] = {}
-            for batch_idx, batch in enumerate(attr_batches):
-                attr_def_map = (
-                    {a: self.cfg.attributes[a] for a in batch}
-                    if isinstance(self.cfg.attributes, dict)
-                    else {a: "" for a in batch}
-                )
-                for pair_idx, (id_a, id_b) in enumerate(pairs_needed):
-                    raw_ident = f"catchup|{rnd}|{batch_idx}|{pair_idx}|{id_a}|{id_b}"
-                    hashed_ident = _common.hash_identifier(raw_ident)
-                    circle_first_flag = (
-                        self.cfg.circle_first
-                        if self.cfg.circle_first is not None
-                        else self.rng.random() < 0.5
-                    )
-                    prompts.append(
-                        self._template.render(
-                            entry_circle=texts_by_id[id_a],
-                            entry_square=texts_by_id[id_b],
-                            attributes=attr_def_map,
-                            additional_instructions=self.cfg.additional_instructions
-                            or "",
-                            modality=self.cfg.modality,
-                            circle_first=circle_first_flag,
-                        )
-                    )
-                    ids.append(hashed_ident)
-                    meta_map[hashed_ident] = (batch_idx, pair_idx, id_a, id_b)
-            if not prompts:
-                continue
-            from ...engine.batch import batch_execute
-
-            resp_df = await batch_execute(
-                prompts=prompts,
-                identifiers=ids,
-                client=self._get_client(),
-                model=self.cfg.model,
-                json_mode=self.cfg.modality != "audio",
-                n_parallels=self.cfg.n_parallels,
-                save_path=round_path,
+            await self._adjudicate_pairs(
+                pairs=pairs_needed,
+                texts_by_id=texts_by_id,
+                attr_batches=attr_batches,
+                rnd=rnd,
+                id_prefix="catchup|",
+                round_path=round_path,
                 reset_files=reset_files,
+                decision_client=decision_client,
+                effective_model=effective_model,
+                history_pairs=history_pairs,
                 **kwargs,
             )
-            resp_df["Batch"] = resp_df.Identifier.map(
-                lambda x, m=meta_map: m.get(str(x), (np.nan, np.nan, "", ""))[0]
-            )
-            resp_df["Pair"] = resp_df.Identifier.map(
-                lambda x, m=meta_map: m.get(str(x), (np.nan, np.nan, "", ""))[1]
-            )
-            resp_df["IdA"] = resp_df.Identifier.map(
-                lambda x, m=meta_map: m.get(str(x), (np.nan, np.nan, "", ""))[2]
-            )
-            resp_df["IdB"] = resp_df.Identifier.map(
-                lambda x, m=meta_map: m.get(str(x), (np.nan, np.nan, "", ""))[3]
-            )
-            resp_df.to_csv(round_path, index=False)
-
-            for ident, resp in zip(resp_df.Identifier, resp_df.Response):
-                meta = meta_map.get(str(ident))
-                if not meta:
-                    continue
-                batch_idx, _, id_a, id_b = meta
-                safe_obj = await _coerce_dict(resp)
-                if not safe_obj:
-                    continue
-                _record_outcomes(
-                    safe_obj, attr_batches[batch_idx], id_a, id_b, history_pairs
-                )
             se_agg_next = self._refit_all(
                 attr_keys, item_ids, history_pairs, ratings, se_store
             )
@@ -602,9 +870,13 @@ class Rank(Task):
                     ):
                         try:
                             idx_str = fname[len(base_name) + 6 : -4]
-                            existing_rounds.append(int(idx_str))
+                            rnd_idx = int(idx_str)
                         except ValueError:
                             continue
+                        if _is_completed_round_csv(
+                            os.path.join(self.cfg.save_dir, fname)
+                        ):
+                            existing_rounds.append(rnd_idx)
             except OSError:
                 existing_rounds = []
         if existing_rounds:
@@ -650,12 +922,36 @@ class Rank(Task):
             a: {i: np.nan for i in item_ids} for a in attr_keys
         }
 
+        decision_client = self._get_decision_client()
+        effective_model = (
+            resolve_decision_model(self.cfg.decision_model, fallback=self.cfg.model)
+            or self.cfg.model
+            if decision_client is not None
+            else self.cfg.model
+        )
+        if self.cfg.n_attributes_per_run is not None and (
+            not isinstance(self.cfg.n_attributes_per_run, int)
+            or self.cfg.n_attributes_per_run < 1
+        ):
+            raise ValueError("n_attributes_per_run must be None or an integer >= 1")
+        if decision_client is not None:
+            provider_cap = max(
+                1, int(getattr(decision_client, "max_questions_per_call", 64))
+            )
+            requested_batch_size: int | None = (
+                min(self.cfg.n_attributes_per_run, provider_cap)
+                if self.cfg.n_attributes_per_run is not None
+                else provider_cap
+            )
+        else:
+            requested_batch_size = self.cfg.n_attributes_per_run
+
         # Attribute batches, defined once so replay lines up with the cache.
         attr_items = [(attr, attr) for attr in attr_keys]
         attr_batch_items, effective_n_attributes_per_run = (
             _common.resolve_attribute_batches(
                 attr_items,
-                requested_n=self.cfg.n_attributes_per_run,
+                requested_n=requested_batch_size,
                 metadata=run_metadata,
                 reset_files=reset_files,
             )
@@ -680,7 +976,7 @@ class Rank(Task):
         _common.update_run_metadata(
             self.cfg.save_dir,
             base_name,
-            model=self.cfg.model,
+            model=effective_model,
             n_attributes_per_run=effective_n_attributes_per_run,
             attribute_batches=[[name for name, _ in b] for b in attr_batch_items],
         )
@@ -751,7 +1047,9 @@ class Rank(Task):
                             continue
                         if batch_idx < 0 or batch_idx >= len(attr_batches):
                             continue
-                        safe_obj = await _coerce_dict(resp_raw)
+                        safe_obj = await _decode_round_outcomes(
+                            resp_raw, attr_batches[batch_idx]
+                        )
                         if not safe_obj:
                             continue
                         _record_outcomes(
@@ -775,7 +1073,9 @@ class Rank(Task):
                             continue
                         if batch_idx < 0 or batch_idx >= len(attr_batches):
                             continue
-                        safe_obj = await _coerce_dict(resp_raw)
+                        safe_obj = await _decode_round_outcomes(
+                            resp_raw, attr_batches[batch_idx]
+                        )
                         if not safe_obj:
                             continue
                         _record_outcomes(
@@ -808,12 +1108,12 @@ class Rank(Task):
             base_name=base_name,
             _write_checkpoint=_write_checkpoint,
             reset_files=reset_files,
+            decision_client=decision_client,
+            effective_model=effective_model,
             **kwargs,
         )
 
         # New rounds.
-        from ...engine.batch import batch_execute
-
         for rnd in range(start_round, self.cfg.n_rounds):
             # aggregate current ratings across attributes for pairing
             current_agg = {
@@ -834,75 +1134,20 @@ class Rank(Task):
             )
             if not pairs:
                 break
-            prompts: list[str] = []
-            ids: list[str] = []
-            meta_map: dict[str, tuple[int, int, str, str]] = {}
-            for batch_idx, batch in enumerate(attr_batches):
-                attr_def_map = (
-                    {a: self.cfg.attributes[a] for a in batch}
-                    if isinstance(self.cfg.attributes, dict)
-                    else {a: "" for a in batch}
-                )
-                for pair_idx, ((id_a, t_a), (id_b, t_b)) in enumerate(pairs):
-                    raw_ident = f"{rnd}|{batch_idx}|{pair_idx}|{id_a}|{id_b}"
-                    hashed_ident = _common.hash_identifier(raw_ident)
-                    circle_first_flag = (
-                        self.cfg.circle_first
-                        if self.cfg.circle_first is not None
-                        else self.rng.random() < 0.5
-                    )
-                    prompts.append(
-                        self._template.render(
-                            entry_circle=t_a,
-                            entry_square=t_b,
-                            attributes=attr_def_map,
-                            additional_instructions=self.cfg.additional_instructions
-                            or "",
-                            modality=self.cfg.modality,
-                            circle_first=circle_first_flag,
-                        )
-                    )
-                    ids.append(hashed_ident)
-                    meta_map[hashed_ident] = (batch_idx, pair_idx, id_a, id_b)
             round_path = os.path.join(self.cfg.save_dir, f"{base_name}_round{rnd}.csv")
-            resp_df = await batch_execute(
-                prompts=prompts,
-                identifiers=ids,
-                client=self._get_client(),
-                model=self.cfg.model,
-                json_mode=self.cfg.modality != "audio",
-                n_parallels=self.cfg.n_parallels,
-                save_path=round_path,
+            await self._adjudicate_pairs(
+                pairs=[(id_a, id_b) for (id_a, _), (id_b, _) in pairs],
+                texts_by_id=texts_by_id,
+                attr_batches=attr_batches,
+                rnd=rnd,
+                id_prefix="",
+                round_path=round_path,
                 reset_files=reset_files,
+                decision_client=decision_client,
+                effective_model=effective_model,
+                history_pairs=history_pairs,
                 **kwargs,
             )
-            # attach metadata columns and overwrite the round CSV
-            resp_df["Batch"] = resp_df.Identifier.map(
-                lambda x, m=meta_map: m.get(str(x), (np.nan, np.nan, "", ""))[0]
-            )
-            resp_df["Pair"] = resp_df.Identifier.map(
-                lambda x, m=meta_map: m.get(str(x), (np.nan, np.nan, "", ""))[1]
-            )
-            resp_df["IdA"] = resp_df.Identifier.map(
-                lambda x, m=meta_map: m.get(str(x), (np.nan, np.nan, "", ""))[2]
-            )
-            resp_df["IdB"] = resp_df.Identifier.map(
-                lambda x, m=meta_map: m.get(str(x), (np.nan, np.nan, "", ""))[3]
-            )
-            resp_df.to_csv(round_path, index=False)
-
-            # parse each response into the full history
-            for ident, resp in zip(resp_df.Identifier, resp_df.Response):
-                meta = meta_map.get(str(ident))
-                if not meta:
-                    continue
-                batch_idx, _, id_a, id_b = meta
-                safe_obj = await _coerce_dict(resp)
-                if not safe_obj:
-                    continue
-                _record_outcomes(
-                    safe_obj, attr_batches[batch_idx], id_a, id_b, history_pairs
-                )
 
             # refit on the full history, then centre and checkpoint
             se_agg_next = self._refit_all(
