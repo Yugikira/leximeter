@@ -186,7 +186,7 @@ class Rank(Task):
             outcomes = history_pairs[attr]
             if len(outcomes) == 0:
                 continue
-            bt_scores, n_ij, p_ij = fit_bt(
+            fit_result = fit_bt(
                 item_ids=item_ids,
                 outcomes=outcomes,
                 pseudo=self.cfg.learning_rate,
@@ -194,6 +194,8 @@ class Rank(Task):
                 tol=self._TOL,
                 return_info=True,
             )
+            assert isinstance(fit_result, tuple)
+            bt_scores, n_ij, p_ij = fit_result
             for i in item_ids:
                 ratings[i][attr] = bt_scores[i]
             s_vec = np.array([bt_scores[i] for i in item_ids])
@@ -278,13 +280,13 @@ class Rank(Task):
             for j in ids_sorted[lower:upper]:
                 if i_id == j:
                     continue
-                candidate_pairs_set.add(tuple(sorted((i_id, j))))
+                candidate_pairs_set.add((i_id, j) if i_id < j else (j, i_id))
         for hs in high_se_ids:
             others = [x for x in item_ids if x != hs]
             k = min(candidate_neighbors, len(others))
             samp = self.rng.sample(others, k)
             for j in samp:
-                candidate_pairs_set.add(tuple(sorted((hs, j))))
+                candidate_pairs_set.add((hs, j) if hs < j else (j, hs))
         remaining_capacity = max_pairs - len(candidate_pairs_set)
         n_random_targets = int(self._EXPLORE_FRAC * n * mpr)
         if remaining_capacity > 0:
@@ -293,7 +295,7 @@ class Rank(Task):
                 if n < 2:
                     break
                 a, b = self.rng.sample(item_ids, 2)
-                candidate_pairs_set.add(tuple(sorted((a, b))))
+                candidate_pairs_set.add((a, b) if a < b else (b, a))
         partners_count = {i: 0 for i in item_ids}
         for a, b in candidate_pairs_set:
             partners_count[a] += 1
@@ -304,7 +306,7 @@ class Rank(Task):
                 if not potential:
                     break
                 j = self.rng.choice(potential)
-                pair = tuple(sorted((i_id, j)))
+                pair = (i_id, j) if i_id < j else (j, i_id)
                 if pair not in candidate_pairs_set:
                     candidate_pairs_set.add(pair)
                     partners_count[i_id] += 1

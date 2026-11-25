@@ -145,7 +145,7 @@ class Codify(Task):
                 start_pos, end_pos, match_type = self._find_actual_position_with_type(
                     text, beginning_excerpt
                 )
-                if start_pos is not None:
+                if start_pos is not None and end_pos is not None:
                     # Always ensure word boundaries and add some context
                     start_pos = self._find_word_start(text, start_pos)
                     end_pos = self._find_word_end(text, end_pos)
@@ -179,7 +179,7 @@ class Codify(Task):
             begin_start, begin_end, _ = self._find_actual_position_with_type(
                 text, beginning_excerpt
             )
-            if begin_start is not None:
+            if begin_start is not None and begin_end is not None:
                 word_end = self._find_word_end(text, begin_end)
                 words_after = self._get_n_words_after(text, word_end, 20)
 
@@ -209,7 +209,12 @@ class Codify(Task):
                 text, ending_excerpt
             )
 
-            if begin_start is not None and end_start is not None:
+            if (
+                begin_start is not None
+                and begin_end is not None
+                and end_start is not None
+                and end_end is not None
+            ):
                 # Expand fallback matches
                 if begin_type in ["first_20", "last_20", "first_half", "second_half"]:
                     begin_start, begin_end = self._expand_fallback_match(
@@ -479,12 +484,12 @@ class Codify(Task):
                     snippets.append(snippet)
                     found += 1
             else:
-                begin_match = strict_find(original_text, beginning)
+                strict_begin_match = strict_find(original_text, beginning)
                 if ending and ending.strip():
-                    end_match = strict_find(original_text, ending)
-                    if not end_match:
+                    strict_end_match = strict_find(original_text, ending)
+                    if not strict_end_match:
                         end_fail_count += 1
-                if not begin_match:
+                if not strict_begin_match:
                     begin_fail_count += 1
                 failed.append((beginning, ending))
 
@@ -856,7 +861,7 @@ class Codify(Task):
         else:
             for row_idx in row_texts:
                 chunk_results = chunk_results_by_row.get(row_idx, [])
-                row_map: dict[str, list[str]] = {}
+                static_row_map: dict[str, list[str]] = {}
                 for category in selected_categories:
                     snippets = self.consolidate_snippets(
                         original_texts[row_idx],
@@ -864,8 +869,8 @@ class Codify(Task):
                         category,
                         debug_print=debug,
                     )
-                    row_map[category] = snippets
-                iteration_results[row_idx] = row_map
+                    static_row_map[category] = snippets
+                iteration_results[row_idx] = static_row_map
 
         return iteration_results
 

@@ -28,6 +28,7 @@ from .tasks.classify import Classify, ClassifyConfig
 from .tasks.codify import Codify, CodifyConfig
 from .tasks.compare import Compare, CompareConfig
 from .tasks.debias import Debias, DebiasConfig, DebiasResult
+from .tasks.debias.task import MeasurementMode, RemovalMethod
 from .tasks.deduplicate import Deduplicate, DeduplicateConfig
 from .tasks.deidentify import Deidentify, DeidentifyConfig
 from .tasks.discover import Discover, DiscoverConfig
@@ -983,12 +984,12 @@ async def debias(
     column_name: str,
     *,
     save_dir: str = "debias",
-    mode: str = "rate",
+    mode: MeasurementMode = "rate",
     measurement_attribute: str | None = None,
     removal_attribute: str | None = None,
     attributes: dict[str, str],
     signal_dictionary: dict[str, str],
-    removal_method: str = "codify",
+    removal_method: RemovalMethod = "codify",
     remaining_signal: bool = True,
     remaining_signal_attribute: str | None = None,
     remaining_signal_description: str | None = None,
