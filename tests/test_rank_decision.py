@@ -608,7 +608,8 @@ def test_rank_checkpoint_resume_interrupted_and_completed_zero_duplicate_calls(
     assert c_done.calls == 0
     pd.testing.assert_frame_equal(res_done, res_r1)
 
-    # 5. reset_files=True forces full recomputation
+    # 5. reset_files=True forces full recomputation (matches_per_round=3 on 4
+    #    items is the regular complete graph K_4, so all draws yield exact 0.0)
     c_reset = CountingDecisionClient({"clarity": "draw"})
     res_reset = run(
         rank(
@@ -617,7 +618,7 @@ def test_rank_checkpoint_resume_interrupted_and_completed_zero_duplicate_calls(
             attributes={"clarity": "clear writing"},
             save_dir=save_dir,
             n_rounds=1,
-            matches_per_round=2,
+            matches_per_round=3,
             reset_files=True,
             decision_client=c_reset,
         )
