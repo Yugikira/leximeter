@@ -13,6 +13,10 @@ Environment variables (all optional)::
     LEXIMETER_EMBEDDING_API_KEY   embedding key (openai only; defaults to
                                 LEXIMETER_API_KEY / OPENAI_API_KEY)
     LEXIMETER_SEARCH_PROVIDER   "tavily" (default) or "none"
+    LEXIMETER_DECISION_PROTOCOL "systemone", "dummy", or "none" (default: disabled)
+    LEXIMETER_DECISION_BASE_URL endpoint base URL for the Decision Provider
+    LEXIMETER_DECISION_API_KEY  API key for the Decision Provider
+    LEXIMETER_DECISION_MODEL    default model ID for the Decision Provider
 """
 
 from __future__ import annotations
@@ -21,6 +25,7 @@ import os
 from typing import Any
 
 from .base import LLMClient
+from .decision import DecisionClient
 from .embedding import EmbeddingClient
 from .search import SearchTool
 
@@ -123,4 +128,58 @@ def resolve_search_tool(
     )
 
 
-__all__ = ["resolve_client", "resolve_embedding_client", "resolve_search_tool"]
+def resolve_decision_client(
+    *,
+    protocol: str | None = None,
+    base_url: str | None = None,
+    api_key: str | None = None,
+    endpoint_path: str | None = None,
+    send_noul_criteria: bool | None = None,
+    decision_client: DecisionClient | None = None,
+) -> DecisionClient | None:
+    """Return a Decision Provider client, or ``None`` when disabled (default).
+
+    ``None`` means tasks fall back cleanly to their generative ``LLMClient``
+    path (ADR-0002, ADR-0004).
+    """
+    if decision_client is not None:
+        return decision_client
+
+    proto = (protocol or os.getenv("LEXIMETER_DECISION_PROTOCOL") or "").strip().lower()
+    if proto in ("", "none"):
+        return None
+    if proto == "dummy":
+        from .decision import DummyDecisionClient
+
+        return DummyDecisionClient()
+    if proto == "systemone":
+        from .systemone import SystemOneClient
+
+        kwargs: dict[str, Any] = {"base_url": base_url, "api_key": api_key}
+        if endpoint_path is not None:
+            kwargs["endpoint_path"] = endpoint_path
+        if send_noul_criteria is not None:
+            kwargs["send_noul_criteria"] = send_noul_criteria
+        return SystemOneClient(**kwargs)
+    raise ValueError(
+        f"Unknown LEXIMETER_DECISION_PROTOCOL {proto!r}; "
+        "expected 'systemone', 'dummy', or 'none'."
+    )
+
+
+def resolve_decision_model(
+    decision_model: str | None = None,
+    *,
+    fallback: str | None = None,
+) -> str | None:
+    """Resolve the Decision Provider model ID (explicit > env > fallback)."""
+    return decision_model or os.getenv("LEXIMETER_DECISION_MODEL") or fallback
+
+
+__all__ = [
+    "resolve_client",
+    "resolve_decision_client",
+    "resolve_decision_model",
+    "resolve_embedding_client",
+    "resolve_search_tool",
+]

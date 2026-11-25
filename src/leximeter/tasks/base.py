@@ -17,6 +17,7 @@ from typing import Any
 import pandas as pd
 
 from ..client.base import LLMClient
+from ..client.decision import DecisionClient
 from ..client.embedding import EmbeddingClient
 from ..client.search import SearchTool
 from . import _common
@@ -36,11 +37,14 @@ class Task(ABC):
         client: LLMClient | None = None,
         embedding_client: EmbeddingClient | None = None,
         search_tool: SearchTool | None = None,
+        decision_client: DecisionClient | None = None,
     ) -> None:
         self.cfg = cfg
         self._client = client
         self._embedding_client = embedding_client
         self._search_tool = search_tool
+        self._decision_client = decision_client
+        self._decision_client_resolved = decision_client is not None
         self._expand_save_dir()
 
     # ------------------------------------------------------------------
@@ -66,6 +70,14 @@ class Task(ABC):
 
             self._search_tool = resolve_search_tool()
         return self._search_tool
+
+    def _get_decision_client(self) -> DecisionClient | None:
+        if not self._decision_client_resolved:
+            from ..client.resolve import resolve_decision_client
+
+            self._decision_client = resolve_decision_client()
+            self._decision_client_resolved = True
+        return self._decision_client
 
     # ------------------------------------------------------------------
     # Common helpers

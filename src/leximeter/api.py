@@ -14,11 +14,12 @@ re-running completed stages.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 import pandas as pd
 
 from .client.base import LLMClient
+from .client.decision import DecisionClient
 from .client.embedding import EmbeddingClient
 from .client.search import SearchTool
 from .engine.retry import run_task_with_retry
@@ -89,48 +90,69 @@ async def rate(
 
 async def classify(
     df: pd.DataFrame,
-    column_name: str,
+    column_name: str | None = None,
     *,
     labels: dict[str, str],
     save_dir: str,
     model: str = "gpt-5.4-mini",
+    decision_model: str | None = None,
     n_runs: int = 1,
     n_parallels: int = 50,
     min_frequency: float = 0.6,
     n_attributes_per_run: int | None = None,
     additional_instructions: str | None = None,
     modality: str = "text",
+    differentiate: bool = False,
+    circle_column_name: str | None = None,
+    square_column_name: str | None = None,
+    circle_first: bool | None = None,
+    include_probabilities: bool = False,
     file_name: str = "classify_responses.csv",
     reset_files: bool = False,
     client: LLMClient | None = None,
     embedding_client: EmbeddingClient | None = None,
     search_tool: SearchTool | None = None,
+    decision_client: DecisionClient | None = None,
     **engine_kwargs: Any,
 ) -> pd.DataFrame:
     """Decide whether each label applies to each item.
 
     Returns ``df`` with one boolean column per label (True when the proportion
-    of runs marking the label True is >= ``min_frequency``).
+    of runs — or calibrated probability from a Decision Provider — is
+    ``>= min_frequency``) plus ``predicted_classes`` (and ``{label}_prob``
+    columns when ``include_probabilities=True`` with a Decision Provider).
     """
     cfg = ClassifyConfig(
         labels=labels,
         save_dir=save_dir,
         file_name=file_name,
         model=model,
+        decision_model=decision_model,
         n_runs=n_runs,
         n_parallels=n_parallels,
         min_frequency=min_frequency,
         n_attributes_per_run=n_attributes_per_run,
         additional_instructions=additional_instructions,
         modality=modality,
+        differentiate=differentiate,
+        circle_first=circle_first,
+        include_probabilities=include_probabilities,
     )
     task = Classify(
         cfg,
         client=client,
         embedding_client=embedding_client,
         search_tool=search_tool,
+        decision_client=decision_client,
     )
-    return await task.run(df, column_name, reset_files=reset_files, **engine_kwargs)
+    return await task.run(
+        df,
+        column_name,
+        circle_column_name=circle_column_name,
+        square_column_name=square_column_name,
+        reset_files=reset_files,
+        **engine_kwargs,
+    )
 
 
 async def extract(
@@ -970,12 +992,12 @@ async def debias(
     column_name: str,
     *,
     save_dir: str = "debias",
-    mode: str = "rate",
+    mode: Literal["rate", "classify", "extract", "rank"] = "rate",
     measurement_attribute: str | None = None,
     removal_attribute: str | None = None,
     attributes: dict[str, str],
     signal_dictionary: dict[str, str],
-    removal_method: str = "codify",
+    removal_method: Literal["codify", "paraphrase"] = "codify",
     remaining_signal: bool = True,
     remaining_signal_attribute: str | None = None,
     remaining_signal_description: str | None = None,
