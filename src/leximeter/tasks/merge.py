@@ -80,11 +80,13 @@ class MergeConfig:
     use_best_auto_match: bool = False
     candidate_scan_chunks: int = 5
     verbose: bool = True
+    order_strategy: _common.OrderStrategy = "per_run"
 
     def __post_init__(self) -> None:
         if self.additional_instructions is not None:
             cleaned = str(self.additional_instructions).strip()
             self.additional_instructions = cleaned or None
+        _common.validate_order_strategy(self.order_strategy)
 
 
 class Merge(Task):
@@ -390,25 +392,33 @@ class Merge(Task):
                     _write_group_file, group_path, clusters, candidates
                 )
 
+            order_strategy = _common.validate_order_strategy(self.cfg.order_strategy)
             prompts: list[str] = []
             identifiers: list[str] = []
-            base_ids: list[str] = []
-            for idx, (short_terms, long_terms) in enumerate(zip(clusters, candidates)):
-                short_dict = {s: "" for s in short_terms}
-                prompt = self._template.render(
-                    short_list=short_dict,
-                    long_list=list(long_terms),
-                    additional_instructions=self.cfg.additional_instructions or "",
-                )
-                base_id = f"merge_{attempt:02d}_{idx:05d}"
-                base_ids.append(base_id)
-                if self.cfg.n_runs > 1:
-                    for run in range(self.cfg.n_runs):
-                        prompts.append(prompt)
-                        identifiers.append(f"{base_id}_run{run}")
-                else:
+            base_ids: list[str] = [
+                f"merge_{attempt:02d}_{idx:05d}" for idx in range(len(clusters))
+            ]
+            n_runs = max(1, int(self.cfg.n_runs))
+            for run in range(n_runs):
+                for idx, (short_terms, long_terms) in enumerate(
+                    zip(clusters, candidates)
+                ):
+                    short_dict = _common.order_mapping(
+                        {s: "" for s in short_terms},
+                        strategy=order_strategy,
+                        run_idx=run + 1,
+                        batch_idx=attempt,
+                    )
+                    prompt = self._template.render(
+                        short_list=short_dict,
+                        long_list=list(long_terms),
+                        additional_instructions=self.cfg.additional_instructions or "",
+                    )
+                    base_id = base_ids[idx]
                     prompts.append(prompt)
-                    identifiers.append(base_id)
+                    identifiers.append(
+                        f"{base_id}_run{run}" if self.cfg.n_runs > 1 else base_id
+                    )
 
             if prompts:
                 resp_df = await batch_execute(
@@ -466,18 +476,18 @@ class Merge(Task):
                     elif use_embeddings and short_emb and long_emb:
                         s_vec = np.array(short_emb.get(s, []), dtype=float)
                         if s_vec.size:
-                            sims: dict[str, float] = {}
+                            cand_sims: dict[str, float] = {}
                             s_norm_val = np.linalg.norm(s_vec) + 1e-8
                             for cand in top_candidates:
                                 l_vec = np.array(long_emb.get(cand, []), dtype=float)
                                 if l_vec.size:
-                                    sims[cand] = float(
+                                    cand_sims[cand] = float(
                                         s_vec
                                         @ l_vec
                                         / (s_norm_val * (np.linalg.norm(l_vec) + 1e-8))
                                     )
-                            if sims:
-                                chosen = max(sims, key=sims.get)
+                            if cand_sims:
+                                chosen = max(cand_sims, key=lambda k: cand_sims[k])
                     if chosen:
                         k_norm = s_norm
                         v_norm = self._normalize(chosen)

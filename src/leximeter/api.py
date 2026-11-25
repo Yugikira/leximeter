@@ -523,6 +523,7 @@ async def merge(
     use_best_auto_match: bool = False,
     candidate_scan_chunks: int = 5,
     verbose: bool = True,
+    order_strategy: OrderStrategy = "per_run",
     file_name: str = "merge_responses.csv",
     reset_files: bool = False,
     client: LLMClient | None = None,
@@ -559,6 +560,7 @@ async def merge(
         use_best_auto_match=use_best_auto_match,
         candidate_scan_chunks=candidate_scan_chunks,
         verbose=verbose,
+        order_strategy=order_strategy,
     )
     task = Merge(
         cfg,

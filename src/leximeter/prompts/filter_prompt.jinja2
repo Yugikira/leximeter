@@ -5,9 +5,6 @@ BEGIN CONDITION
 END CONDITION
 Your task is to evaluate every entity in the list below on whether it meets the condition.
 You will return only those that do.
-BEGIN ENTITY LIST
-{{ entities }}
-END ENTITY LIST
 Carefully review every single entity; skip none.
 Do not skim: consider every entity with equal attention, including those buried in middle of list.
 Essential you output all entities that meet the condition; triple check that you do not miss any.
@@ -30,3 +27,6 @@ BEGIN ADDITIONAL INSTRUCTIONS/CLARIFICATIONS
 {{ additional_instructions }}
 END ADDITIONAL INSTRUCTIONS/CLARIFICATIONS
 {% endif %}
+BEGIN ENTITY LIST
+{{ entities }}
+END ENTITY LIST

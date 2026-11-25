@@ -1,14 +1,10 @@
+{#- Modified from openai/GABRIEL (Apache-2.0) for text-only / provider-neutral use. -#}
 Your goal is to step back and propose exactly {{ bucket_count }} broader "bucket" terms that could serve as mutually exclusive groupings to capture many of these raw terms while still being specific.
 Buckets often can be stylistically similar to the raw terms themselves (short phrases); can even be a raw term itself if that term already captures a broader grouping.
 
 Each bucket should substantively and thematically group multiple raw terms.
 Fine if some raw terms don't fit cleanly into any of your final buckets; aim though for your mutually exclusive buckets to jointly cover as many as reasonable.
 Identify umbrella terms that group raw term subsets without losing important distinctions, specificity, and substance.
-
-Below are the raw terms to bucketize.
-BEGIN RAW TERMS
-{{ terms }}
-END RAW TERMS
 
 We want exactly {{ bucket_count }} bucket terms.
 They should together capture as many raw terms as is reasonable, without vagueness and still being mutually exclusive, descriptive, and specific.
@@ -53,17 +49,12 @@ Bucket definitions must clearly explain what it means for a square entry to have
 
 {% if voting %}
 You are selecting the {{ bucket_count }} bucket terms by voting.
-The only bucket terms you can choose from are from the following set of bucket candidates:
-BEGIN BUCKET CANDIDATES
-{{ bucket_candidates }}
-END BUCKET CANDIDATES
-
-From these candidates only, choose the buckets (verbatim as they appear in the candidate keys) that best group the raw terms with the desired specificity, substance, and mutual exclusivity.
+From the bucket candidates provided below only, choose the buckets (verbatim as they appear in the candidate keys) that best group the raw terms with the desired specificity, substance, and mutual exclusivity.
 {% if selected_buckets %}
 The following bucket terms have **already been selected**; you should **not** select any similar/overlapping buckets from the candidate list:
 
 BEGIN ALREADY FINALIZED BUCKETS
-{{ selected_buckets }}
+{{ selected_buckets | ordered_dict_json }}
 END ALREADY FINALIZED BUCKETS
 
 You only need to vote for {{ bucket_count - (selected_buckets|length) }} additional buckets, not the full {{ bucket_count }}.
@@ -79,11 +70,11 @@ Strongly prefer new buckets that are orthogonal to existing buckets, explaining 
 If the obvious patterns are already covered, novelty (without triviality) is highly prized.
 Build a full, mutually exclusive set of buckets that together capture the biggest themes present in the raw terms, amongst the totality of all existing and new buckets you are voting for.
 
-Again, the already selected buckets are: {{ selected_buckets.keys() }}
+Again, the already selected buckets are: {{ selected_buckets.keys() | list }}
 You must vote for exactly {{ bucket_count - (selected_buckets|length) }} additional buckets.
-    {% else %}
+{% else %}
 You must vote for exactly {{ bucket_count }} buckets from the candidate list keys.
-    {% endif %}
+{% endif %}
 Output JSON only, in following format:
 {
     "<insert first voted for candidate bucket here verbatim>": "<insert short 1 sentence justification on why this bucket and how it is mutually exclusive from all other selected buckets here>",
@@ -111,3 +102,14 @@ BEGIN ADDITIONAL INSTRUCTIONS/CLARIFICATIONS
 {{ additional_instructions }}
 END ADDITIONAL INSTRUCTIONS/CLARIFICATIONS
 {% endif %}
+{% if voting %}
+The only bucket terms you can choose from are from the following set of bucket candidates:
+BEGIN BUCKET CANDIDATES
+{{ bucket_candidates }}
+END BUCKET CANDIDATES
+
+{% endif -%}
+Below are the raw terms to bucketize.
+BEGIN RAW TERMS
+{{ terms }}
+END RAW TERMS

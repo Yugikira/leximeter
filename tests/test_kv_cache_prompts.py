@@ -17,7 +17,23 @@ import pandas as pd
 import pytest
 from conftest import RecordingClient
 
-from leximeter import classify, codify, extract, rank, rate
+from leximeter import (
+    bucket,
+    classify,
+    codify,
+    compare,
+    deduplicate,
+    deidentify,
+    extract,
+    merge,
+    paraphrase,
+    poll,
+    rank,
+    rate,
+)
+from leximeter import (
+    filter as lex_filter,
+)
 from leximeter.tasks.classify import Classify, ClassifyConfig
 
 
@@ -853,3 +869,508 @@ def test_codify_prefix_first_order_strategy_and_batch_grouping(tmp_path):
     dyn_prefixes = [_prefix_before(p, "BEGIN TEXT ENTRY") for p in c_dyn.prompts]
     assert len(set(dyn_prefixes)) == 1
     assert "BEGIN USER INSTRUCTIONS" in dyn_prefixes[0]
+
+
+# ---------------------------------------------------------------------------
+# Issue #11 — Slice 11a: compare & paraphrase
+# ---------------------------------------------------------------------------
+
+
+def test_compare_prefix_first_and_circle_first_suffix_only(tmp_path):
+    df = pd.DataFrame(
+        {
+            "circle": ["CIRCLE_A", "CIRCLE_B", "CIRCLE_C"],
+            "square": ["SQUARE_A", "SQUARE_B", "SQUARE_C"],
+        }
+    )
+    marker = "Consider the following two distinct text entries:"
+    payload = {"circle mentions trade more than square": "Direct evidence."}
+
+    c_true = RecordingClient(payload)
+    run(
+        compare(
+            df,
+            "circle",
+            "square",
+            save_dir=str(tmp_path / "cmp_true"),
+            client=c_true,
+            differentiate=True,
+            circle_first=True,
+            additional_instructions="Focus on trade policy.",
+        )
+    )
+    c_false = RecordingClient(payload)
+    run(
+        compare(
+            df,
+            "circle",
+            "square",
+            save_dir=str(tmp_path / "cmp_false"),
+            client=c_false,
+            differentiate=True,
+            circle_first=False,
+            additional_instructions="Focus on trade policy.",
+        )
+    )
+
+    prefixes = [_prefix_before(p, marker) for p in c_true.prompts + c_false.prompts]
+    assert len(set(prefixes)) == 1
+    shared = prefixes[0]
+    assert "Output JSON only" in shared
+    assert "BEGIN ADDITIONAL INSTRUCTIONS/CLARIFICATIONS" in shared
+    assert "CIRCLE_A" not in shared
+    assert "SQUARE_A" not in shared
+
+    suf_t = c_true.prompts[0][c_true.prompts[0].index(marker) :]
+    suf_f = c_false.prompts[0][c_false.prompts[0].index(marker) :]
+    assert suf_t.index("BEGIN ENTRY CIRCLE") < suf_t.index("BEGIN ENTRY SQUARE")
+    assert suf_f.index("BEGIN ENTRY SQUARE") < suf_f.index("BEGIN ENTRY CIRCLE")
+
+    # circle_first=None randomizes across pairs while keeping the shared prefix unbroken
+    many_df = pd.DataFrame(
+        {
+            "circle": [f"C_{i}" for i in range(16)],
+            "square": [f"S_{i}" for i in range(16)],
+        }
+    )
+    c_rand = RecordingClient(payload)
+    run(
+        compare(
+            many_df,
+            "circle",
+            "square",
+            save_dir=str(tmp_path / "cmp_rand"),
+            client=c_rand,
+            differentiate=False,
+            circle_first=None,
+        )
+    )
+    rand_prefixes = [_prefix_before(p, marker) for p in c_rand.prompts]
+    assert len(set(rand_prefixes)) == 1
+    assert "similar to entry" in rand_prefixes[0]
+    orientations = {
+        p.index("BEGIN ENTRY CIRCLE") < p.index("BEGIN ENTRY SQUARE")
+        for p in c_rand.prompts
+    }
+    assert orientations == {True, False}
+
+
+def test_paraphrase_prefix_first_and_no_stale_multimodal_guidance(tmp_path):
+    df = pd.DataFrame({"text": ["RAW_PASSAGE_1", "RAW_PASSAGE_2", "RAW_PASSAGE_3"]})
+    client = RecordingClient({})
+
+    run(
+        paraphrase(
+            df,
+            "text",
+            instructions="Rewrite in neutral academic prose.",
+            save_dir=str(tmp_path / "para_text"),
+            client=client,
+            modality="text",
+        )
+    )
+    assert len(client.prompts) == 3
+    prefixes = [_prefix_before(p, "BEGIN TEXT ENTRY") for p in client.prompts]
+    assert len(set(prefixes)) == 1
+    shared = prefixes[0]
+    assert "BEGIN INSTRUCTIONS" in shared
+    assert "Rewrite in neutral academic prose." in shared
+    assert "RAW_PASSAGE_1" not in shared
+
+    # ADR-0002 text-only scope: stale multimodal lines must be absent
+    for prompt in client.prompts:
+        assert "image/audio/pdf" not in prompt.lower()
+        assert "- web:" not in prompt.lower()
+        assert "search term" not in prompt.lower()
+
+    # Entity modality also places Entity: in the trailing suffix
+    ent_df = pd.DataFrame({"entity": ["Apple Inc.", "Alphabet Inc."]})
+    ent_client = RecordingClient({})
+    run(
+        paraphrase(
+            ent_df,
+            "entity",
+            instructions="Standardize company names.",
+            save_dir=str(tmp_path / "para_entity"),
+            client=ent_client,
+            modality="entity",
+            json_mode=True,
+        )
+    )
+    ent_prefixes = [_prefix_before(p, "Entity: ") for p in ent_client.prompts]
+    assert len(set(ent_prefixes)) == 1
+    assert "Always output JSON only" in ent_prefixes[0]
+
+
+# ---------------------------------------------------------------------------
+# Issue #11 — Slice 11b: poll (persona + survey) & deidentify
+# ---------------------------------------------------------------------------
+
+
+def test_poll_persona_and_survey_prompts_are_prefix_first(tmp_path):
+    df = pd.DataFrame({"seed": ["SEED_NURSE_OHIO", "SEED_FARMER_IOWA", "SEED_DEV_WA"]})
+
+    class PollRecordingClient(RecordingClient):
+        async def complete(self, prompt, *, model, json_mode=False, **kwargs) -> str:
+            self.prompts.append(prompt)
+            if "BEGIN SURVEY QUESTIONS" in prompt:
+                return json.dumps({"Trust in media?": [["medium", 1.0]]})
+            # Return distinct persona bio per seed
+            seed_tag = next(
+                (s for s in df["seed"] if s in prompt),
+                "UNKNOWN_SEED",
+            )
+            return f"BIO_FOR_{seed_tag}"
+
+    client = PollRecordingClient({})
+    res = run(
+        poll(
+            df,
+            "seed",
+            population_description="US adults aged 25-65",
+            questions=["Trust in media?"],
+            save_dir=str(tmp_path / "poll_prefix"),
+            client=client,
+            n_questions_per_run=8,
+        )
+    )
+    assert list(res.columns) == ["seed", "persona", "Trust in media?"]
+    assert len(client.prompts) == 6
+
+    persona_prompts = client.prompts[:3]
+    survey_prompts = client.prompts[3:]
+
+    # 1. Persona prompts: static guidelines + population + Jenna Perez example + template precede BEGIN SEED
+    persona_prefixes = [_prefix_before(p, "BEGIN SEED") for p in persona_prompts]
+    assert len(set(persona_prefixes)) == 1
+    p_shared = persona_prefixes[0]
+    assert "US adults aged 25-65" in p_shared
+    assert "Name: <insert name here>" in p_shared
+    assert "SEED_NURSE_OHIO" not in p_shared
+
+    # 2. Survey prompts: instructions + questions + rules + output format precede BEGIN PERSONA
+    survey_prefixes = [_prefix_before(p, "BEGIN PERSONA") for p in survey_prompts]
+    assert len(set(survey_prefixes)) == 1
+    s_shared = survey_prefixes[0]
+    assert "BEGIN SURVEY QUESTIONS" in s_shared
+    assert "Trust in media?" in s_shared
+    assert "BEGIN OUTPUT FORMAT" in s_shared
+    assert "BIO_FOR_" not in s_shared
+
+
+def test_deidentify_prefix_first_and_single_current_map_block(tmp_path):
+    df = pd.DataFrame(
+        {
+            "group": ["g1", "g1"],
+            "text": [
+                "Alice lives in Springfield and works at Acme Labs.",
+                "Later Alice visited Bob in Springfield near Acme Labs.",
+            ],
+        }
+    )
+
+    class GrowingMapClient(RecordingClient):
+        async def complete(self, prompt, *, model, json_mode=False, **kwargs) -> str:
+            self.prompts.append(prompt)
+            if "Bob" in prompt:
+                return json.dumps(
+                    {
+                        "person's name": {
+                            "real forms": ["Alice"],
+                            "casted form": "Clara",
+                        },
+                        "second person's name": {
+                            "real forms": ["Bob"],
+                            "casted form": "David",
+                        },
+                    }
+                )
+            return json.dumps(
+                {"person's name": {"real forms": ["Alice"], "casted form": "Clara"}}
+            )
+
+    client = GrowingMapClient({})
+    res = run(
+        deidentify(
+            df,
+            "text",
+            grouping_column="group",
+            save_dir=str(tmp_path / "deid_prefix"),
+            client=client,
+            additional_instructions="Also anonymize local lab names.",
+        )
+    )
+    assert len(client.prompts) == 2
+    assert "Clara" in res["deidentified_text"].iloc[0]
+    assert "David" in res["deidentified_text"].iloc[1]
+
+    # Static preamble + examples + rules + additional_instructions precede dynamic current_map & text
+    prefixes = [_prefix_before(p, "BEGIN CURRENT MAPPING") for p in client.prompts]
+    assert len(set(prefixes)) == 1
+    shared = prefixes[0]
+    assert "Example mapping snippet:" in shared
+    assert "Olmsted Medical Center" in shared
+    assert "BEGIN ADDITIONAL INSTRUCTIONS/CLARIFICATIONS" in shared
+    assert "Also anonymize local lab names." in shared
+    assert "Alice" not in shared
+    assert "Clara" not in shared
+
+    # Chunk 2 carries the updated mapping strictly once in the trailing suffix
+    chunk2_suffix = client.prompts[1][
+        client.prompts[1].index("BEGIN CURRENT MAPPING") :
+    ]
+    assert chunk2_suffix.count('"casted form": "Clara"') == 1
+    assert chunk2_suffix.index("BEGIN CURRENT MAPPING") < chunk2_suffix.index(
+        "BEGIN TEXT"
+    )
+    # No duplicate mid-prompt "Current mapping:" / "existing mapping is:" breaks
+    assert "Again, the existing mapping is:" not in client.prompts[1]
+
+
+# ---------------------------------------------------------------------------
+# Issue #11 — Slice 11c: deduplicate, bucket, merge, filter
+# ---------------------------------------------------------------------------
+
+
+def test_deduplicate_prefix_first_across_groups(tmp_path):
+    df = pd.DataFrame({"term": ["Alpha", "Alpha Inc", "Beta", "Beta Corp"]})
+    client = RecordingClient({})
+    run(
+        deduplicate(
+            df,
+            "term",
+            save_dir=str(tmp_path / "dedup_prefix"),
+            client=client,
+            group_size=2,
+            use_embeddings=False,
+            additional_instructions="Preserve legal suffixes when meaningful.",
+        )
+    )
+    assert len(client.prompts) == 2
+    prefixes = [_prefix_before(p, "BEGIN RAW TERMS") for p in client.prompts]
+    assert len(set(prefixes)) == 1
+    shared = prefixes[0]
+    assert "Output JSON only" in shared
+    assert "BEGIN ADDITIONAL INSTRUCTIONS/CLARIFICATIONS" in shared
+    assert "Alpha" not in shared
+    assert "Beta" not in shared
+
+
+def test_bucket_prefix_first_across_generate_reduce_and_finalize(tmp_path):
+    df = pd.DataFrame({"term": ["t1", "t2", "t3", "t4", "t5", "t6"]})
+
+    class BucketRecordingClient(RecordingClient):
+        async def complete(self, prompt, *, model, json_mode=False, **kwargs) -> str:
+            self.prompts.append(prompt)
+            if "BEGIN BUCKET CANDIDATES" not in prompt:
+                return json.dumps({f"bucket_{i}": f"definition {i}" for i in range(6)})
+            if "BEGIN ALREADY FINALIZED BUCKETS" in prompt:
+                return json.dumps({"bucket_1": "complementary"})
+            return json.dumps({"bucket_0": "best", "bucket_1": "second"})
+
+    client = BucketRecordingClient({})
+    res = run(
+        bucket(
+            df,
+            "term",
+            save_dir=str(tmp_path / "bucket_prefix"),
+            client=client,
+            bucket_count=2,
+            n_terms_per_prompt=3,
+            repeat_bucketing=2,
+            repeat_voting=2,
+            top_k_per_round=1,
+            additional_instructions="Keep buckets domain-specific.",
+        )
+    )
+    assert len(res) == 2
+
+    gen_prompts = [p for p in client.prompts if "BEGIN BUCKET CANDIDATES" not in p]
+    vote_no_sel = [
+        p
+        for p in client.prompts
+        if "BEGIN BUCKET CANDIDATES" in p and "BEGIN ALREADY FINALIZED BUCKETS" not in p
+    ]
+    vote_with_sel = [
+        p
+        for p in client.prompts
+        if "BEGIN BUCKET CANDIDATES" in p and "BEGIN ALREADY FINALIZED BUCKETS" in p
+    ]
+
+    assert len(gen_prompts) >= 2
+    assert len(vote_no_sel) >= 2
+    assert len(vote_with_sel) >= 2
+
+    # 1. Generation: static rules + JSON format + additional_instructions precede BEGIN RAW TERMS
+    gen_prefixes = [_prefix_before(p, "BEGIN RAW TERMS") for p in gen_prompts]
+    assert len(set(gen_prefixes)) == 1
+    assert "Output JSON only" in gen_prefixes[0]
+    assert "BEGIN ADDITIONAL INSTRUCTIONS/CLARIFICATIONS" in gen_prefixes[0]
+
+    # 2. Reduce / first finalize voting: static rules + additional_instructions precede BEGIN BUCKET CANDIDATES
+    v0_prefixes = [_prefix_before(p, "BEGIN BUCKET CANDIDATES") for p in vote_no_sel]
+    assert len(set(v0_prefixes)) == 1
+    assert "BEGIN ADDITIONAL INSTRUCTIONS/CLARIFICATIONS" in v0_prefixes[0]
+    assert vote_no_sel[0].index("BEGIN BUCKET CANDIDATES") < vote_no_sel[0].index(
+        "BEGIN RAW TERMS"
+    )
+
+    # 3. Finalize with selected_buckets: finalized buckets sit inside shared static prefix before dynamic candidates/terms
+    v1_prefixes = [_prefix_before(p, "BEGIN BUCKET CANDIDATES") for p in vote_with_sel]
+    assert len(set(v1_prefixes)) == 1
+    assert "BEGIN ALREADY FINALIZED BUCKETS" in v1_prefixes[0]
+    assert "BEGIN ADDITIONAL INSTRUCTIONS/CLARIFICATIONS" in v1_prefixes[0]
+
+
+def test_merge_prefix_first_and_order_strategy(tmp_path):
+    df_left = pd.DataFrame(
+        {"company": ["Acme A", "Acme B", "Acme C", "Beta A", "Beta B", "Beta C"]}
+    )
+    df_right = pd.DataFrame(
+        {
+            "name": [
+                "Acme Alpha",
+                "Acme Beta",
+                "Acme Gamma",
+                "Beta Alpha",
+                "Beta Beta",
+                "Beta Gamma",
+            ],
+            "id": [1, 2, 3, 4, 5, 6],
+        }
+    )
+    payload = {
+        "Acme A": "Acme Alpha",
+        "Acme B": "Acme Beta",
+        "Acme C": "Acme Gamma",
+        "Beta A": "Beta Alpha",
+        "Beta B": "Beta Beta",
+        "Beta C": "Beta Gamma",
+    }
+
+    # 1. Default "per_run" across 2 runs and 2 short-list clusters
+    client = RecordingClient(payload)
+    res = run(
+        merge(
+            df_left,
+            df_right,
+            left_on="company",
+            right_on="name",
+            save_dir=str(tmp_path / "merge_per_run"),
+            client=client,
+            short_list_len=3,
+            n_runs=2,
+            max_attempts=1,
+            use_embeddings=False,
+            additional_instructions="Match legal entity names strictly.",
+            n_parallels=1,
+        )
+    )
+    assert list(res["id"]) == [1, 2, 3, 4, 5, 6]
+    assert len(client.prompts) == 4
+
+    # Static preamble + additional_instructions precede dynamic LONG LIST and SHORT LIST
+    static_prefixes = [_prefix_before(p, "BEGIN LONG LIST") for p in client.prompts]
+    assert len(set(static_prefixes)) == 1
+    shared = static_prefixes[0]
+    assert "Output JSON only" in shared
+    assert "BEGIN ADDITIONAL INSTRUCTIONS/CLARIFICATIONS" in shared
+
+    # Shared long_list across clusters also sits before BEGIN SHORT LIST
+    long_prefixes = [_prefix_before(p, "BEGIN SHORT LIST") for p in client.prompts]
+    assert len(set(long_prefixes)) == 1
+
+    # Matching order between BEGIN SHORT LIST and trailing reminder; run 2 reverses run 1
+    run_orders = []
+    for p in client.prompts:
+        rk = _extract_json_block_keys(p, "BEGIN SHORT LIST", "END SHORT LIST")
+        assert rk == _extract_reminder_keys(
+            p, "Again, the short list terms you are finding matches for are:"
+        )
+        run_orders.append(rk)
+    # Run-major: run 1 clusters [0, 1], then run 2 clusters [0, 1] reversed
+    assert run_orders[0] == ["Acme A", "Acme B", "Acme C"]
+    assert run_orders[1] == ["Beta A", "Beta B", "Beta C"]
+    assert run_orders[2] == ["Acme C", "Acme B", "Acme A"]
+    assert run_orders[3] == ["Beta C", "Beta B", "Beta A"]
+
+    # 2. "fixed": identical short_list order across runs
+    c_fixed = RecordingClient(payload)
+    run(
+        merge(
+            df_left,
+            df_right,
+            left_on="company",
+            right_on="name",
+            save_dir=str(tmp_path / "merge_fixed"),
+            client=c_fixed,
+            short_list_len=3,
+            n_runs=2,
+            max_attempts=1,
+            use_embeddings=False,
+            order_strategy="fixed",
+            n_parallels=1,
+        )
+    )
+    assert c_fixed.prompts[0] == c_fixed.prompts[2]
+    assert c_fixed.prompts[1] == c_fixed.prompts[3]
+
+    # 3. "per_item": shuffles short_list per call while keeping JSON & reminder aligned
+    df_left_6 = pd.DataFrame({"company": [f"Co_{i}" for i in range(6)]})
+    df_right_6 = pd.DataFrame(
+        {"name": [f"Co_{i}" for i in range(6)], "id": list(range(6))}
+    )
+    c_per_item = RecordingClient({f"Co_{i}": f"Co_{i}" for i in range(6)})
+    run(
+        merge(
+            df_left_6,
+            df_right_6,
+            left_on="company",
+            right_on="name",
+            save_dir=str(tmp_path / "merge_per_item"),
+            client=c_per_item,
+            short_list_len=6,
+            n_runs=8,
+            max_attempts=1,
+            use_embeddings=False,
+            order_strategy="per_item",
+        )
+    )
+    orders = []
+    for p in c_per_item.prompts:
+        rk = _extract_json_block_keys(p, "BEGIN SHORT LIST", "END SHORT LIST")
+        assert rk == _extract_reminder_keys(
+            p, "Again, the short list terms you are finding matches for are:"
+        )
+        orders.append(tuple(rk))
+    assert len(set(orders)) > 1
+
+
+def test_filter_prefix_first_across_entity_chunks(tmp_path):
+    df = pd.DataFrame(
+        {"entity": ["ENT_1", "ENT_2", "ENT_3", "ENT_4", "ENT_5", "ENT_6"]}
+    )
+    client = RecordingClient({"entities meeting condition": ["ENT_1"]})
+    res = run(
+        lex_filter(
+            df,
+            "entity",
+            condition="is a semiconductor manufacturer",
+            save_dir=str(tmp_path / "filter_prefix"),
+            client=client,
+            entities_per_call=2,
+            additional_instructions="Include fabless designers.",
+        )
+    )
+    assert len(res) == 6
+    assert len(client.prompts) == 3
+
+    prefixes = [_prefix_before(p, "BEGIN ENTITY LIST") for p in client.prompts]
+    assert len(set(prefixes)) == 1
+    shared = prefixes[0]
+    assert "BEGIN CONDITION" in shared
+    assert "is a semiconductor manufacturer" in shared
+    assert "Output in following JSON format:" in shared
+    assert "BEGIN ADDITIONAL INSTRUCTIONS/CLARIFICATIONS" in shared
+    assert "ENT_1" not in shared
+    assert "ENT_6" not in shared

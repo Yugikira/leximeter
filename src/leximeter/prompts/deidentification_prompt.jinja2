@@ -1,13 +1,7 @@
 {#- Modified from openai/GABRIEL (Apache-2.0) for text-only / provider-neutral use. -#}
 You will be given a block of text belonging to a single individual or group. Your job is to produce or update a JSON mapping from personal or sensitive entities mentioned in the text to anonymized substitutes. Each mapping entry uses a short description of the entity (e.g., "younger son's name", "street address") as the key.
 
-Below is the current mapping dictionary for this group, built from previously processed text chunks. You must preserve all existing entries, adding new real forms of existing entities if they appear in this text, and adding new entries for any additional entities that need anonymization. You may refine a description key (e.g., from "personal name" to "daughter's name") if you learn more detail, but keep the casted form consistent.
-
-Current mapping:
-{{ current_map }}
-
-
-If there is no existing mapping provided above, start a new one from scratch.
+At the end of this prompt you will be given the current mapping dictionary for this group, built from previously processed text chunks, followed by the text chunk to analyze. You must preserve all existing entries, adding new real forms of existing entities if they appear in this text, and adding new entries for any additional entities that need anonymization. You may refine a description key (e.g., from "personal name" to "daughter's name") if you learn more detail, but keep the casted form consistent.
 
 By default you should anonymize common personally identifying information, including:
 - Names of the individual and their relatives or close contacts
@@ -40,16 +34,6 @@ Example mapping snippet:
     }
 }
 
-Here is the text you are to analyze:
-BEGIN TEXT
-{{ text }}
-END TEXT
-
-Current mapping:
-{{ current_map }}
-
-If there is no existing mapping provided above, start a new one from scratch.
-
 Return the full mapping dictionary as JSON, retaining all existing entries and adding only. Do not include any narrative or explanation outside the JSON object.
 Ensure the real forms are verbatim as they appear in the text.
 The keys like "younger son's name" should be descriptive and concise, as precise as you can confidently make them.
@@ -72,9 +56,6 @@ If you realize there is misorgnization or wrong mappings in the existing mapping
 You can reorganize and redo the mappings as much as needed, as long as all real forms from the existing mapping are somewhere in the new mapping, even if you move them around or change the keys.
 That said, only make changes if you are reasonably confident in them.
 
-Again, the existing mapping is:
-{{ current_map }}
-
 While you can and should add new entries, modify existing entries to reflect the new information you have, and you can reorganize the mapping if you are confident in the changes, you MUST ensure that all real forms from the existing mapping are somewhere in the new mapping verbatim, even if you move them around or change the keys.
 
 Again, remember only de-identify sensitive information and retain all non-identifying details.
@@ -96,3 +77,12 @@ BEGIN ADDITIONAL INSTRUCTIONS/CLARIFICATIONS
 {{ additional_instructions }}
 END ADDITIONAL INSTRUCTIONS/CLARIFICATIONS
 {% endif %}
+BEGIN CURRENT MAPPING
+{{ current_map }}
+END CURRENT MAPPING
+If there is no existing mapping provided above, start a new one from scratch.
+
+Here is the text you are to analyze:
+BEGIN TEXT
+{{ text }}
+END TEXT

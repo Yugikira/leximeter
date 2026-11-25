@@ -1,12 +1,5 @@
-Consider the following short list of terms:
-BEGIN SHORT LIST
-{{ short_list }}
-END SHORT LIST
-
-Your task is to find matches for each short list term in the long list:
-BEGIN LONG LIST
-{{ long_list }}
-END LONG LIST
+{#- Modified from openai/GABRIEL (Apache-2.0) for text-only / provider-neutral use. -#}
+Your task is to find matches for each short list term in the long list provided below.
 Consider the long list options thoroughly-beginning, middle, end. Don't skim.
 
 For each short list term, find a suitable match in the long list that is as close as possible in meaning/substance to the short list term.
@@ -28,7 +21,6 @@ Output JSON only, in following format:
     ...
 }
 
-Again, the short list terms you are finding matches for are: {{ short_list.keys() | shuffled }}
 Include EVERY short list term in output; no drops.
 Use "no certain match" for any short list terms with no match/low confidence: DO NOT MATCH UNLESS EXTREMELY CONFIDENT IT IS CORRECT.
 Wrong matches are far worse than no match.
@@ -45,3 +37,13 @@ BEGIN ADDITIONAL INSTRUCTIONS/CLARIFICATIONS
 {{ additional_instructions }}
 END ADDITIONAL INSTRUCTIONS/CLARIFICATIONS
 {% endif %}
+BEGIN LONG LIST
+{{ long_list }}
+END LONG LIST
+
+Consider the following short list of terms:
+BEGIN SHORT LIST
+{{ short_list | ordered_dict_json }}
+END SHORT LIST
+
+Again, the short list terms you are finding matches for are: {{ short_list.keys() | list }}
