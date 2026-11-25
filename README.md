@@ -4,12 +4,13 @@
 
 fork 自 [openai/GABRIEL](https://github.com/openai/GABRIEL)，保留其全部文本功能（含 8 项复杂行为：extract 多实体、rank BT 标准误、bucket 多轮投票、codify 补全循环、paraphrase 递归校验、discover `net_pct` 汇总、merge kmeans2 聚类、debias 两步去偏），重做内部结构，解决三个痛点：
 
-- **解耦**：把 6900 行的 `openai_utils.py` 单体切成「厂商协议层 `client/`」+「通用编排层 `engine/`」，并用基类 `Task`/`AttributeTask` 消除各任务间的复制粘贴。
-- **厂商中立**：`LLMClient` 抽象 + 按协议划分的 `ResponsesClient` / `ChatCompletionsClient`，可插拔地接 OpenAI / DeepSeek / MiniMax / Ollama 等任何兼容后端；嵌入（本地 BGE）、联网搜索（Tavily）同样作为独立 provider 可单独配置。
-- **可测试**：所有 provider 可注入假实现，零密钥零联网跑通全链路（97 个测试全绿）；全部 18 个任务已用真实 provider（DeepSeek）冒烟验证。
+- **解耦**：把 6900 行的 `openai_utils.py` 单体切成「协议层 `client/`」+「通用编排层 `engine/`」，并用基类 `Task`/`AttributeTask` 消除各任务间的复制粘贴。
+- **厂商中立**：`LLMClient`（`ResponsesClient` / `ChatCompletionsClient`）可插拔地接 OpenAI / DeepSeek / MiniMax / Ollama 等任何兼容后端；**Decision Provider**（`DecisionClient` / `SystemOneClient`，`POST /v1/systemone`）支持 TypeSafe Jev、OpenRouter 44 款决策模型（Cloudflare Clef / Clef-Flash、Google `gemini-decision-1`、OpenAI `gpt-6-luna-decisions` 等）、AMD Radeon Token Factory（`d3` / `d3-flash`）及自托管 vLLM / SGLang；嵌入（本地 BGE）与联网搜索（Tavily）同样作为独立可选 provider 单独配置。
+- **KV-Cache 友好**：全部 14 份提示词模板改为前缀固定（静态说明、量表与定义置顶，动态文本/配对置底），默认 `order_strategy="per_run"` + `batch_execute` 自适应首条预热；DeepSeek 实测缓存命中率 `61.5%–86.7%`、总费用下降 `23%–62%`，且与上游 GABRIEL 测量质量保持一致（详见 [research/kv-cache-experiment-results.md](research/kv-cache-experiment-results.md)）。
+- **可测试**：所有 provider 可注入假实现（含 `DummyClient` / `DummyDecisionClient`），零密钥零联网跑通全链路（201 个测试全绿）；全量任务及 OpenRouter / AMD Radeon / DeepSeek 真实端点均已冒烟验证。
 
 > **面向研究者**：使用指南见 [leximeter_wiki/index.html](leximeter_wiki/index.html)（含每个功能的示例代码、真实运行结果、算法与提示词讲解、全部参数说明）。
-> 设计规范见 [research/spec.md](research/spec.md)（含 Backlog 待办），GABRIEL 源码移植笔记见 [research/gabriel-source-notes.md](research/gabriel-source-notes.md)。
+> 术语表见 [GLOSSARY.md](GLOSSARY.md)，架构决策见 [docs/adr/](docs/adr/)，设计规范见 [research/spec.md](research/spec.md)，研究与实测报告见 [research/classifier-models-research.md](research/classifier-models-research.md) 与 [research/kv-cache-experiment-results.md](research/kv-cache-experiment-results.md)，GABRIEL 源码移植笔记见 [research/gabriel-source-notes.md](research/gabriel-source-notes.md)。
 
 ## 安装
 
@@ -52,12 +53,20 @@ LEXIMETER_EMBEDDING_API_KEY=
 LEXIMETER_SEARCH_PROVIDER=none
 TAVILY_API_KEY=tvly-...
 
+# 决策模型 provider（System One）：systemone | dummy | none（默认禁用，自动回退 LLM）
+# 支持 TypeSafe Jev、OpenRouter（/api/v1/systemone 或 /api/alpha/decisions）、
+# AMD Token Factory（d3 / d3-flash）及自托管 vLLM / SGLang
+LEXIMETER_DECISION_PROTOCOL=none
+LEXIMETER_DECISION_BASE_URL=https://openrouter.ai/api
+LEXIMETER_DECISION_API_KEY=sk-or-...
+LEXIMETER_DECISION_MODEL=cloudflare/clef-flash
+
 # safest_json 解析兜底的 LLM 修复模型（默认 gpt-5.4-mini）
 JSON_LLM_MODEL=gpt-5.4-mini
 ```
 
 - 加载时机：`import leximeter` 时自动 `load_dotenv()`（不覆盖已有环境变量）——即 **真实环境变量 > `.env`**。
-- 每次调用仍可用 `client=` / `embedding_client=` / `search_tool=` 覆盖，见下文「Provider 覆盖」。
+- 每次调用仍可用 `client=` / `decision_client=` / `embedding_client=` / `search_tool=` 覆盖，见下文「Decision Provider」与「Provider 覆盖」。
 
 ## 快速上手
 
@@ -169,13 +178,66 @@ results.head()   # 一列一个属性（0–100）
 - `reset_files=True` 时清空本任务的检查点文件与 state 后重跑；`save_dir` 与 column_name 相同即视为同一任务。
 - **标识符为 GABRIEL 契约格式**：从旧版 leximeter 升级后 identifier 变化会使旧检查点失效——用 `reset_files=True` 或删除 `save_dir` 重跑（详见 spec「已知偏离与代价」）。
 
+## Decision Provider（System One 决策模型，v0.2.0）
+
+对于有界判断类任务，专用 **Decision Provider**（如 TypeSafe Jev、Cloudflare Clef / Clef-Flash、Google `gemini-decision-1`、AMD/vLLM-SR `d3` / `d3-flash`、OpenAI `gpt-6-luna-decisions`）可在**单次前向传播**内并行评估几十到上百个类型化问题（`noul` / `choice` / `score`），返回校准概率且 **$0 输出 token 计费**。`SystemOneClient` 实现开放协议 `POST /v1/systemone`，自动完成非 ASCII / 含空格标签键的安全转义、单层重试（遵循 `Retry-After`）与逐题 `refusal` 降级。
+
+- **纯 Decision 路径**（传入 `decision_client=` 或配置 `LEXIMETER_DECISION_PROTOCOL=systemone` 时零 `LLMClient` 调用；未配置时自动回退 `LLMClient`）：
+  - `classify`：单列走并行 `noul`（支持 `include_probabilities=True` 输出 `{label}_prob` 列，原始概率始终落盘检查点）；配对 `differentiate=True` 走 3 选 1 `choice`（`circle` / `square` / `neither`，结构性保证互斥并自动适配 Circle/Square 双向极性）。
+  - `rank`：两两对决走 4 选 1 `choice`（`circle` / `square` / `draw` / `insufficient_signal`），保留 `circle_first` 随机化与 Bradley–Terry MLE + 标准误。
+  - `filter`：反向扇出（`state = condition`，去重候选项批量作为并行 `noul`），单轮即得校准 `score` 与 `keep`。
+- **混合路径**（生成阶段继续使用 `LLMClient` + `model`，内部判断子阶段自动委派给 `DecisionClient` + 独立 `decision_model`）：
+  - `discover`（Stage 3 `classify`）、`paraphrase`（`n_rounds>1` 递归校验）、`codify`（`n_rounds>1` 补全检查）、`debias`（`mode="classify"` / `mode="rank"`）。
+
+```python
+import os
+import leximeter
+from leximeter.client import SystemOneClient
+
+# 例 1：通过 OpenRouter 调用 Cloudflare Clef-Flash / TypeSafe Jev / Gemini Decision 1
+or_decision = SystemOneClient(
+    base_url="https://openrouter.ai/api/v1",
+    api_key=os.environ["OPENROUTER_API_KEY"],
+)
+out = await leximeter.classify(
+    df, "text", labels=labels, save_dir="run_cls",
+    decision_client=or_decision,
+    decision_model="cloudflare/clef-flash",
+    include_probabilities=True,
+)
+
+# 例 2：通过 AMD Radeon Token Factory 调用 d3-flash（或混合搭配 DeepSeek 生成 + d3-flash 校验）
+rad_decision = SystemOneClient(
+    base_url="https://developer.amd.com.cn/radeon/api/v1",
+    api_key=os.environ["RADEON_API_KEY"],
+    send_noul_criteria=False,  # d3 严格模式：noul 不附带 criteria
+)
+revised = await leximeter.paraphrase(
+    df, "text", instructions="...", save_dir="run_para",
+    model="deepseek-v4-flash",
+    n_rounds=2,
+    decision_client=rad_decision,
+    decision_model="d3-flash",
+)
+```
+
+## KV-Cache 友好提示词与 `order_strategy`（v0.2.0）
+
+- **前缀固定布局**：全部 14 份提示词模板将静态指令、量表/定义、输出格式与 `additional_instructions` 置顶，动态文本（`Item` / `Circle & Square` / `Persona` / 增量映射）置底；配对任务的 `circle_first` 随机化仅发生在未缓存后缀中，兼顾位置去偏与前缀缓存命中。
+- **键序策略 `order_strategy`**（支持于 `rate` / `classify` / `extract` / `rank` / `codify` / `merge`）：
+  - `"per_run"`（默认）：按 run-major（`batch → run → item`）派发，同一 run 内所有样本共享固定顺序以最大化 KV-cache 命中，不同 run（`n_runs > 1` / `rank` 多轮）采用严格互异的确定性置换，抵消局部属性锚定偏差。
+  - `"fixed"`：所有 run 复用调用方原始顺序，多次 run 可触发跨轮热缓存（实测高达 `86.7%` 命中率）。
+  - `"per_item"`：保留上游 GABRIEL 逐条随机打乱行为。
+- **自适应首条预热**：`batch_execute` 支持 `warmup_first: bool | None = None`（默认自动在 `len(pending) > max(8, n_parallels)` 时先顺序预热首条请求填充前缀缓存，再并发放行其余请求，小批次零额外串行开销）。
+- 实测与质量对照报告见 [research/kv-cache-experiment-results.md](research/kv-cache-experiment-results.md) 与 [docs/adr/0005-prefix-first-prompts-and-per-run-ordering.md](docs/adr/0005-prefix-first-prompts-and-per-run-ordering.md)。
+
 ## Provider 覆盖
 
 每次调用可用关键字参数注入 provider（覆盖 `.env` 默认）：
 
 ```python
 import leximeter
-from leximeter.client import ChatCompletionsClient, ResponsesClient
+from leximeter.client import ChatCompletionsClient, ResponsesClient, SystemOneClient
 
 results = await leximeter.rate(
     df, "text", attributes=attrs, save_dir="run_a",
@@ -183,7 +245,7 @@ results = await leximeter.rate(
 )
 # 或逐条混用：
 a = await leximeter.rate(..., client=ResponsesClient())   # OpenAI
-b = await leximeter.classify(..., client=my_local_client) # 自定义实现
+b = await leximeter.classify(..., decision_client=SystemOneClient(...), decision_model="typesafe/jev-1.14")
 ```
 
 自定义 provider 只需实现最小协议：
@@ -192,11 +254,14 @@ b = await leximeter.classify(..., client=my_local_client) # 自定义实现
 class LLMClient:
     async def complete(self, prompt, *, model, json_mode, **kw) -> str: ...
 
+class DecisionClient:
+    async def decide(self, state, questions, *, model, **kw) -> DecisionResult: ...
+
 class EmbeddingClient:
     async def embed(self, texts: list[str]) -> list[list[float]]: ...
 ```
 
-**测试桩**：`DummyClient`（返回确定性假响应）无需密钥即可跑通全链路，`DictClient` / `TextClient` / `CountingClient` 见 `tests/conftest.py`。
+**测试桩**：`DummyClient` / `DummyDecisionClient` / `DummyEmbeddingClient` / `DummySearchTool` 无需密钥即可跑通全链路，`DictClient` / `DictDecisionClient` / `CountingClient` / `CountingDecisionClient` / `RecordingClient` 见 `tests/conftest.py`。
 
 ## 完整示例
 
@@ -209,7 +274,7 @@ python examples/reference.py
 ## 测试
 
 ```bash
-uv run pytest        # 零网络、零密钥，用假 provider 跑全链路（97 tests）
+uv run pytest        # 零网络、零密钥，用假 provider 跑全链路（201 tests）
 ```
 
 真实 provider 冒烟（读取 `.env` 配置，逐个任务独立运行，单任务失败不阻塞）：
