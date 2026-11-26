@@ -12,6 +12,7 @@ import asyncio
 import os
 from collections.abc import Mapping
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
@@ -36,13 +37,47 @@ DEFAULT_ENDPOINT_PATH = "/v1/systemone"
 _RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
 
 
+def _segment_overlap(base_segs: list[str], path_segs: list[str]) -> int:
+    """Return the longest suffix-prefix segment overlap between ``base_segs`` and ``path_segs``."""
+    max_k = min(len(base_segs), len(path_segs))
+    for k in range(max_k, 0, -1):
+        if base_segs[-k:] == path_segs[:k]:
+            return k
+    return 0
+
+
 def _join_endpoint_url(base_url: str, endpoint_path: str) -> str:
-    """Combine ``base_url`` and ``endpoint_path`` without duplicating ``/v1``."""
-    base = base_url.rstrip("/")
-    path = "/" + endpoint_path.lstrip("/")
-    if base.endswith("/v1") and path.startswith("/v1/"):
-        path = path[3:]
-    return f"{base}{path}"
+    """Combine ``base_url`` and ``endpoint_path`` without duplicating path prefixes."""
+    parsed = urlsplit(base_url.strip())
+    ep_str = endpoint_path.strip()
+    if "://" not in ep_str.split("?", 1)[0].split("#", 1)[0]:
+        ep_str = "/" + ep_str.lstrip("/")
+    ep_parsed = urlsplit(ep_str)
+    base_segs = [seg for seg in parsed.path.split("/") if seg]
+    path_segs = [seg for seg in ep_parsed.path.split("/") if seg]
+
+    if path_segs:
+        overlap = _segment_overlap(base_segs, path_segs)
+        if (
+            overlap == 0
+            and base_segs
+            and base_segs[-1] == "v1"
+            and (
+                path_segs[0] == "alpha"
+                or _segment_overlap(base_segs[:-1], path_segs) > 0
+            )
+        ):
+            base_segs = base_segs[:-1]
+            overlap = _segment_overlap(base_segs, path_segs)
+        joined_segs = [*base_segs, *path_segs[overlap:]]
+    else:
+        joined_segs = base_segs
+
+    joined_path = "/" + "/".join(joined_segs)
+    query = ep_parsed.query or parsed.query
+    return urlunsplit(
+        (parsed.scheme, parsed.netloc, joined_path, query, parsed.fragment)
+    )
 
 
 def _serialize_question(
