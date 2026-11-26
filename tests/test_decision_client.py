@@ -694,6 +694,32 @@ def test_batch_decide_with_systemone_no_nested_retry_amplification(tmp_path) -> 
             "/api/alpha/decisions",
             "http://api:8000/api/alpha/decisions",
         ),
+        # Leading //, schemeless colon in first segment, and query-only endpoint_path
+        (
+            "https://openrouter.ai",
+            "//api//alpha/decisions",
+            "https://openrouter.ai/api/alpha/decisions",
+        ),
+        (
+            "https://api.typesafe.ai",
+            "//v1/systemone",
+            "https://api.typesafe.ai/v1/systemone",
+        ),
+        (
+            "https://proxy.example.com/custom",
+            "//api//alpha/decisions",
+            "https://proxy.example.com/custom/api/alpha/decisions",
+        ),
+        (
+            "https://proxy.example.com",
+            "v1:2/systemone",
+            "https://proxy.example.com/v1:2/systemone",
+        ),
+        (
+            "https://gw.example.com/api/v1",
+            "?foo=bar",
+            "https://gw.example.com/api/v1?foo=bar",
+        ),
     ],
 )
 def test_join_endpoint_url_deduplicates_overlapping_segments(
@@ -716,6 +742,8 @@ def test_join_endpoint_url_deduplicates_overlapping_segments(
         ("https://openrouter.ai/api", "/alpha/decisions"),
         ("https://openrouter.ai/api/v1", "/alpha/decisions"),
         ("https://openrouter.ai/api/v1/", "alpha/decisions"),
+        ("https://openrouter.ai", "//api//alpha/decisions"),
+        ("https://openrouter.ai/api/v1", "//api//alpha/decisions"),
     ],
 )
 def test_systemone_openrouter_endpoint_url_via_mock_transport(

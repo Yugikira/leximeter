@@ -49,7 +49,10 @@ def _segment_overlap(base_segs: list[str], path_segs: list[str]) -> int:
 def _join_endpoint_url(base_url: str, endpoint_path: str) -> str:
     """Combine ``base_url`` and ``endpoint_path`` without duplicating path prefixes."""
     parsed = urlsplit(base_url.strip())
-    ep_parsed = urlsplit(endpoint_path.strip())
+    ep_str = endpoint_path.strip()
+    if "://" not in ep_str.split("?", 1)[0].split("#", 1)[0]:
+        ep_str = "/" + ep_str.lstrip("/")
+    ep_parsed = urlsplit(ep_str)
     base_segs = [seg for seg in parsed.path.split("/") if seg]
     path_segs = [seg for seg in ep_parsed.path.split("/") if seg]
 
