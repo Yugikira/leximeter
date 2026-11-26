@@ -111,26 +111,28 @@ result = await leximeter.paraphrase(
       END INSTRUCTIONS<br>
       只输出改写后的文本，不要任何前言或解释。
     </div>
-    <p>多轮模式下还隐藏一道"校验提示词"：把「指令 + 原文 + 改文」一起发给分类器，问"改文是否忠实运用了指令对原文进行转换"，返回 True/False。这就是改写的质量闸门。</p>
+    <p>多轮模式下还会调用一次校验分类器，把指令、原文与改文一并交给模型判断是否忠实应用了指令。如果配置了 Decision Provider 或传入 <code class="inline">decision_client</code> 与 <code class="inline">decision_model</code>，生成改写稿继续由 <code class="inline">LLMClient</code> 完成，而多轮校验自动委派给 Decision Provider。</p>
 
     <h2>参数设置</h2>
     <table>
       <tr><th>参数</th><th>默认值</th><th>说明</th></tr>
-      <tr><td><code>instructions</code></td><td>（必填）</td><td>改写指令：告诉模型怎么改（语体、长度、角度……）。越具体越稳定。</td></tr>
-      <tr><td><code>column_name</code></td><td>（必填）</td><td>数据中文本所在列的列名。</td></tr>
-      <tr><td><code>save_dir</code></td><td>（必填）</td><td>保存中间产物与结果的目录（自动创建）。</td></tr>
-      <tr><td><code>model</code></td><td>gpt-5.4-mini</td><td>使用的模型名；默认从环境变量 <code>LEXIMETER_MODEL</code> 读取。改写与校验共用同一个模型。</td></tr>
+      <tr><td><code>instructions</code></td><td>必填</td><td>改写指令，描述语体、长度或改写目标。指令越具体，改写结果越稳定。</td></tr>
+      <tr><td><code>column_name</code></td><td>必填</td><td>数据中文本所在列的列名。</td></tr>
+      <tr><td><code>save_dir</code></td><td>必填</td><td>保存中间产物与结果的目录，不存在时自动创建。</td></tr>
+      <tr><td><code>model</code></td><td>gpt-5.4-mini</td><td>生成改写稿使用的模型名，默认从环境变量 <code>LEXIMETER_MODEL</code> 读取。未配置 Decision Provider 时，校验阶段也使用该模型。</td></tr>
+      <tr><td><code>decision_model</code></td><td>None</td><td>配置 Decision Provider 时，用于多轮递归校验的决策模型名。</td></tr>
       <tr><td><code>n_parallels</code></td><td>50</td><td>同时发送给模型的请求数。API 允许时越高越快。</td></tr>
-      <tr><td><code>modality</code></td><td>"text"</td><td>输入类型："text"（段落）、"entity"（短实体，如产品名）等，影响提示词措辞。</td></tr>
-      <tr><td><code>json_mode</code></td><td>False</td><td>True 时要求模型只输出 JSON（适合程序化解析）。</td></tr>
-      <tr><td><code>revised_column_name</code></td><td>None</td><td>自定义改写结果列名；默认 <code>{"{column_name}_revised"}</code>。</td></tr>
-      <tr><td><code>file_name</code></td><td>paraphrase_responses.csv</td><td>原始改写响应的保存文件名；清洗后的结果存同名 <code>_cleaned.csv</code>。</td></tr>
-      <tr><td><code>n_rounds</code></td><td>1</td><td>校验轮数上限。1 = 单轮改写、不校验；大于 1 时启用"生成 → 校验 → 重写"循环。</td></tr>
-      <tr><td><code>n_runs</code></td><td>1</td><td>每段文本生成几份改写。大于 1 时输出列带 <code>_1.._n</code> 后缀；也是第一轮的候选数量。</td></tr>
-      <tr><td><code>later_round_run_multiplier</code></td><td>5</td><td>第二轮起每个条目生成的候选数 = n_runs × 该倍数（倍数不逐轮累乘）。</td></tr>
-      <tr><td><code>use_modified_source</code></td><td>False</td><td>True 时后续轮从上一版改文继续改写（增量改进），False 则始终回到原文。</td></tr>
-      <tr><td><code>validation_attribute</code></td><td>None</td><td>自定义校验标签定义（默认为"是否遵循指令"）；多条目时取第一个。</td></tr>
-      <tr><td><code>reset_files</code></td><td>False</td><td>True 时清空 save_dir 重新跑；False 时断点续跑（跳过已完成条目）。</td></tr>
+      <tr><td><code>modality</code></td><td>"text"</td><td>输入类型，可选 <code>"text"</code>（段落）或 <code>"entity"</code>（短实体）。</td></tr>
+      <tr><td><code>json_mode</code></td><td>False</td><td>True 时要求模型只输出 JSON，适合程序化解析。</td></tr>
+      <tr><td><code>revised_column_name</code></td><td>None</td><td>自定义改写结果列名，默认为 <code>{column_name}_revised</code>。</td></tr>
+      <tr><td><code>file_name</code></td><td>paraphrase_responses.csv</td><td>原始改写响应文件名，清洗结果存为同名 <code>_cleaned.csv</code>，多轮候选存为 <code>{base}_round{r}.csv</code>。</td></tr>
+      <tr><td><code>n_rounds</code></td><td>1</td><td>校验轮数上限。设为 1 时仅执行单轮改写不做校验；大于 1 时启用多轮生成与递归校验循环。</td></tr>
+      <tr><td><code>n_runs</code></td><td>1</td><td>每段文本生成几份改写。大于 1 时输出列带 <code>_1</code> 到 <code>_n</code> 后缀，同时决定第 0 轮的候选数量。</td></tr>
+      <tr><td><code>later_round_run_multiplier</code></td><td>5</td><td>后续轮次中每个未通过条目生成的候选倍数，即 <code>n_runs * later_round_run_multiplier</code>，不逐轮累乘。</td></tr>
+      <tr><td><code>use_modified_source</code></td><td>False</td><td>True 时后续轮次从上一版改文继续改写，False 则始终基于原文重新生成。</td></tr>
+      <tr><td><code>validation_attribute</code></td><td>None</td><td>自定义校验标签定义，默认判断是否遵循 <code>instructions</code>。传入多项时取第一项。</td></tr>
+      <tr><td><code>reset_files</code></td><td>False</td><td>True 时会在多轮循环开始前一次性清空改写与校验检查点后重跑；False 时跳过已完成条目续跑。</td></tr>
+      <tr><td><code>client / decision_client / embedding_client / search_tool</code></td><td>None</td><td>按次注入自定义 Provider 实例，支持将多轮校验委派给 <code>DecisionClient</code>。</td></tr>
     </table>
     <p>完整参数与进阶选项见 <a href="../configuration.html">⚙️ 参数设置</a>。</p>
 

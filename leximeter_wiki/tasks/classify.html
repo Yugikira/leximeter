@@ -99,43 +99,65 @@ result = await leximeter.classify(
     <h3>回到数据里</h3>
     <p>返回的表格就是在你原来的表格上追加了每个标签一列（true/false）。可以直接 <code class="inline">result.to_csv("labels.csv")</code> 保存，再导入 Stata / R 做交叉表或回归。</p>
 
+    <h3>使用 Decision Provider（v0.2.0）</h3>
+    <p>如果配置了 System One 协议的 Decision Provider，或显式传入 <code class="inline">decision_client</code> 与 <code class="inline">decision_model</code>，<code class="inline">classify</code> 会在单次前向传播中并行评估全部标签，直接返回校准概率且不产生输出 token 费用。传入 <code class="inline">include_probabilities=True</code> 时，输出表会额外包含每个标签的 <code class="inline">{label}_prob</code> 列；成对比较模式 <code class="inline">differentiate=True</code> 则使用三选一 <code class="inline">choice</code> 问题，将正反命题直接绑定到随机顺序的选项中，从结构上保证互斥。</p>
+    <pre><code>import os
+from leximeter.client import SystemOneClient
+
+decision_client = SystemOneClient(
+    base_url="https://openrouter.ai/api/v1",
+    api_key=os.environ["OPENROUTER_API_KEY"],
+)
+result = await leximeter.classify(
+    df, "text",
+    labels=labels,
+    save_dir="my_study/labels_decision",
+    decision_client=decision_client,
+    decision_model="cloudflare/clef-flash",
+    include_probabilities=True,
+)</code></pre>
+
     <h2>实现原理（简版）</h2>
     <p>整个过程不需要你理解细节，但知道原理有助于判断结果质量：</p>
     <ol>
-      <li><strong>生成提示词</strong>：对每段文本和全部标签（含你写的判定标准说明），拼出一段标准指令（见下）。相同文本只问一次，结果复用。</li>
-      <li><strong>并行执行</strong>：全部任务并发发送给模型（默认 50 路并行），失败自动重试，完成一批存一批。</li>
-      <li><strong>解析</strong>：模型被要求输出 JSON（<code>{"标签名": true/false}</code>），程序把回答解析成每个标签的布尔值。</li>
-      <li><strong>聚合（多次复测取多数决）</strong>：如果设置了 <code class="inline">n_runs &gt; 1</code>，同一文本会被独立测量多次——就像同一道题让多位评卷老师独立判分：判定为"是"的次数占比达到 <code class="inline">min_frequency</code>（默认 0.6，约等于 5 次里至少 3 次）才最终记为 True，降低单次抽样的随机波动。某标签所有测量都缺失时记为空值。</li>
+      <li><strong>生成提示词</strong>：将静态指令、标签定义与输出格式放在前缀，待测文本放在末尾，以最大化服务端前缀缓存命中率。相同文本只评估一次，结果复用。</li>
+      <li><strong>并行执行</strong>：全部任务并发发送给模型（默认 50 路并行），失败自动重试，完成一批存一批。使用 Decision Provider 时，每条文本的多个标签在同一批 <code class="inline">noul</code> 或 <code class="inline">choice</code> 问题中并行完成。</li>
+      <li><strong>解析</strong>：LLM 路径要求模型输出 JSON（<code>{"标签名": true/false}</code>）并解析为布尔值；Decision Provider 路径直接读取校准概率并与 <code class="inline">min_frequency</code> 比较，同时将原始概率写入检查点。</li>
+      <li><strong>聚合（多次复测取多数决）</strong>：如果设置了 <code class="inline">n_runs &gt; 1</code>，同一文本会被独立测量多次。判定为"是"的次数占比达到 <code class="inline">min_frequency</code>（默认 0.6，约等于 5 次里至少 3 次）才最终记为 True，降低单次抽样的随机波动。某标签所有测量都缺失时记为空值。</li>
     </ol>
 
     <h3>给模型的提示词（概括）</h3>
-    <div class="prompt"><span class="plabel">Classify 提示词结构（简化为要点）</span>
-      以下是待判断的文本："<em>…文本…</em>"。<br>
-      请逐一判断以下标签是否适用，输出 JSON：<br>
-      <code>{"标签名": true 或 false}</code><br>
+    <div class="prompt"><span class="plabel">Classify 提示词结构（前缀固定，简化为要点）</span>
+      请逐一判断下方标签是否适用，输出 JSON：<code>{"标签名": true 或 false}</code>。<br>
       规则：可多选，命中的标签都标 true；每个标签独立判断，不要互相推断；只依据文本内容判断。<br>
-      每个标签后附上你写的"判定标准说明"，模型据此校准判断。
+      标签定义清单（静态前缀，固定在顶部以复用 KV 缓存）。<br>
+      待判断文本："<em>…文本…</em>"（动态内容放在末尾）。
     </div>
-    <p>标签定义写得越具体（例如"新闻标题"指什么、边界在哪里），不同文本之间的判定就越一致——这和问卷里把题目措辞写清楚是同一个道理。</p>
+    <p>标签定义写得越具体（例如"新闻标题"指什么、边界在哪里），不同文本之间的判定就越一致，这和问卷里把题目措辞写清楚是同一个道理。</p>
 
     <h2>参数设置</h2>
     <table>
       <tr><th>参数</th><th>默认值</th><th>说明</th></tr>
-      <tr><td><code>df</code></td><td>（必填）</td><td>你的数据表格（pandas DataFrame），须包含文本列。</td></tr>
-      <tr><td><code>column_name</code></td><td>（必填）</td><td>数据中文本所在列的列名。</td></tr>
-      <tr><td><code>labels</code></td><td>（必填）</td><td>字典：标签名 → 判定标准说明。定义越具体，判定越一致。</td></tr>
-      <tr><td><code>save_dir</code></td><td>（必填）</td><td>保存中间产物与结果的目录（自动创建）。</td></tr>
-      <tr><td><code>model</code></td><td>gpt-5.4-mini</td><td>使用的模型名；默认从环境变量 <code>LEXIMETER_MODEL</code> 读取。</td></tr>
-      <tr><td><code>n_runs</code></td><td>1</td><td>每段文本判定几次。大于 1 时按多数决聚合，并额外保存逐次明细（可靠性分析用）。</td></tr>
+      <tr><td><code>df</code></td><td>必填</td><td>你的数据表格（pandas DataFrame），须包含文本列。</td></tr>
+      <tr><td><code>column_name</code></td><td>None</td><td>单列模式下的文本列名；成对模式 <code>differentiate=True</code> 时改传 <code>circle_column_name</code> 与 <code>square_column_name</code>。</td></tr>
+      <tr><td><code>labels</code></td><td>必填</td><td>字典，键为标签名，值为判定标准说明。定义越具体，判定越一致。</td></tr>
+      <tr><td><code>save_dir</code></td><td>必填</td><td>保存中间产物与结果的目录，不存在时自动创建。</td></tr>
+      <tr><td><code>model</code></td><td>gpt-5.4-mini</td><td>LLM 路径使用的模型名，默认从环境变量 <code>LEXIMETER_MODEL</code> 读取。</td></tr>
+      <tr><td><code>decision_model</code></td><td>None</td><td>Decision Provider 使用的模型名。使用 <code>SystemOneClient</code> 时必须显式传入或配置 <code>LEXIMETER_DECISION_MODEL</code>。</td></tr>
+      <tr><td><code>n_runs</code></td><td>1</td><td>每段文本判定几次。大于 1 时按多数决聚合，并额外保存逐次明细供信度分析使用。</td></tr>
       <tr><td><code>n_parallels</code></td><td>50</td><td>同时发送给模型的请求数。API 允许时越高越快。</td></tr>
-      <tr><td><code>min_frequency</code></td><td>0.6</td><td>多数决门槛：判"是"的测量占比达到该值才记为 True（0.6 ≈ 5 次里至少 3 次）。</td></tr>
-      <tr><td><code>n_attributes_per_run</code></td><td>None（全部分批）</td><td>每次请求最多包含几个标签。标签很多时模型可能顾此失彼，设小一点更稳。</td></tr>
-      <tr><td><code>additional_instructions</code></td><td>None</td><td>追加给模型的任何额外指令（如带标注示例来校准判定）。</td></tr>
-      <tr><td><code>modality</code></td><td>"text"</td><td>文本类型提示："text"（段落）或 "entity"（短实体，如产品名）。影响提示词措辞。</td></tr>
-      <tr><td><code>file_name</code></td><td>"classify_responses.csv"</td><td>中间结果文件名；最终汇总文件为同名 <code>*_cleaned.csv</code>。</td></tr>
-      <tr><td><code>reset_files</code></td><td>False</td><td>True 时清空 save_dir 重新跑；False 时断点续跑（跳过已完成条目）。</td></tr>
-      <tr><td><code>client / embedding_client / search_tool</code></td><td>None</td><td>底层客户端；默认自动从环境变量配置，一般不用改。</td></tr>
-      <tr><td><code>**engine_kwargs</code></td><td>—</td><td>透传给模型调用的额外参数（如 max_output_tokens、temperature、timeout、max_retries）。</td></tr>
+      <tr><td><code>min_frequency</code></td><td>0.6</td><td>判定门槛。LLM 路径为多次运行中判"是"的比例，Decision Provider 路径为校准概率阈值。</td></tr>
+      <tr><td><code>n_attributes_per_run</code></td><td>None</td><td>每次请求最多包含几个标签。标签较多时设小一点更稳定。</td></tr>
+      <tr><td><code>differentiate</code></td><td>False</td><td>是否开启成对对比分类模式，需配合 <code>circle_column_name</code> 与 <code>square_column_name</code> 使用。</td></tr>
+      <tr><td><code>circle_first</code></td><td>None</td><td>成对模式下是否固定将 circle 放在前面。默认 None，每条随机以消除位置偏差。</td></tr>
+      <tr><td><code>include_probabilities</code></td><td>False</td><td>使用 Decision Provider 时是否在输出表中追加 <code>{label}_prob</code> 校准概率列。</td></tr>
+      <tr><td><code>order_strategy</code></td><td>"per_run"</td><td>标签键序策略：<code>"per_run"</code>（同 run 固定以命中前缀缓存，跨 run 互异置换）、<code>"fixed"</code>（跨 run 固定）或 <code>"per_item"</code>（逐条随机打乱）。</td></tr>
+      <tr><td><code>additional_instructions</code></td><td>None</td><td>追加给模型的额外指令，例如带标注示例以校准判定。</td></tr>
+      <tr><td><code>modality</code></td><td>"text"</td><td>文本类型提示，可选 <code>"text"</code>（段落）或 <code>"entity"</code>（短实体）。</td></tr>
+      <tr><td><code>file_name</code></td><td>"classify_responses.csv"</td><td>中间结果文件名，最终汇总文件为同名 <code>*_cleaned.csv</code>。</td></tr>
+      <tr><td><code>reset_files</code></td><td>False</td><td>True 时清空当前任务检查点重新运行；False 时自动断点续跑。更换模型、切换 Provider 或修改标签配置时，过期检查点会自动失效重算。</td></tr>
+      <tr><td><code>client / decision_client / embedding_client / search_tool</code></td><td>None</td><td>按次注入自定义 Provider 实例，默认自动从环境变量解析。显式传入 <code>client=</code> 时，环境变量中的 Decision Provider 不会自动接管。</td></tr>
+      <tr><td><code>**engine_kwargs</code></td><td>无</td><td>透传给底层批处理引擎或模型调用的额外参数，例如 <code>max_output_tokens</code>、<code>temperature</code>、<code>timeout</code> 与 <code>warmup_first</code>。</td></tr>
     </table>
     <p>完整参数与进阶选项见 <a href="../configuration.html">⚙️ 参数设置</a>。</p>
 

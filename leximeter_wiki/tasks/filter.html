@@ -110,21 +110,25 @@ result = await leximeter.filter(
       输出 JSON：<code>{"entities meeting condition": ["…", …]}</code>，实体名必须逐字照抄。
     </div>
 
+    <p>如果配置了 System One 协议的 Decision Provider 或传入 <code class="inline">decision_client</code> 与 <code class="inline">decision_model</code>，<code class="inline">filter</code> 会改走反向扇出路径：将筛选条件 <code class="inline">condition</code> 作为共享上下文状态，把去重后的候选条目批量提交为并行 <code class="inline">noul</code> 问题，单轮即可直接获得每条文本的校准概率 <code class="inline">score</code> 与 <code class="inline">keep</code> 判定，不消耗输出 token。</p>
+
     <h2>参数设置</h2>
     <table>
       <tr><th>参数</th><th>默认值</th><th>说明</th></tr>
-      <tr><td><code>condition</code></td><td>（必填）</td><td>筛选条件，写成一句自然语言，例如 "The text announces a product launch or shipment."。</td></tr>
-      <tr><td><code>save_dir</code></td><td>（必填）</td><td>保存中间产物与结果的目录（自动创建）。</td></tr>
-      <tr><td><code>model</code></td><td>gpt-5.4-nano</td><td>使用的模型名；默认从环境变量 <code>LEXIMETER_MODEL</code> 读取。</td></tr>
-      <tr><td><code>n_runs</code></td><td>1</td><td>每批问几遍。大于 1 时 <code>score</code> = 命中的遍数 ÷ 总遍数，判定更稳。</td></tr>
+      <tr><td><code>condition</code></td><td>必填</td><td>筛选条件，写成一句自然语言，例如 "The text announces a product launch or shipment."。</td></tr>
+      <tr><td><code>save_dir</code></td><td>必填</td><td>保存中间产物与结果的目录，不存在时自动创建。</td></tr>
+      <tr><td><code>model</code></td><td>gpt-5.4-nano</td><td>LLM 路径使用的模型名，默认从环境变量 <code>LEXIMETER_MODEL</code> 读取。</td></tr>
+      <tr><td><code>decision_model</code></td><td>None</td><td>Decision Provider 使用的模型名。使用 <code>SystemOneClient</code> 时必须显式传入或配置 <code>LEXIMETER_DECISION_MODEL</code>。</td></tr>
+      <tr><td><code>n_runs</code></td><td>1</td><td>LLM 路径每批评估几遍。大于 1 时 <code>score</code> 为命中遍数除以总遍数。</td></tr>
       <tr><td><code>n_parallels</code></td><td>50</td><td>同时发送给模型的请求数。API 允许时越高越快。</td></tr>
-      <tr><td><code>entities_per_call</code></td><td>150</td><td>每批最多放多少条文本（批次越大越省调用，也越容易看漏）。</td></tr>
-      <tr><td><code>shuffle</code></td><td>True</td><td>是否先打乱顺序再分批（避免批次效应）。</td></tr>
-      <tr><td><code>random_seed</code></td><td>42</td><td>打乱顺序的随机种子；固定后每次运行的分批方式一致。</td></tr>
-      <tr><td><code>threshold</code></td><td>0.5</td><td>保留判定线：<code>score</code> 达到该值才 <code>keep = True</code>。想更保守地过滤就调高（如 0.8）。</td></tr>
-      <tr><td><code>additional_instructions</code></td><td>None</td><td>追加给模型的任何额外指令（例如对条件的补充澄清）。</td></tr>
-      <tr><td><code>file_name</code></td><td>filter_responses.csv</td><td>原始模型响应保存的文件名前缀（实际存为 <code>filter_responses_raw_responses.csv</code>）。</td></tr>
-      <tr><td><code>reset_files</code></td><td>False</td><td>True 时清空 save_dir 重新跑；False 时断点续跑（跳过已完成批次）。</td></tr>
+      <tr><td><code>entities_per_call</code></td><td>150</td><td>每批最多放多少条文本。批次越大越省调用，但 LLM 路径也越容易漏看。</td></tr>
+      <tr><td><code>shuffle</code></td><td>True</td><td>是否先打乱顺序再分批，以避免批次效应。</td></tr>
+      <tr><td><code>random_seed</code></td><td>42</td><td>打乱顺序的随机种子，固定后每次运行的分批方式一致。</td></tr>
+      <tr><td><code>threshold</code></td><td>0.5</td><td>保留判定线，<code>score</code> 达到该值时 <code>keep = True</code>。想更保守地过滤可调高，例如 0.8。</td></tr>
+      <tr><td><code>additional_instructions</code></td><td>None</td><td>追加给模型的额外指令，例如对条件的补充澄清。</td></tr>
+      <tr><td><code>file_name</code></td><td>filter_responses.csv</td><td>结果文件名前缀，原始响应存为 <code>filter_responses_raw_responses.csv</code>，清洗结果存为 <code>filter_responses_cleaned.csv</code>。</td></tr>
+      <tr><td><code>reset_files</code></td><td>False</td><td>True 时清空当前任务检查点重新运行；False 时断点续跑。更换模型、切换 Provider 或修改筛选条件时，过期检查点会自动失效重算。</td></tr>
+      <tr><td><code>client / decision_client / embedding_client / search_tool</code></td><td>None</td><td>按次注入自定义 Provider 实例，默认自动从环境变量配置。显式传入 <code>client=</code> 时，环境变量中的 Decision Provider 不会自动接管。</td></tr>
     </table>
     <p>完整参数与进阶选项见 <a href="../configuration.html">⚙️ 参数设置</a>。</p>
 

@@ -96,7 +96,7 @@ result["buckets"]           # 归并后的标签：{标签: 定义}（也即汇�
 result["bucket_df"]         # 同上，表格形式（bucket / definition 两列）
 result["classification"]    # 原数据 + 每个标签的 {label}_actual / {label}_inverted 两列
 result["summary"]           # pair 模式：每个标签的净占比汇总表</code></pre>
-    <p>所有中间产物都会保存在 <code class="inline">save_dir</code>（compare / bucket / classify 子目录），并打包成 <code class="inline">discover_results_snapshot.json</code> 和 <code class="inline">discover_results_export.zip</code>（zip 内含全部表格的 CSV），方便检查与续跑。<strong>重跑（<code class="inline">reset_files=False</code>）时，<code class="inline">discover_state.json</code> 的输入签名若与本次一致，直接加载 snapshot 返回——零 provider 调用</strong>（真实实测：首次 22 分钟，重跑 0.0 秒且结果一致）；中间产物（compare / bucket / classify 子检查点）在签名失效或中断时自动续跑，已完成的阶段不重做。</p>
+    <p>所有中间产物都会保存在 <code class="inline">save_dir</code> 下的 compare、bucket 与 classify 子目录，并打包成 <code class="inline">discover_results_snapshot.json</code> 和 <code class="inline">discover_results_export.zip</code>（包含全部表格的 CSV）。以 <code class="inline">reset_files=False</code> 再次运行时，如果 <code class="inline">discover_state.json</code> 中的输入签名与本次一致，程序会直接加载快照返回，不发起任何 Provider 调用（实测首次运行耗时 22 分钟，二次加载只需 0.0 秒且结果一致）。输入或参数变化导致签名失效时，未受影响的子检查点仍可自动续跑。</p>
 
     <h3>示例结果（真实运行）</h3>
     <p>下面来自一次真实运行：10 对科技主题文本，circle 是"正面立场"句，square 是"负面立场"句（示例代码只展示了 3 对）。先看第一步——模型逐对找出的差异（50 条中摘 3 条）：</p>
@@ -135,7 +135,7 @@ result["summary"]           # pair 模式：每个标签的净占比汇总表</c
     <ol>
       <li><strong>找候选特征（Compare / Codify）</strong>：pair 模式下，把 circle 与 square 逐条配对，让模型写出"这条 circle 与这条 square 在哪些方面不同"，每条差异配一句解释；单列模式改用动态编码（<a href="codify.html">codify</a>），直接在文本中标出特征片段。这一步产出的候选可能几十上百条，很碎。</li>
       <li><strong>归并成标签（Bucket）</strong>：候选太碎无法直接用。归桶任务经过"生成 → 缩减 → 定稿"三轮投票（<code class="inline">repeat_bucketing</code> / <code class="inline">repeat_voting</code> 控制次数），把原始差异归并成 <code class="inline">bucket_count</code> 个互斥的大类，每个标签自带一段定义。</li>
-      <li><strong>套回数据量化（Classify）</strong>：把每个标签从"circle 的视角"描述一遍（正向），再对调成"square 的视角"（反向，模型会把描述里的 circle/square 互换），于是每个标签变成 <code class="inline">{label}_actual</code> 与 <code class="inline">{label}_inverted</code> 两个问题。然后逐条文本投票：每段文本判断该特征是否成立（<code class="inline">n_runs</code> 次重复，取多数；判定阈值 <code class="inline">min_frequency</code>）。</li>
+      <li><strong>套回数据量化（Classify）</strong>：把每个标签从 circle 的视角描述为正向问题，再对调为 square 的视角作为反向问题，分别对应 <code class="inline">{label}_actual</code> 与 <code class="inline">{label}_inverted</code> 两列，然后逐条判断特征是否成立。如果配置了 Decision Provider 或传入 <code class="inline">decision_client</code> 与 <code class="inline">decision_model</code>，第三阶段分类会自动委派给 Decision Provider（前两阶段的候选发现与归桶仍使用 <code class="inline">LLMClient</code>）。</li>
       <li><strong>净占比（Summary）</strong>：对每个标签统计正向成立的比例（<code class="inline">actual_pct</code>）、反向成立的比例（<code class="inline">inverted_pct</code>），净占比 <code class="inline">net_pct</code> = 实际 − 反转（百分点）。</li>
     </ol>
     <p>为什么要"实际 − 反转"而不是只看实际占比？因为模型可能系统性"容易打勾"——对某些表述总是倾向于说"存在差异"。反向问题提供了一个基准线：如果某特征只是模型偏好造成的假象，那它正向、反向成立的频率应该差不多，净占比会趋近 0；净占比越接近 ±100，越说明这是一个真实的、方向明确的区分特征。这和问卷里用反向题控制应答偏差是同一个统计思想。</p>
@@ -163,7 +163,8 @@ result["summary"]           # pair 模式：每个标签的净占比汇总表</c
       <tr><td><code>column_name</code></td><td>None</td><td>单列模式：只给一列文本，动态编码直接挖特征。与 pair 模式二选一，不能都给。</td></tr>
       <tr><td><code>save_dir</code></td><td>（必填）</td><td>保存中间产物与结果快照的目录（自动创建，含 compare/bucket/classify 子目录）。</td></tr>
       <tr><td><code>bucket_count</code></td><td>10</td><td>差异条目最终归并成几个标签。想得到更细的发现就调大。</td></tr>
-      <tr><td><code>model</code></td><td>gpt-5.4-mini</td><td>使用的模型名；默认从环境变量 <code>LEXIMETER_MODEL</code> 读取。</td></tr>
+      <tr><td><code>model</code></td><td>gpt-5.4-mini</td><td>候选发现与归桶阶段使用的生成模型名，默认从环境变量 <code>LEXIMETER_MODEL</code> 读取。</td></tr>
+      <tr><td><code>decision_model</code></td><td>None</td><td>配置 Decision Provider 时，第三阶段分类使用的决策模型名。</td></tr>
       <tr><td><code>n_parallels</code></td><td>50</td><td>同时发送给模型的请求数。API 允许时越高越快。</td></tr>
       <tr><td><code>n_runs</code></td><td>1</td><td>第三步分类时每段文本投票几次。大于 1 时取多数，降低随机波动。</td></tr>
       <tr><td><code>min_frequency</code></td><td>0.6</td><td>分类判定阈值：n_runs 次中标记为真的比例 ≥ 该值才算"成立"。</td></tr>
@@ -177,9 +178,9 @@ result["summary"]           # pair 模式：每个标签的净占比汇总表</c
       <tr><td><code>next_round_frac</code></td><td>0.25</td><td>归桶多轮缩减时每轮保留的候选比例。</td></tr>
       <tr><td><code>top_k_per_round</code></td><td>1</td><td>归桶每轮每组保留的前几个候选。</td></tr>
       <tr><td><code>raw_term_definitions</code></td><td>True</td><td>True 时把候选特征连同其定义一起喂给归桶（推荐）；False 只喂术语名。</td></tr>
-      <tr><td><code>reset_files</code></td><td>False</td><td>True 时清空 save_dir 与 <code>discover_state.json</code> 重新跑；False 时已完成验证——同数据同参数直接加载 snapshot，零 provider 调用（实测 fresh 22 分钟 → resume 0.0 秒，结果一致）。</td></tr>
-      <tr><td><code>max_retries</code></td><td>0</td><td>整个 run 失败时自动从检查点续跑的次数（重试强制 <code>reset_files=False</code>）。</td></tr>
-      <tr><td><code>client</code> / <code>embedding_client</code> / <code>search_tool</code></td><td>None</td><td>注入自定义模型客户端 / 嵌入客户端 / 搜索工具（进阶用法）。</td></tr>
+      <tr><td><code>reset_files</code></td><td>False</td><td>True 时清空当前目录与 <code>discover_state.json</code> 重新运行；False 时如果数据与参数未变，直接从快照加载结果，不发起 Provider 调用。</td></tr>
+      <tr><td><code>max_retries</code></td><td>0</td><td>整个任务失败时自动从检查点续跑的重试次数，重试时强制保持 <code>reset_files=False</code>。</td></tr>
+      <tr><td><code>client</code> / <code>decision_client</code> / <code>embedding_client</code> / <code>search_tool</code></td><td>None</td><td>按次注入自定义 Provider 实例，支持将第三阶段分类委派给 <code>DecisionClient</code>。</td></tr>
     </table>
     <p>完整参数与进阶选项见 <a href="../configuration.html">⚙️ 参数设置</a>。</p>
 

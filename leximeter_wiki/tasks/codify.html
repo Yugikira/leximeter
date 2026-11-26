@@ -101,38 +101,39 @@ result = await leximeter.codify(
       <li><strong>分块</strong>：超过 <code class="inline">max_words_per_call</code> 词的文本自动切块；类别超过 <code class="inline">max_categories_per_call</code> 个时分批。每个（行, 块, 类别批）是一个独立请求，并发执行、失败自动重试。</li>
       <li><strong>标记边界</strong>：模型对每个命中片段逐字输出"开头 8 词 + 结尾 8 词"作为边界（不足 20 词的片段整体写出），以 JSON 返回——这是为了能用程序精确定位。</li>
       <li><strong>逐字定位</strong>：word_matching 在原文中按"精确匹配 → 归一化匹配（忽略大小写/标点）→ 仅字母匹配 → 首/尾 20 字符兜底"逐级放宽的策略，把模型给的开头结尾摘录映射回原文的确切位置——即使模型记不准大小写或标点，也能找回原文原词。</li>
-      <li><strong>补全扫描（n_rounds&gt;1）</strong>：用分类器判断"剔除已标片段后的剩余文本是否还包含可编码内容"，只对仍被标记的类别在剩余文本上再编码一轮，循环直到没有新增。</li>
+      <li><strong>补全扫描（n_rounds&gt;1）</strong>：用分类器判断剔除已标片段后的剩余文本是否还包含可编码内容，只对仍被标记的类别在剩余文本上再编码一轮，循环直到没有新增。如果配置了 Decision Provider 或传入 <code class="inline">decision_client</code>，这一步的遗漏检查会自动委派给 <code class="inline">decision_client</code> 与 <code class="inline">decision_model</code>，片段摘录仍由 <code class="inline">LLMClient</code> 完成。</li>
       <li><strong>输出</strong>：最终表写入 <code class="inline">coded_passages.csv</code>；开启 <code class="inline">debug_print=True</code> 时会打印每个类别的定位命中率，供你评估质量。</li>
     </ol>
 
     <h3>给模型的提示词（概括）</h3>
-    <div class="prompt"><span class="plabel">Codify 提示词结构（简化为要点）</span>
+    <div class="prompt"><span class="plabel">Codify 提示词结构（前缀固定，简化为要点）</span>
       扮演社会科学中的文本编码员。<br>
-      类别："positive sentiment: Positive or approving statements about work." 等。<br>
-      仔细通读全文，为每个属于某类别的片段标记边界：<br>
-      逐字输出片段的开头 8 词与结尾 8 词（不足 20 词则整体写出）；<br>
-      必须完全逐字一致（拼写、标点、大小写都不能变）；<br>
-      同一段文字可同时标记到多个类别。输出 JSON。
+      类别："positive sentiment: Positive or approving statements about work." 等（静态前缀，固定在顶部以复用 KV 缓存）。<br>
+      仔细通读全文，为每个属于某类别的片段标记边界：逐字输出片段的开头 8 词与结尾 8 词（不足 20 词则整体写出），必须完全逐字一致，同一段文字可同时标记到多个类别，输出 JSON。<br>
+      待编码文本（动态内容放在末尾）。
     </div>
-    <p>提示词反复强调"逐字一致"和"从头到尾通读、不要漏标"——这是编码质量（覆盖率）的关键来源。</p>
+    <p>提示词反复强调逐字一致和从头到尾通读不要漏标，这是保证编码覆盖率的关键。</p>
 
     <h2>参数设置</h2>
     <table>
       <tr><th>参数</th><th>默认值</th><th>说明</th></tr>
-      <tr><td><code>categories</code></td><td>None</td><td>类别字典：类别名 → 定义。给出时为静态模式（每类一列）；为 None 时进入动态模式（必须同时提供 additional_instructions）。</td></tr>
-      <tr><td><code>additional_instructions</code></td><td>""</td><td>额外指令；动态模式下用它描述要编码的主题（模型自行发现类别）。</td></tr>
-      <tr><td><code>column_name</code></td><td>（必填）</td><td>数据中文本所在列的列名。</td></tr>
-      <tr><td><code>save_dir</code></td><td>（必填）</td><td>保存中间产物与结果的目录（自动创建）。</td></tr>
-      <tr><td><code>model</code></td><td>gpt-5.4-mini</td><td>使用的模型名；默认从环境变量 <code>LEXIMETER_MODEL</code> 读取。</td></tr>
+      <tr><td><code>categories</code></td><td>None</td><td>类别字典，键为类别名，值为定义。提供时进入静态模式（每类一列）；留空时进入动态模式（必须同时提供 <code>additional_instructions</code>）。</td></tr>
+      <tr><td><code>additional_instructions</code></td><td>""</td><td>额外指令，动态模式下用于描述要编码的主题，让模型自行发现类别。</td></tr>
+      <tr><td><code>column_name</code></td><td>必填</td><td>数据中文本所在列的列名。</td></tr>
+      <tr><td><code>save_dir</code></td><td>必填</td><td>保存中间产物与结果的目录，不存在时自动创建。</td></tr>
+      <tr><td><code>model</code></td><td>gpt-5.4-mini</td><td>片段摘录使用的生成模型名，默认从环境变量 <code>LEXIMETER_MODEL</code> 读取。</td></tr>
+      <tr><td><code>decision_model</code></td><td>None</td><td>配置 Decision Provider 时，用于多轮补全遗漏检查的决策模型名。</td></tr>
       <tr><td><code>n_parallels</code></td><td>50</td><td>同时发送给模型的请求数。API 允许时越高越快。</td></tr>
-      <tr><td><code>modality</code></td><td>"text"</td><td>文本类型提示："text"（段落）或 "entity"（短实体）。影响提示词措辞。</td></tr>
-      <tr><td><code>file_name</code></td><td>coding_results.csv</td><td>原始编码响应的保存文件名；最终结果统一写 <code class="inline">coded_passages.csv</code>。</td></tr>
-      <tr><td><code>n_rounds</code></td><td>2</td><td>总轮数（含首轮）。1 = 不做补全扫描；大于 1 时执行"剔除已标片段 → 检查剩余 → 再编码"的补全循环。</td></tr>
+      <tr><td><code>modality</code></td><td>"text"</td><td>文本类型提示，可选 <code>"text"</code>（段落）或 <code>"entity"</code>（短实体）。</td></tr>
+      <tr><td><code>file_name</code></td><td>coding_results.csv</td><td>原始编码响应的保存文件名，最终结果统一写入 <code class="inline">coded_passages.csv</code>。</td></tr>
+      <tr><td><code>n_rounds</code></td><td>2</td><td>总轮数（含首轮）。设为 1 时不做补全扫描；大于 1 时循环执行剥离已标片段、检查剩余文本和补充编码。</td></tr>
       <tr><td><code>max_words_per_call</code></td><td>1000</td><td>每次请求最多包含多少词。文本更长会自动切块。</td></tr>
-      <tr><td><code>max_categories_per_call</code></td><td>8</td><td>每次请求最多包含几个类别。类别很多时模型可能顾此失彼，设小一点更稳。</td></tr>
+      <tr><td><code>max_categories_per_call</code></td><td>8</td><td>每次请求最多包含几个类别。类别较多时设小一点更稳。</td></tr>
+      <tr><td><code>order_strategy</code></td><td>"per_run"</td><td>类别键序策略：<code>"per_run"</code>（同 run 固定以命中前缀缓存，跨 run 互异置换）、<code>"fixed"</code>（跨 run 固定）或 <code>"per_item"</code>（逐条随机打乱）。</td></tr>
       <tr><td><code>debug_print</code></td><td>False</td><td>True 时打印每个类别的片段定位命中率等调试信息。</td></tr>
-      <tr><td><code>completion_classifier_instructions</code></td><td>None</td><td>补全扫描中给分类器的追加指令（默认"仅在剩余文本仍有清晰可编码片段时返回 True"）。</td></tr>
-      <tr><td><code>reset_files</code></td><td>False</td><td>True 时清空 save_dir 与 <code>codify_state.json</code> 重新跑；False 时已完成验证——同文本同类别直接加载 <code>coded_passages.csv</code>（列表列按 JSON 无损还原），零 provider 调用；输入变化自动清除旧编码检查点全量重跑。</td></tr>
+      <tr><td><code>completion_classifier_instructions</code></td><td>None</td><td>补全扫描中给分类器的追加指令，默认仅在剩余文本仍有清晰可编码片段时返回 True。</td></tr>
+      <tr><td><code>reset_files</code></td><td>False</td><td>True 时清空当前任务检查点与 <code>codify_state.json</code> 重新运行；False 时如果输入文本、类别与模型配置未变，直接从 <code>coded_passages.csv</code> 无损还原结果，不发起 Provider 调用。输入或配置变化时自动清理过期检查点并重算。</td></tr>
+      <tr><td><code>client / decision_client / embedding_client / search_tool</code></td><td>None</td><td>按次注入自定义 Provider 实例，支持将补全检查子阶段委派给 <code>DecisionClient</code>。</td></tr>
     </table>
     <p>完整参数与进阶选项见 <a href="../configuration.html">⚙️ 参数设置</a>。</p>
 

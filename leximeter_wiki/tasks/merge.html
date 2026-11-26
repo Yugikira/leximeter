@@ -139,6 +139,7 @@ result = await leximeter.merge(
       <tr><td><code>auto_match_threshold</code></td><td>0.75</td><td>自动匹配的相似度阈值；达到且候选唯一时直接匹配，不再问模型。</td></tr>
       <tr><td><code>use_best_auto_match</code></td><td>False</td><td>多个候选同时超过阈值时，是否直接取相似度最高的（默认否——宁可交给模型细看）。</td></tr>
       <tr><td><code>candidate_scan_chunks</code></td><td>5</td><td>第二轮起，每堆额外扫描几个候选窗口，给难配的键更多机会。</td></tr>
+      <tr><td><code>order_strategy</code></td><td>"per_run"</td><td>候选列表键序策略：<code>"per_run"</code>（同 run 固定以命中前缀缓存，跨 run 互异置换）、<code>"fixed"</code>（跨 run 固定）或 <code>"per_item"</code>（逐条随机打乱）。</td></tr>
       <tr><td><code>verbose</code></td><td>True</td><td>是否在运行中打印每轮的匹配进度。</td></tr>
       <tr><td><code>file_name</code></td><td>merge_responses.csv</td><td>原始模型响应保存的文件名。</td></tr>
       <tr><td><code>reset_files</code></td><td>False</td><td>True 时清空 save_dir 重新跑；False 时断点续跑（跳过已完成部分）。</td></tr>

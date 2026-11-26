@@ -106,33 +106,33 @@ result = await leximeter.extract(
     </ol>
 
     <h3>给模型的提示词（概括）</h3>
-    <div class="prompt"><span class="plabel">Extract 提示词结构（简化为要点）</span>
-      以下是待抽取的文本："<em>…文本…</em>"。<br>
-      请抽取以下属性，输出 JSON（每个实体一节）：<br>
-      <code>{"实体名": {"属性名": "抽取到的值"}}</code><br>
-      格式规则：年份只给数字（如 "1979"，公元前用负数）、日期用 ISO 格式、价格不带货币符号；<br>
-      只给抽取到的数据本身，不要解释；抽不到就写 "unknown"。
+    <div class="prompt"><span class="plabel">Extract 提示词结构（前缀固定，简化为要点）</span>
+      请抽取以下属性并输出 JSON（每个实体一节）：<code>{"实体名": {"属性名": "抽取到的值"}}</code>。<br>
+      格式规则：年份只给数字（如 "1979"，公元前用负数）、日期用 ISO 格式、价格不带货币符号；只给抽取到的数据本身，抽不到就写 "unknown"。<br>
+      属性定义清单（静态前缀，固定在顶部以复用 KV 缓存）。<br>
+      待抽取文本："<em>…文本…</em>"（动态内容放在末尾）。
     </div>
-    <p>属性定义里写清楚"抽什么、按什么格式给"，模型就照此执行——这就是抽取结果的"编码手册"，写得越明确，抽取越一致。</p>
+    <p>属性定义里写清楚抽什么、按什么格式输出，模型就照此执行。定义越明确，抽取结果越一致。</p>
 
     <h2>参数设置</h2>
     <table>
       <tr><th>参数</th><th>默认值</th><th>说明</th></tr>
-      <tr><td><code>df</code></td><td>（必填）</td><td>你的数据表格（pandas DataFrame），须包含文本列。</td></tr>
-      <tr><td><code>column_name</code></td><td>（必填）</td><td>数据中文本所在列的列名。</td></tr>
-      <tr><td><code>attributes</code></td><td>（必填）</td><td>字典：字段名 → 抽取标准说明（含期望格式，如"年份只给数字"）。</td></tr>
-      <tr><td><code>save_dir</code></td><td>（必填）</td><td>保存中间产物与结果的目录（自动创建）。</td></tr>
-      <tr><td><code>model</code></td><td>gpt-5.4-mini</td><td>使用的模型名；默认从环境变量 <code>LEXIMETER_MODEL</code> 读取。</td></tr>
-      <tr><td><code>n_runs</code></td><td>1</td><td>每段文本抽取几次。大于 1 时取第一次成功抽到的值，并额外保存逐次明细。</td></tr>
+      <tr><td><code>df</code></td><td>必填</td><td>你的数据表格（pandas DataFrame），须包含文本列。</td></tr>
+      <tr><td><code>column_name</code></td><td>必填</td><td>数据中文本所在列的列名。</td></tr>
+      <tr><td><code>attributes</code></td><td>必填</td><td>字典，键为字段名，值为抽取标准说明（含期望格式，例如年份只给数字）。</td></tr>
+      <tr><td><code>save_dir</code></td><td>必填</td><td>保存中间产物与结果的目录，不存在时自动创建。</td></tr>
+      <tr><td><code>model</code></td><td>gpt-5.4-mini</td><td>使用的模型名，默认从环境变量 <code>LEXIMETER_MODEL</code> 读取。</td></tr>
+      <tr><td><code>n_runs</code></td><td>1</td><td>每段文本抽取几次。大于 1 时取第一次成功抽到的有效值，并额外保存逐次明细。</td></tr>
       <tr><td><code>n_parallels</code></td><td>50</td><td>同时发送给模型的请求数。API 允许时越高越快。</td></tr>
-      <tr><td><code>n_attributes_per_run</code></td><td>None（全部分批）</td><td>每次请求最多包含几个属性。属性很多时模型可能顾此失彼，设小一点更稳。</td></tr>
-      <tr><td><code>additional_instructions</code></td><td>None</td><td>追加给模型的任何额外指令（如补充格式要求）。</td></tr>
-      <tr><td><code>modality</code></td><td>"entity"</td><td>文本类型提示：默认 "entity"（短实体，如产品名）；文本较长时改为 "text"。</td></tr>
-      <tr><td><code>types</code></td><td>None</td><td>把结果列转成数值或日期，如 <code>{"year of release": "int", "unit price": "float"}</code>；转换结果另存 <code>*_cleaned_coerced.csv</code>。</td></tr>
-      <tr><td><code>file_name</code></td><td>"extraction.csv"</td><td>中间结果文件名；最终汇总文件为同名 <code>*_cleaned.csv</code>。</td></tr>
-      <tr><td><code>reset_files</code></td><td>False</td><td>True 时清空 save_dir 重新跑；False 时断点续跑（跳过已完成条目）。</td></tr>
-      <tr><td><code>client / embedding_client / search_tool</code></td><td>None</td><td>底层客户端；默认自动从环境变量配置，一般不用改。</td></tr>
-      <tr><td><code>**engine_kwargs</code></td><td>—</td><td>透传给模型调用的额外参数（如 max_output_tokens、temperature、timeout、max_retries）。</td></tr>
+      <tr><td><code>n_attributes_per_run</code></td><td>None</td><td>每次请求最多包含几个属性。属性较多时设小一点更稳。</td></tr>
+      <tr><td><code>additional_instructions</code></td><td>None</td><td>追加给模型的额外指令，例如补充格式要求。</td></tr>
+      <tr><td><code>modality</code></td><td>"entity"</td><td>文本类型提示，默认 <code>"entity"</code>（短实体，如产品名）；长段落可改为 <code>"text"</code>。</td></tr>
+      <tr><td><code>types</code></td><td>None</td><td>把结果列转为数值或日期，例如 <code>{"year of release": "int", "unit price": "float"}</code>，转换结果另存为 <code>*_cleaned_coerced.csv</code>。</td></tr>
+      <tr><td><code>order_strategy</code></td><td>"per_run"</td><td>属性键序策略：<code>"per_run"</code>（同 run 固定以命中前缀缓存，跨 run 互异置换）、<code>"fixed"</code>（跨 run 固定）或 <code>"per_item"</code>（逐条随机打乱）。</td></tr>
+      <tr><td><code>file_name</code></td><td>"extraction.csv"</td><td>中间结果文件名，最终汇总文件为同名 <code>*_cleaned.csv</code>。</td></tr>
+      <tr><td><code>reset_files</code></td><td>False</td><td>True 时清空检查点重新运行；False 时断点续跑，跳过已完成条目。</td></tr>
+      <tr><td><code>client / embedding_client / search_tool</code></td><td>None</td><td>底层客户端，默认自动从环境变量配置。</td></tr>
+      <tr><td><code>**engine_kwargs</code></td><td>无</td><td>透传给底层批处理引擎或模型调用的额外参数，例如 <code>max_output_tokens</code>、<code>temperature</code>、<code>timeout</code> 与 <code>warmup_first</code>。</td></tr>
     </table>
     <p>完整参数与进阶选项见 <a href="../configuration.html">⚙️ 参数设置</a>。</p>
 

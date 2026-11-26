@@ -41,81 +41,94 @@
     <h1>参数设置</h1>
     <p class="lead">Leximeter 的每个功能都有大量参数，但 <strong>90% 的情况下你只需要改三样东西</strong>：你的数据、你的衡量标准（attributes/labels/categories）、保存位置（save_dir）。本页是全部参数的速查字典。</p>
 
-    <h2>一、全局配置（环境变量 / .env 文件）</h2>
-    <p>在项目根目录的 <code class="inline">.env</code> 文件中配置一次，所有任务共用。真实环境变量优先于 .env。</p>
+    <h2>一、全局配置（环境变量与 .env 文件）</h2>
+    <p>在项目根目录的 <code class="inline">.env</code> 文件中配置一次，所有任务共用。系统环境变量的优先级高于 <code class="inline">.env</code>。</p>
     <table>
       <tr><th>变量</th><th>默认</th><th>说明</th></tr>
-      <tr><td><code>LEXIMETER_PROTOCOL</code></td><td>responses</td><td>API 协议：<code>responses</code>（OpenAI Responses）或 <code>chat</code>（Chat Completions，DeepSeek/MiniMax/Ollama 通用）。</td></tr>
-      <tr><td><code>LEXIMETER_BASE_URL</code></td><td>—</td><td>服务商地址（如 <code>https://api.deepseek.com</code>）。</td></tr>
-      <tr><td><code>LEXIMETER_API_KEY</code></td><td>—</td><td>你的密钥；未设置时回退 <code>OPENAI_API_KEY</code>。</td></tr>
-      <tr><td><code>LEXIMETER_MODEL</code></td><td>gpt-5.4-mini</td><td>默认模型名，代码里不指定 <code>model=</code> 时使用。</td></tr>
-      <tr><td><code>LEXIMETER_EMBEDDING_PROVIDER</code></td><td>local</td><td>嵌入 provider：<code>local</code>（本地 BGE 模型，需 [embeddings] 依赖）、<code>openai</code>（API）、<code>none</code>（禁用，任务自动降级为纯 LLM 路径）。</td></tr>
-      <tr><td><code>LEXIMETER_EMBEDDING_MODEL</code></td><td>BAAI/bge-m3</td><td>嵌入模型名（openai provider 时例如 <code>text-embedding-3-small</code>）。</td></tr>
-      <tr><td><code>LEXIMETER_EMBEDDING_BASE_URL</code></td><td>同 LLM 地址</td><td>嵌入服务的独立端点（openai provider 用）。</td></tr>
-      <tr><td><code>LEXIMETER_EMBEDDING_API_KEY</code></td><td>同 LLM 密钥</td><td>嵌入服务的独立密钥（openai provider 用）。</td></tr>
-      <tr><td><code>LEXIMETER_SEARCH_PROVIDER</code></td><td>none</td><td>联网搜索：<code>tavily</code> 或 <code>none</code>。需要 <code>TAVILY_API_KEY</code>。</td></tr>
+      <tr><td><code>LEXIMETER_PROTOCOL</code></td><td>responses</td><td>LLM 接口协议：<code>responses</code>（OpenAI Responses API）或 <code>chat</code>（Chat Completions，适用于 DeepSeek、MiniMax、Ollama、vLLM）。</td></tr>
+      <tr><td><code>LEXIMETER_BASE_URL</code></td><td>未设置</td><td>模型服务地址，例如 <code>https://api.deepseek.com</code>。</td></tr>
+      <tr><td><code>LEXIMETER_API_KEY</code></td><td>未设置</td><td>模型 API 密钥；未设置时回退到 <code>OPENAI_API_KEY</code>。</td></tr>
+      <tr><td><code>LEXIMETER_MODEL</code></td><td>gpt-5.4-mini</td><td>默认生成模型名，代码里不指定 <code>model=</code> 时生效。</td></tr>
+      <tr><td><code>JSON_LLM_MODEL</code></td><td>gpt-5.4-mini</td><td><code>safest_json</code> 解析失败时的兜底修复模型。</td></tr>
+      <tr><td><code>LEXIMETER_EMBEDDING_PROVIDER</code></td><td>local</td><td>文本嵌入 Provider：<code>local</code>（本地 BGE 模型，需安装 <code>[embeddings]</code>）、<code>openai</code>（兼容 API）或 <code>none</code>（禁用，任务自动走纯 LLM 路径）。</td></tr>
+      <tr><td><code>LEXIMETER_EMBEDDING_MODEL</code></td><td>BAAI/bge-m3</td><td>嵌入模型名，使用 <code>openai</code> 时例如 <code>text-embedding-3-small</code>。</td></tr>
+      <tr><td><code>LEXIMETER_EMBEDDING_BASE_URL</code></td><td>同 LLM 地址</td><td>嵌入服务的独立端点，仅 <code>openai</code> 模式使用。</td></tr>
+      <tr><td><code>LEXIMETER_EMBEDDING_API_KEY</code></td><td>同 LLM 密钥</td><td>嵌入服务的独立密钥，仅 <code>openai</code> 模式使用。</td></tr>
+      <tr><td><code>LEXIMETER_SEARCH_PROVIDER</code></td><td>none</td><td>联网搜索 Provider：<code>tavily</code> 或 <code>none</code>。启用 <code>tavily</code> 时需要配置 <code>TAVILY_API_KEY</code>。</td></tr>
+      <tr><td><code>LEXIMETER_DECISION_PROTOCOL</code></td><td>none</td><td>Decision Provider 协议：<code>systemone</code>、<code>dummy</code> 或 <code>none</code>。未启用时所有任务自动回退到 <code>LLMClient</code>。</td></tr>
+      <tr><td><code>LEXIMETER_DECISION_BASE_URL</code></td><td>未设置</td><td>System One 服务根地址，例如 <code>https://openrouter.ai/api</code> 或 AMD Radeon Token Factory 端点。</td></tr>
+      <tr><td><code>LEXIMETER_DECISION_API_KEY</code></td><td>未设置</td><td>Decision Provider API 密钥。</td></tr>
+      <tr><td><code>LEXIMETER_DECISION_MODEL</code></td><td>未设置</td><td>默认决策模型名，例如 <code>cloudflare/clef-flash</code> 或 <code>d3-flash</code>。使用 <code>SystemOneClient</code> 时必须通过此变量或 <code>decision_model=</code> 显式指定，不会回退到生成模型。</td></tr>
     </table>
 
     <h2>二、所有任务共有的参数</h2>
     <table>
       <tr><th>参数</th><th>默认</th><th>说明</th></tr>
-      <tr><td><code>model</code></td><td>环境变量或内置默认</td><td>本次调用使用的模型名（可与全局不同，实现"混用多模型"）。</td></tr>
-      <tr><td><code>save_dir</code></td><td>任务相关默认</td><td>中间产物与结果的保存目录，自动创建。建议每个研究一个目录。</td></tr>
-      <tr><td><code>n_parallels</code></td><td>50</td><td>并发请求数。API 不限流时越大越快。</td></tr>
-      <tr><td><code>reset_files</code></td><td>False</td><td>True = 清空 save_dir（含 <code>{task}_state.json</code>）从零重跑；False = 断点续跑（跳过已完成条目；复杂任务同输入重跑直接加载结果，零 provider 调用）。</td></tr>
-      <tr><td><code>max_retries</code></td><td>0</td><td>复杂任务（<code>discover</code>/<code>debias</code>/<code>ideate</code>/<code>poll</code>/<code>seed</code>）：整个 run 失败时自动从检查点续跑的重试次数（重试强制 <code>reset_files=False</code>）。单次请求的重试由 SDK 层负责，不叠加。</td></tr>
-      <tr><td><code>client / embedding_client / search_tool</code></td><td>None</td><td>高级：注入自定义 provider 实例（测试、本地模型、特殊网关时用）。</td></tr>
+      <tr><td><code>model</code></td><td>环境变量或任务默认</td><td>本次调用使用的生成模型名，可与全局配置不同以混用多模型。</td></tr>
+      <tr><td><code>save_dir</code></td><td>任务默认目录</td><td>检查点与结果文件的保存目录，不存在时自动创建。建议每个研究单独设一个目录。</td></tr>
+      <tr><td><code>n_parallels</code></td><td>50</td><td>并发请求数。服务端不限流时可适当调高。</td></tr>
+      <tr><td><code>reset_files</code></td><td>False</td><td>设为 True 时清空当前任务的检查点与状态文件从头重跑。设为 False 时自动断点续跑，跳过已完成条目；复杂任务在输入不变时直接加载本地结果。如果模型、Provider 类型或提示词配置发生变化，子阶段过期检查点会自动失效并重新计算。</td></tr>
+      <tr><td><code>max_retries</code></td><td>0</td><td>仅 <code>discover</code>、<code>debias</code>、<code>ideate</code>、<code>poll</code>、<code>seed</code> 支持。整个任务抛出非参数类异常时，自动以 <code>reset_files=False</code> 从检查点重试的次数。单次请求重试由底层 SDK 负责，不叠加。</td></tr>
+      <tr><td><code>client / decision_client / embedding_client / search_tool</code></td><td>None</td><td>按次注入自定义 Provider 实例，覆盖 <code>.env</code> 默认值。在单阶段任务中显式传入 <code>client=</code> 时，环境变量中的 <code>LEXIMETER_DECISION_PROTOCOL</code> 不会强行接管。</td></tr>
     </table>
 
-    <h2>三、各任务参数速查</h2>
-    <p>每个任务的详细参数表在其专属页面；这里列出各任务<strong>独有</strong>的参数（共有参数见上）。</p>
+    <h2>三、Decision Provider 与前缀缓存优化（v0.2.0）</h2>
+    <p>v0.2.0 新增两项面向成本与质量的核心能力：</p>
+    <ul>
+      <li><strong>Decision Provider（<code>decision_client</code> 与 <code>decision_model</code>）。</strong>通过 <code>SystemOneClient</code> 对接 <code>POST /v1/systemone</code> 决策模型（支持 OpenRouter 44 款模型、TypeSafe Jev、AMD Radeon Token Factory、vLLM 与 SGLang），单次前向传播并行评估多个类型化问题，直接返回校准概率且无输出 token 计费。<code>classify</code>、<code>rank</code>、<code>filter</code> 支持纯 Decision 路径；<code>discover</code>、<code>paraphrase</code>、<code>codify</code>、<code>debias</code> 支持混合路径，即生成阶段走 <code>LLMClient</code>、内部判断子阶段走 <code>DecisionClient</code>。</li>
+      <li><strong>前缀固定提示词与 <code>order_strategy</code>。</strong>全部 14 份提示词模板已调整为静态说明与量表置顶、动态文本置底。<code>rate</code>、<code>classify</code>、<code>extract</code>、<code>rank</code>、<code>codify</code>、<code>merge</code> 均支持 <code>order_strategy</code> 参数：默认 <code>"per_run"</code> 在同一次 run 内固定键序以命中前缀缓存，并在多次 run 间使用互异确定性置换抵消顺序偏差；<code>"fixed"</code> 在跨 run 间始终复用原始键序以最大化热缓存；<code>"per_item"</code> 保留上游逐条随机打乱行为。</li>
+      <li><strong>自适应首条预热（<code>warmup_first</code>）。</strong>通过 <code>**engine_kwargs</code> 透传给 <code>batch_execute</code>，默认 <code>None</code>。当待处理请求数超过 <code>max(8, n_parallels)</code> 时，先顺序发送首条请求填充服务端前缀缓存，再并发放行其余请求，小批次无额外等待。</li>
+    </ul>
+
+    <h2>四、各任务参数速查</h2>
+    <p>每个任务的详细参数表在其专属页面，下表列出各任务独有的主要参数及默认值。</p>
 
     <h3>测量类</h3>
     <table>
       <tr><th>任务</th><th>独有参数（默认值）</th></tr>
-      <tr><td><a href="tasks/rate.html">评分 rate</a></td><td><code>attributes</code>(必填, 属性→打分标准) · <code>n_runs</code>(1, 测几次取平均) · <code>n_attributes_per_run</code>(None) · <code>rating_scale</code>(None, 自定义量表) · <code>additional_instructions</code>(None) · <code>modality</code>("text"/"entity") · <code>file_name</code>("ratings.csv")</td></tr>
-      <tr><td><a href="tasks/classify.html">分类 classify</a></td><td><code>labels</code>(必填, 标签→判断标准) · <code>n_runs</code>(1) · <code>min_frequency</code>(0.6, 多次复测的多数决阈值) · <code>n_attributes_per_run</code>(None) · <code>additional_instructions</code>(None) · <code>modality</code>("text") · <code>file_name</code>("classify_responses.csv")</td></tr>
-      <tr><td><a href="tasks/extract.html">抽取 extract</a></td><td><code>attributes</code>(必填, 字段→定义) · <code>n_runs</code>(1) · <code>n_attributes_per_run</code>(None) · <code>types</code>(None, 字段类型强转如 <code>{"year": "int"}</code>) · <code>modality</code>("entity") · <code>file_name</code>("extraction.csv")</td></tr>
-      <tr><td><a href="tasks/rank.html">排序 rank</a></td><td><code>attributes</code>(必填) · <code>n_rounds</code>(5, 比赛轮数) · <code>matches_per_round</code>(3, 每轮每属性配对数) · <code>learning_rate</code>(0.1) · <code>n_attributes_per_run</code>(None) · <code>circle_first</code>(None) · <code>modality</code>("text") · <code>file_name</code>("rankings")</td></tr>
-      <tr><td><a href="tasks/debias.html">去偏 debias</a></td><td><code>attributes</code>(必填) · <code>signal_dictionary</code>(必填, 待剥离内容类别) · <code>mode</code>("rate") · <code>removal_method</code>("codify"/"paraphrase") · <code>removal_attribute</code>(None) · <code>remaining_signal</code>(True) · <code>remaining_signal_attribute</code>(None) · <code>strip_percentages</code>([100]) · <code>categories_to_strip</code>(None) · <code>robust_regression</code>(True, HC3 稳健标准误) · <code>random_seed</code>(12345) · <code>measurement_kwargs / removal_kwargs</code>(None) · <code>verbose</code>(True) · <code>max_retries</code>(0)</td></tr>
+      <tr><td><a href="tasks/rate.html">评分 rate</a></td><td><code>attributes</code>（必填） · <code>n_runs</code>（1） · <code>n_attributes_per_run</code>（None） · <code>rating_scale</code>（None） · <code>additional_instructions</code>（None） · <code>modality</code>（"text"） · <code>order_strategy</code>（"per_run"） · <code>file_name</code>（"ratings.csv"）</td></tr>
+      <tr><td><a href="tasks/classify.html">分类 classify</a></td><td><code>labels</code>（必填） · <code>decision_model</code>（None） · <code>n_runs</code>（1） · <code>min_frequency</code>（0.6） · <code>n_attributes_per_run</code>（None） · <code>differentiate</code>（False） · <code>circle_column_name / square_column_name</code>（None） · <code>circle_first</code>（None） · <code>include_probabilities</code>（False） · <code>order_strategy</code>（"per_run"） · <code>additional_instructions</code>（None） · <code>modality</code>（"text"） · <code>file_name</code>（"classify_responses.csv"）</td></tr>
+      <tr><td><a href="tasks/extract.html">抽取 extract</a></td><td><code>attributes</code>（必填） · <code>n_runs</code>（1） · <code>n_attributes_per_run</code>（None） · <code>types</code>（None，如 <code>{"year": "int"}</code>） · <code>order_strategy</code>（"per_run"） · <code>modality</code>（"entity"） · <code>file_name</code>（"extraction.csv"）</td></tr>
+      <tr><td><a href="tasks/rank.html">排序 rank</a></td><td><code>attributes</code>（必填） · <code>decision_model</code>（None） · <code>n_rounds</code>（5） · <code>matches_per_round</code>（3） · <code>learning_rate</code>（0.1） · <code>n_attributes_per_run</code>（None） · <code>circle_first</code>（None） · <code>order_strategy</code>（"per_run"） · <code>modality</code>（"text"） · <code>file_name</code>（"rankings"）</td></tr>
+      <tr><td><a href="tasks/debias.html">去偏 debias</a></td><td><code>attributes</code>（必填） · <code>signal_dictionary</code>（必填） · <code>mode</code>（"rate"） · <code>decision_model</code>（None） · <code>removal_method</code>（"codify"） · <code>measurement_attribute / removal_attribute</code>（None） · <code>remaining_signal</code>（True） · <code>remaining_signal_attribute / description</code>（None） · <code>strip_percentages</code>（[100]） · <code>categories_to_strip</code>（None） · <code>robust_regression</code>（True） · <code>random_seed</code>（12345） · <code>measurement_kwargs / removal_kwargs</code>（None） · <code>verbose</code>（True） · <code>max_retries</code>（0）</td></tr>
     </table>
 
     <h3>文本整理类</h3>
     <table>
       <tr><th>任务</th><th>独有参数（默认值）</th></tr>
-      <tr><td><a href="tasks/merge.html">合并 merge</a></td><td><code>on / left_on / right_on</code>(必填其一, 匹配列) · <code>how</code>("left"/"right") · <code>n_runs</code>(1) · <code>short_list_len</code>(16) · <code>long_list_len</code>(256, 长表启用嵌入的门槛) · <code>use_embeddings</code>(True) · <code>max_attempts</code>(4, 候选窗口收缩 16→8→4→2) · <code>short_list_multiplier</code>(0.5) · <code>auto_match_threshold</code>(0.75, 嵌入相似度自动匹配阈值) · <code>candidate_scan_chunks</code>(5) · <code>verbose</code>(True)</td></tr>
-      <tr><td><a href="tasks/deduplicate.html">去重 deduplicate</a></td><td><code>group_size</code>(500, 每组多少项) · <code>use_embeddings</code>(True) · <code>additional_instructions</code>(None) · <code>modality</code>("entity") · <code>file_name</code>("deduplicate_responses.csv")</td></tr>
-      <tr><td><a href="tasks/filter.html">过滤 filter</a></td><td><code>condition</code>(必填, 自然语言条件) · <code>n_runs</code>(1) · <code>entities_per_call</code>(150) · <code>shuffle</code>(True) · <code>random_seed</code>(42) · <code>threshold</code>(0.5, keep 判定阈值) · <code>file_name</code>("filter_responses.csv")</td></tr>
-      <tr><td><a href="tasks/deidentify.html">脱敏 deidentify</a></td><td><code>grouping_column</code>(None, 按组分块) · <code>mapping_column</code>(None) · <code>max_words_per_call</code>(7500) · <code>additional_instructions</code>(None) · <code>n_passes</code>(1, 脱敏轮数) · <code>use_existing_mappings_only</code>(False) · <code>file_name</code>("deidentified.csv")</td></tr>
-      <tr><td><a href="tasks/paraphrase.html">改写 paraphrase</a></td><td><code>instructions</code>(必填, 改写指令) · <code>json_mode</code>(False) · <code>revised_column_name</code>(None, 输出列名) · <code>n_rounds</code>(1, &gt;1 时递归校验) · <code>n_runs</code>(1) · <code>later_round_run_multiplier</code>(5) · <code>use_modified_source</code>(False) · <code>validation_attribute</code>(None, 校验标准) · <code>file_name</code>("paraphrase_responses.csv")</td></tr>
+      <tr><td><a href="tasks/merge.html">合并 merge</a></td><td><code>on / left_on / right_on</code>（必填其一） · <code>how</code>（"left"） · <code>n_runs</code>（1） · <code>short_list_len</code>（16） · <code>long_list_len</code>（256） · <code>use_embeddings</code>（True） · <code>max_attempts</code>（4） · <code>short_list_multiplier</code>（0.5） · <code>auto_match_threshold</code>（0.75） · <code>use_best_auto_match</code>（False） · <code>candidate_scan_chunks</code>（5） · <code>order_strategy</code>（"per_run"） · <code>verbose</code>（True）</td></tr>
+      <tr><td><a href="tasks/deduplicate.html">去重 deduplicate</a></td><td><code>group_size</code>（500） · <code>use_embeddings</code>（True） · <code>additional_instructions</code>（None） · <code>modality</code>（"entity"） · <code>file_name</code>（"deduplicate_responses.csv"）</td></tr>
+      <tr><td><a href="tasks/filter.html">过滤 filter</a></td><td><code>condition</code>（必填） · <code>decision_model</code>（None） · <code>n_runs</code>（1） · <code>entities_per_call</code>（150） · <code>shuffle</code>（True） · <code>random_seed</code>（42） · <code>threshold</code>（0.5） · <code>file_name</code>（"filter_responses.csv"）</td></tr>
+      <tr><td><a href="tasks/deidentify.html">脱敏 deidentify</a></td><td><code>grouping_column</code>（None） · <code>mapping_column</code>（None） · <code>max_words_per_call</code>（7500） · <code>additional_instructions</code>（None） · <code>n_passes</code>（1） · <code>use_existing_mappings_only</code>（False） · <code>file_name</code>（"deidentified.csv"）</td></tr>
+      <tr><td><a href="tasks/paraphrase.html">改写 paraphrase</a></td><td><code>instructions</code>（必填） · <code>decision_model</code>（None） · <code>json_mode</code>（False） · <code>revised_column_name</code>（None） · <code>n_rounds</code>（1） · <code>n_runs</code>（1） · <code>later_round_run_multiplier</code>（5） · <code>use_modified_source</code>（False） · <code>validation_attribute</code>（None） · <code>file_name</code>（"paraphrase_responses.csv"）</td></tr>
     </table>
 
     <h3>质性分析类</h3>
     <table>
       <tr><th>任务</th><th>独有参数（默认值）</th></tr>
-      <tr><td><a href="tasks/codify.html">编码 codify</a></td><td><code>categories</code>(None, 静态类别；None 且给 instructions 则动态模式) · <code>additional_instructions</code>("") · <code>n_rounds</code>(2, 补全循环) · <code>max_words_per_call</code>(1000) · <code>max_categories_per_call</code>(8) · <code>debug_print</code>(False) · <code>completion_classifier_instructions</code>(None) · <code>file_name</code>("coding_results.csv")</td></tr>
-      <tr><td><a href="tasks/bucket.html">归桶 bucket</a></td><td><code>bucket_count</code>(10, 想要几个桶) · <code>additional_instructions</code>(None) · <code>differentiate</code>(False) · <code>n_terms_per_prompt</code>(250) · <code>repeat_bucketing</code>(5, 生成轮数) · <code>repeat_voting</code>(25, 投票轮数) · <code>next_round_frac</code>(0.25) · <code>top_k_per_round</code>(1) · <code>raw_term_definitions</code>(True) · <code>file_name</code>("bucket_definitions.csv")</td></tr>
-      <tr><td><a href="tasks/compare.html">对比 compare</a></td><td><code>circle_column_name / square_column_name</code>(必填, 两列) · <code>differentiate</code>(True, True=找差异) · <code>additional_instructions</code>(None) · <code>circle_first</code>(None, 顺序提示) · <code>modality</code>("text") · <code>file_name</code>("comparison_responses.csv")</td></tr>
-      <tr><td><a href="tasks/discover.html">特征发现 discover</a></td><td><code>column_name</code>(单列模式) 或 <code>circle/square_column_name</code>(双列模式) · <code>bucket_count</code>(10) · <code>n_runs</code>(1) · <code>min_frequency</code>(0.6) · <code>max_words_per_call</code>(1000) · <code>max_categories_per_call</code>(8) · <code>n_terms_per_prompt</code>(250) · <code>repeat_bucketing</code>(5) · <code>repeat_voting</code>(25) · <code>next_round_frac</code>(0.25) · <code>top_k_per_round</code>(1) · <code>raw_term_definitions</code>(True) · <code>additional_instructions</code>(None) · <code>modality</code>("text") · <code>max_retries</code>(0)</td></tr>
+      <tr><td><a href="tasks/codify.html">编码 codify</a></td><td><code>categories</code>（None，给定时静态模式，留空且给 instructions 为动态模式） · <code>additional_instructions</code>（""） · <code>decision_model</code>（None） · <code>n_rounds</code>（2） · <code>max_words_per_call</code>（1000） · <code>max_categories_per_call</code>（8） · <code>order_strategy</code>（"per_run"） · <code>debug_print</code>（False） · <code>completion_classifier_instructions</code>（None） · <code>file_name</code>（"coding_results.csv"）</td></tr>
+      <tr><td><a href="tasks/bucket.html">归桶 bucket</a></td><td><code>bucket_count</code>（10） · <code>additional_instructions</code>（None） · <code>differentiate</code>（False） · <code>n_terms_per_prompt</code>（250） · <code>repeat_bucketing</code>（5） · <code>repeat_voting</code>（25） · <code>next_round_frac</code>（0.25） · <code>top_k_per_round</code>（1） · <code>raw_term_definitions</code>（True） · <code>file_name</code>（"bucket_definitions.csv"）</td></tr>
+      <tr><td><a href="tasks/compare.html">对比 compare</a></td><td><code>circle_column_name / square_column_name</code>（必填） · <code>differentiate</code>（True） · <code>additional_instructions</code>（None） · <code>circle_first</code>（None） · <code>modality</code>（"text"） · <code>file_name</code>（"comparison_responses.csv"）</td></tr>
+      <tr><td><a href="tasks/discover.html">特征发现 discover</a></td><td><code>column_name</code>（单列模式）或 <code>circle_column_name / square_column_name</code>（双列模式） · <code>bucket_count</code>（10） · <code>decision_model</code>（None） · <code>n_runs</code>（1） · <code>min_frequency</code>（0.6） · <code>max_words_per_call</code>（1000） · <code>max_categories_per_call</code>（8） · <code>n_terms_per_prompt</code>（250） · <code>repeat_bucketing</code>（5） · <code>repeat_voting</code>（25） · <code>next_round_frac</code>（0.25） · <code>top_k_per_round</code>（1） · <code>raw_term_definitions</code>（True） · <code>additional_instructions</code>（None） · <code>modality</code>（"text"） · <code>max_retries</code>（0）</td></tr>
     </table>
 
     <h3>生成类</h3>
     <table>
       <tr><th>任务</th><th>独有参数（默认值）</th></tr>
-      <tr><td><a href="tasks/ideate.html">理论生成 ideate</a></td><td><code>topic</code>(必填, 主题) · <code>n_ideas</code>(1000, 生成几个想法) · <code>scientific_theory</code>(True, 科学理论模式) · <code>additional_instructions</code>(None) · <code>file_name</code>("ideation.csv") · <code>max_retries</code>(0)</td></tr>
-      <tr><td><a href="tasks/seed.html">样本生成 seed</a></td><td><code>instructions</code>(必填, 人群定义) · <code>num_entities</code>(1000, 生成几个) · <code>entities_per_generation</code>(50, 每批几个) · <code>existing_entities_cap</code>(100) · <code>deduplicate</code>(False) · <code>deduplicate_sample_seed</code>(42) · <code>existing_entities</code>(None, 已有实体) · <code>file_name</code>("seed_entities.csv") · <code>max_retries</code>(0)</td></tr>
-      <tr><td><a href="tasks/poll.html">合成调查 poll</a></td><td><code>population_description</code>(None, 人群描述) · <code>questions</code>(必填, 问题列表) · <code>seed_model / persona_model / poll_model</code>(gpt-5.5, 三阶段可分别指定模型) · <code>num_personas</code>(1000) · <code>entities_per_generation</code>(50) · <code>n_questions_per_run</code>(8, 每批几个问题) · <code>file_name</code>("poll_results.csv") · <code>max_retries</code>(0)</td></tr>
-      <tr><td><a href="tasks/whatever.html">任意提示词 whatever</a></td><td><code>prompts</code>(必填, 提示词列表) · <code>df / column_name / identifiers</code>(None, 数据驱动模式) · <code>json_mode</code>(False) · <code>web_search</code>(None, True 启用检索增强) · <code>web_search_filters</code>(None, 如 <code>{"allowed_domains": [...]}</code>) · <code>search_context_size</code>("medium") · <code>file_name</code>("custom_prompt_responses.csv")</td></tr>
+      <tr><td><a href="tasks/ideate.html">理论生成 ideate</a></td><td><code>topic</code>（必填） · <code>n_ideas</code>（1000） · <code>scientific_theory</code>（True） · <code>additional_instructions</code>（None） · <code>file_name</code>（"ideation.csv"） · <code>max_retries</code>（0）</td></tr>
+      <tr><td><a href="tasks/seed.html">样本生成 seed</a></td><td><code>instructions</code>（必填） · <code>num_entities</code>（1000） · <code>entities_per_generation</code>（50） · <code>existing_entities_cap</code>（100） · <code>deduplicate</code>（False） · <code>deduplicate_sample_seed</code>（42） · <code>existing_entities</code>（None） · <code>file_name</code>（"seed_entities.csv"） · <code>max_retries</code>（0）</td></tr>
+      <tr><td><a href="tasks/poll.html">合成调查 poll</a></td><td><code>population_description</code>（None） · <code>questions</code>（必填） · <code>seed_model / persona_model / poll_model</code>（gpt-5.5） · <code>num_personas</code>（1000） · <code>entities_per_generation</code>（50） · <code>n_questions_per_run</code>（8） · <code>file_name</code>（"poll_results.csv"） · <code>max_retries</code>（0）</td></tr>
+      <tr><td><a href="tasks/whatever.html">任意提示词 whatever</a></td><td><code>prompts</code>（与 <code>df/column_name</code> 二选一） · <code>identifiers</code>（None） · <code>json_mode</code>（False） · <code>web_search</code>（None） · <code>web_search_filters</code>（None） · <code>search_context_size</code>（"medium"） · <code>file_name</code>（"custom_prompt_responses.csv"）</td></tr>
     </table>
 
-    <h2>四、数据加载</h2>
+    <h2>五、数据加载</h2>
     <table>
       <tr><th>函数</th><th>参数</th></tr>
-      <tr><td><code>leximeter.load(folder_path)</code></td><td><code>folder_path</code>(必填, 文本文件夹) · <code>save_name</code>(None) · <code>modality</code>("text", 仅支持 text) · <code>reset_files</code>(False)。返回列：path / name / text。</td></tr>
+      <tr><td><code>leximeter.load(folder_path)</code></td><td><code>folder_path</code>（必填，文本文件夹） · <code>save_name</code>（None） · <code>modality</code>（"text"，仅支持 text） · <code>reset_files</code>（False）。返回 <code>path</code>、<code>name</code> 与 <code>text</code> 三列。</td></tr>
     </table>
 
     <div class="tip"><strong>参数调整的通用建议</strong>
-      先跑小样本（几十条）验证结果质量 → 再全量跑；成本敏感时降低 <code>n_runs</code> 或换更便宜的模型；结果波动大时提高 <code>n_runs</code> / 把属性定义写得更具体。</div>
+      先用几十条小样本验证输出质量，确认定义清晰后再跑全量。成本敏感时可以保持默认 <code>order_strategy="per_run"</code>（多次重复运行时也可改用 <code>"fixed"</code>），或在判断类任务中接入 Decision Provider。结果波动大时，提高 <code>n_runs</code> 并把属性定义写得更具体。</div>
 
     <footer><a href="getting-started.html">← 快速上手</a> · <a href="index.html">返回主页</a></footer>
   </main>

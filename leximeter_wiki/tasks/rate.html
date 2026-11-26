@@ -100,29 +100,29 @@ result = await leximeter.rate(
     </ol>
 
     <h3>给模型的提示词（概括）</h3>
-    <div class="prompt"><span class="plabel">Rate 提示词结构（简化为要点）</span>
-      以下是你要打分的文本："<em>…文本…</em>"。<br>
-      请按以下标准打分，输出 JSON：<br>
-      <code>{"属性名": 0到100的整数}</code><br>
-      打分锚点：0 = 完全不具备该属性；100 = 极其强烈。<br>
-      只依据文本内容判断，不要臆测。
+    <div class="prompt"><span class="plabel">Rate 提示词结构（前缀固定，简化为要点）</span>
+      请按以下标准打分，输出 JSON：<code>{"属性名": 0 到 100 的整数}</code>。<br>
+      打分锚点：0 表示完全不具备该属性，100 表示极其强烈；只依据文本内容判断，不要臆测。<br>
+      属性定义清单（静态前缀，固定在顶部以复用 KV 缓存）。<br>
+      待打分文本："<em>…文本…</em>"（动态内容放在末尾）。
     </div>
-    <p>每个属性后附上你写的"标准说明"（attributes 字典里的值），模型据此校准分数含义。这就是"测量效度"的来源——你的标准写得多清楚，打分就有多一致。</p>
+    <p>每个属性后附上你写的标准说明（attributes 字典的值），模型据此校准分数含义。前缀固定布局配合默认 <code class="inline">order_strategy="per_run"</code>，在多条文本共享相同前缀时可显著提高服务端缓存命中率。</p>
 
     <h2>参数设置</h2>
     <table>
       <tr><th>参数</th><th>默认值</th><th>说明</th></tr>
-      <tr><td><code>attributes</code></td><td>（必填）</td><td>字典：属性名 → 打分标准说明。说明越具体，打分越一致。</td></tr>
-      <tr><td><code>column_name</code></td><td>（必填）</td><td>数据中文本所在列的列名。</td></tr>
-      <tr><td><code>save_dir</code></td><td>（必填）</td><td>保存中间产物与结果的目录（自动创建）。</td></tr>
-      <tr><td><code>model</code></td><td>gpt-5.4-mini</td><td>使用的模型名；默认从环境变量 <code>LEXIMETER_MODEL</code> 读取。</td></tr>
-      <tr><td><code>n_runs</code></td><td>1</td><td>每段文本测量几次。大于 1 时结果取平均，并额外保存逐次明细（可靠性分析用）。</td></tr>
+      <tr><td><code>attributes</code></td><td>必填</td><td>字典，键为属性名，值为打分标准说明。说明越具体，打分越一致。</td></tr>
+      <tr><td><code>column_name</code></td><td>必填</td><td>数据中文本所在列的列名。</td></tr>
+      <tr><td><code>save_dir</code></td><td>必填</td><td>保存中间产物与结果的目录，不存在时自动创建。</td></tr>
+      <tr><td><code>model</code></td><td>gpt-5.4-mini</td><td>使用的模型名，默认从环境变量 <code>LEXIMETER_MODEL</code> 读取。</td></tr>
+      <tr><td><code>n_runs</code></td><td>1</td><td>每段文本测量几次。大于 1 时结果取平均，并额外保存逐次明细供信度分析使用。</td></tr>
       <tr><td><code>n_parallels</code></td><td>50</td><td>同时发送给模型的请求数。API 允许时越高越快。</td></tr>
-      <tr><td><code>n_attributes_per_run</code></td><td>None（全部分批）</td><td>每次请求最多包含几个属性。属性很多时模型可能顾此失彼，设小一点更稳。</td></tr>
-      <tr><td><code>rating_scale</code></td><td>None</td><td>自定义评分量表说明（例如改为 1–7）。</td></tr>
-      <tr><td><code>additional_instructions</code></td><td>None</td><td>追加给模型的任何额外指令。</td></tr>
-      <tr><td><code>modality</code></td><td>"text"</td><td>文本类型提示："text"（段落）或 "entity"（短实体，如食物、公司名）。影响提示词措辞。</td></tr>
-      <tr><td><code>reset_files</code></td><td>False</td><td>True 时清空 save_dir 重新跑；False 时断点续跑（跳过已完成条目）。</td></tr>
+      <tr><td><code>n_attributes_per_run</code></td><td>None</td><td>每次请求最多包含几个属性。属性较多时设小一点更稳。</td></tr>
+      <tr><td><code>rating_scale</code></td><td>None</td><td>自定义评分量表说明，例如改为 1 到 7 分。</td></tr>
+      <tr><td><code>additional_instructions</code></td><td>None</td><td>追加给模型的额外指令。</td></tr>
+      <tr><td><code>modality</code></td><td>"text"</td><td>文本类型提示，可选 <code>"text"</code>（段落）或 <code>"entity"</code>（短实体，如食物、公司名）。</td></tr>
+      <tr><td><code>order_strategy</code></td><td>"per_run"</td><td>属性键序策略：<code>"per_run"</code>（同 run 固定以命中前缀缓存，跨 run 互异置换抵消顺序锚定）、<code>"fixed"</code>（跨 run 固定以最大化热缓存）或 <code>"per_item"</code>（逐条随机打乱）。</td></tr>
+      <tr><td><code>reset_files</code></td><td>False</td><td>True 时清空检查点重新运行；False 时断点续跑，跳过已完成条目。</td></tr>
     </table>
     <p>完整参数与进阶选项见 <a href="../configuration.html">⚙️ 参数设置</a>。</p>
 

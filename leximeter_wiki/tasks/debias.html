@@ -191,16 +191,17 @@ print(result.regression["stripped_100pct"].stage1_delta)   # 两步去偏的关�
       <tr><td><code>run_name</code></td><td>None</td><td>本次运行的子目录名，默认 "debias_{measurement_attribute}"。</td></tr>
       <tr><td><code>strip_percentages</code></td><td>[100]</td><td>剥离比例列表，如 [50, 100] 会生成两个剥离变体（列名带 "stripped 50%" 后缀），可用于敏感性分析。</td></tr>
       <tr><td><code>categories_to_strip</code></td><td>None</td><td>只剥离 signal_dictionary 中的部分键；默认剥离 removal_attribute 对应键。</td></tr>
-      <tr><td><code>model</code></td><td>gpt-5.4-mini</td><td>使用的模型名；默认从环境变量 <code>LEXIMETER_MODEL</code> 读取。</td></tr>
+      <tr><td><code>model</code></td><td>gpt-5.4-mini</td><td>生成与评分阶段使用的模型名，默认从环境变量 <code>LEXIMETER_MODEL</code> 读取。</td></tr>
+      <tr><td><code>decision_model</code></td><td>None</td><td>配置 Decision Provider 时，在 <code>mode="classify"</code> 或 <code>mode="rank"</code> 测量阶段使用的决策模型名（剥离、<code>rate</code>、<code>extract</code> 与残余信号阶段继续走 <code>LLMClient</code>）。</td></tr>
       <tr><td><code>n_parallels</code></td><td>50</td><td>同时发送给模型的请求数。API 允许时越高越快。</td></tr>
       <tr><td><code>measurement_kwargs</code></td><td>{}</td><td>传给测量任务的额外参数（如 n_runs 多次测量取平均、temperature）。</td></tr>
       <tr><td><code>removal_kwargs</code></td><td>{}</td><td>传给剥离任务的额外参数（如 codify 的完成轮数 n_rounds）。</td></tr>
       <tr><td><code>robust_regression</code></td><td>True</td><td>回归使用稳健标准误（HC3，HC1 兜底）。只影响置信区间与 p 值，不影响系数。</td></tr>
       <tr><td><code>random_seed</code></td><td>12345</td><td>剥离片段抽样的随机种子（配合行号与比例派生），保证同一数据可复现。</td></tr>
       <tr><td><code>verbose</code></td><td>True</td><td>打印中间诊断：衰减率、均值变化、各回归表。</td></tr>
-      <tr><td><code>reset_files</code></td><td>False</td><td>True 时清空本次运行目录（含 <code>debias_state.json</code>）重新跑；False 时已完成验证——同输入同参数直接重建完整 <code>DebiasResult</code>（输入签名覆盖整个输入 df 与全部关键参数），零 provider 调用。</td></tr>
-      <tr><td><code>max_retries</code></td><td>0</td><td>整个 run 失败时自动从检查点续跑的次数（重试强制 <code>reset_files=False</code>）。</td></tr>
-      <tr><td><code>client</code> / <code>embedding_client</code> / <code>search_tool</code></td><td>None</td><td>注入自定义模型客户端 / 嵌入客户端 / 搜索工具（进阶用法）。</td></tr>
+      <tr><td><code>reset_files</code></td><td>False</td><td>True 时清空本次运行目录与 <code>debias_state.json</code> 重新运行；False 时如果输入数据与关键参数未变，直接从磁盘重建完整 <code>DebiasResult</code>，不发起 Provider 调用。输入或配置变化时自动重新计算。</td></tr>
+      <tr><td><code>max_retries</code></td><td>0</td><td>整个任务失败时自动从检查点续跑的重试次数，重试时强制保持 <code>reset_files=False</code>。</td></tr>
+      <tr><td><code>client</code> / <code>decision_client</code> / <code>embedding_client</code> / <code>search_tool</code></td><td>None</td><td>按次注入自定义 Provider 实例，支持在分类或排序去偏模式中委派给 <code>DecisionClient</code>。</td></tr>
     </table>
     <p>完整参数与进阶选项见 <a href="../configuration.html">⚙️ 参数设置</a>。</p>
 

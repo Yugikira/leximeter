@@ -1,219 +1,302 @@
 # Leximeter
 
-**文本专用、厂商中立**的 LLM 测量库——把杂乱无章的定性文本（访谈、演讲、评论、档案…）转化为可分析的结构化数据。
+Leximeter 是一个面向纯文本、与模型 Provider 解耦的 LLM 测量库。它将访谈、演讲、评论、档案等非结构化定性文本转化为可分析的结构化数据。
 
-fork 自 [openai/GABRIEL](https://github.com/openai/GABRIEL)，保留其全部文本功能（含 8 项复杂行为：extract 多实体、rank BT 标准误、bucket 多轮投票、codify 补全循环、paraphrase 递归校验、discover `net_pct` 汇总、merge kmeans2 聚类、debias 两步去偏），重做内部结构，解决三个痛点：
+本项目 fork 自 [openai/GABRIEL](https://github.com/openai/GABRIEL)，完整保留其全部文本测量、清洗与生成任务，并重构了内部实现：
 
-- **解耦**：把 6900 行的 `openai_utils.py` 单体切成「协议层 `client/`」+「通用编排层 `engine/`」，并用基类 `Task`/`AttributeTask` 消除各任务间的复制粘贴。
-- **厂商中立**：`LLMClient`（`ResponsesClient` / `ChatCompletionsClient`）可插拔地接 OpenAI / DeepSeek / MiniMax / Ollama 等任何兼容后端；**Decision Provider**（`DecisionClient` / `SystemOneClient`，`POST /v1/systemone`）支持 TypeSafe Jev、OpenRouter 44 款决策模型（Cloudflare Clef / Clef-Flash、Google `gemini-decision-1`、OpenAI `gpt-6-luna-decisions` 等）、AMD Radeon Token Factory（`d3` / `d3-flash`）及自托管 vLLM / SGLang；嵌入（本地 BGE）与联网搜索（Tavily）同样作为独立可选 provider 单独配置。
-- **KV-Cache 友好**：全部 14 份提示词模板改为前缀固定（静态说明、量表与定义置顶，动态文本/配对置底），默认 `order_strategy="per_run"` + `batch_execute` 自适应首条预热；DeepSeek 实测缓存命中率 `61.5%–86.7%`、总费用下降 `23%–62%`，且与上游 GABRIEL 测量质量保持一致（详见 [research/kv-cache-experiment-results.md](research/kv-cache-experiment-results.md)）。
-- **可测试**：所有 provider 可注入假实现（含 `DummyClient` / `DummyDecisionClient`），零密钥零联网跑通全链路（201 个测试全绿）；全量任务及 OpenRouter / AMD Radeon / DeepSeek 真实端点均已冒烟验证。
+- **模块解耦。** 原项目 6900 行的 `openai_utils.py` 已拆分为协议层 `client/` 与通用编排层 `engine/`，并通过 `Task` 与 `AttributeTask` 基类复用公共流程。
+- **Provider 中立。** `LLMClient` 通过 `ResponsesClient` 与 `ChatCompletionsClient` 对接 OpenAI、DeepSeek、MiniMax、Ollama、vLLM 等兼容接口。`DecisionClient` 通过 `SystemOneClient` 实现 `POST /v1/systemone` 协议，支持 TypeSafe Jev、OpenRouter 托管的 44 款决策模型、AMD Radeon Token Factory 与自托管 vLLM 或 SGLang。文本嵌入与联网搜索作为独立的可选 Provider 单独配置。
+- **前缀缓存友好。** 全部 14 份提示词模板都将静态指令、量表定义与输出格式放在前缀，把动态文本放在末尾。配合默认的 `order_strategy="per_run"` 与 `batch_execute` 自适应首条预热，DeepSeek 实测缓存命中率达到 61.5% 到 86.7%，总费用下降 23% 到 62%，测量质量与上游 GABRIEL 保持一致。详见 [research/kv-cache-experiment-results.md](research/kv-cache-experiment-results.md)。
+- **离线可测试。** 每个 Provider 都支持注入假实现，例如 `DummyClient` 与 `DummyDecisionClient`。全套离线测试无需 API 密钥或网络连接即可运行。
 
-> **面向研究者**：使用指南见 [leximeter_wiki/index.html](leximeter_wiki/index.html)（含每个功能的示例代码、真实运行结果、算法与提示词讲解、全部参数说明）。
-> 术语表见 [GLOSSARY.md](GLOSSARY.md)，架构决策见 [docs/adr/](docs/adr/)，设计规范见 [research/spec.md](research/spec.md)，研究与实测报告见 [research/classifier-models-research.md](research/classifier-models-research.md) 与 [research/kv-cache-experiment-results.md](research/kv-cache-experiment-results.md)，GABRIEL 源码移植笔记见 [research/gabriel-source-notes.md](research/gabriel-source-notes.md)。
+更多文档如下：
+
+- [leximeter_wiki/index.html](leximeter_wiki/index.html) 面向研究者的使用指南，包含示例代码、运行结果、算法讲解与参数说明。
+- [GLOSSARY.md](GLOSSARY.md) 领域术语表。
+- [docs/adr/](docs/adr/) 架构决策记录。
+- [research/spec.md](research/spec.md) 设计规范。
+- [research/classifier-models-research.md](research/classifier-models-research.md) 与 [research/kv-cache-experiment-results.md](research/kv-cache-experiment-results.md) 决策模型调研与前缀缓存实验报告。
+- [research/gabriel-source-notes.md](research/gabriel-source-notes.md) GABRIEL 源码移植笔记。
 
 ## 安装
 
+推荐使用 `uv` 安装依赖，也可以使用 `pip`：
+
 ```bash
-# 用 uv（推荐）
+# 使用 uv 安装核心依赖
 uv sync
 
-# 或 pip
+# 或使用 pip 可编辑安装
 pip install -e .
 
-# 可选依赖
-pip install -e '.[embeddings]'   # 本地 BGE 嵌入
-pip install -e '.[search]'      # Tavily 联网搜索
+# 按需安装可选依赖
+pip install -e ".[embeddings]"   # 本地 BGE 文本嵌入
+pip install -e ".[search]"       # Tavily 联网搜索
 ```
 
-## 配置 Provider（.env）
+## 配置 Provider
 
-所有任务底层都走 `LLMClient`。在项目根目录放一份 `.env`（可复制 `.env.example` 后填写；`uv sync` 会自动创建 venv，`.env` 由库导入时自动加载，无需手动 export）：
+所有生成任务底层都通过 `LLMClient` 调用模型。可以在项目根目录复制 [.env.example](.env.example) 为 `.env` 后按需填写，全部配置项均为可选。
+
+导入 `leximeter` 时会自动调用 `load_dotenv()` 加载 `.env`，且不会覆盖已存在的系统环境变量。系统环境变量的优先级始终高于 `.env`。调用任何任务时，也可以通过 `client=`、`decision_client=`、`embedding_client=` 或 `search_tool=` 参数覆盖默认配置。
 
 ```bash
-# .env —— 全部键可选；已存在的真实环境变量优先于 .env
-LEXIMETER_PROTOCOL=chat                                        # responses | chat（默认 chat 时看下方端点）
-LEXIMETER_BASE_URL=https://api.deepseek.com                    # Chat Completions 端点（DeepSeek/MiniMax/Ollama/vLLM…）
+# LLM 协议与端点。protocol 可选 responses 或 chat，默认 responses。
+LEXIMETER_PROTOCOL=chat
+LEXIMETER_BASE_URL=https://api.deepseek.com
 LEXIMETER_API_KEY=sk-...
 LEXIMETER_MODEL=deepseek-chat
 
-# 走 OpenAI Responses API 时（默认协议），只需：
+# 使用 OpenAI Responses API 时，仅配置以下密钥即可。
 OPENAI_API_KEY=sk-...
 
-# 嵌入：local（默认，本地 BGE，需 [embeddings]）| openai | none（禁用，merge/deduplicate 自动走纯 LLM 路径）
+# 文本嵌入 Provider，可选 local、openai 或 none。
+# 设为 local 时默认使用本地 BGE 模型，需要安装 embeddings 依赖。
+# 设为 none 时禁用嵌入，merge 与 deduplicate 自动回退到纯 LLM 路径。
 LEXIMETER_EMBEDDING_PROVIDER=local
 LEXIMETER_EMBEDDING_MODEL=BAAI/bge-m3
-# openai 专用：嵌入端点/密钥与 LLM 相互独立（可用 SiliconFlow 等独立嵌入服务，
-# 如 LEXIMETER_EMBEDDING_BASE_URL=https://api.siliconflow.cn/v1 + bge-m3 模型）；
-# 不设则默认同 LEXIMETER_BASE_URL / LEXIMETER_API_KEY / OPENAI_BASE_URL
+# 使用 openai 兼容嵌入服务时，可独立配置端点与密钥，例如 SiliconFlow。
+# 留空时默认复用 LEXIMETER_BASE_URL、LEXIMETER_API_KEY 或 OPENAI_BASE_URL。
 LEXIMETER_EMBEDDING_BASE_URL=
 LEXIMETER_EMBEDDING_API_KEY=
 
-# 联网搜索：tavily | none（默认）
+# 联网搜索 Provider，可选 tavily 或 none，默认 none。
 LEXIMETER_SEARCH_PROVIDER=none
 TAVILY_API_KEY=tvly-...
 
-# 决策模型 provider（System One）：systemone | dummy | none（默认禁用，自动回退 LLM）
-# 支持 TypeSafe Jev、OpenRouter（/api/v1/systemone 或 /api/alpha/decisions）、
-# AMD Token Factory（d3 / d3-flash）及自托管 vLLM / SGLang
+# Decision Provider，可选 systemone、dummy 或 none，默认 none。
+# 未启用时自动回退到 LLMClient。支持 TypeSafe Jev、OpenRouter、AMD Token Factory、vLLM 与 SGLang。
 LEXIMETER_DECISION_PROTOCOL=none
 LEXIMETER_DECISION_BASE_URL=https://openrouter.ai/api
 LEXIMETER_DECISION_API_KEY=sk-or-...
 LEXIMETER_DECISION_MODEL=cloudflare/clef-flash
 
-# safest_json 解析兜底的 LLM 修复模型（默认 gpt-5.4-mini）
+# safest_json 解析失败时的兜底修复模型，默认 gpt-5.4-mini。
 JSON_LLM_MODEL=gpt-5.4-mini
 ```
 
-- 加载时机：`import leximeter` 时自动 `load_dotenv()`（不覆盖已有环境变量）——即 **真实环境变量 > `.env`**。
-- 每次调用仍可用 `client=` / `decision_client=` / `embedding_client=` / `search_tool=` 覆盖，见下文「Decision Provider」与「Provider 覆盖」。
-
 ## 快速上手
+
+以下示例按两个自然语言属性为一组菜品打分：
 
 ```python
 import pandas as pd
 import leximeter
 
-toy_data = pd.DataFrame({"entity": ["turkey", "pumpkin pie", "green bean casserole", "cornbread"]})
+toy_data = pd.DataFrame(
+    {"entity": ["turkey", "pumpkin pie", "green bean casserole", "cornbread"]}
+)
 attributes = {
     "savory taste": "How savory the dish is",
     "sweet taste": "Dessert-like sweetness",
 }
 
 results = await leximeter.rate(
-    toy_data, "entity", attributes=attributes, save_dir="toy_rate",
+    toy_data,
+    "entity",
+    attributes=attributes,
+    save_dir="toy_rate",
     modality="entity",
 )
-results.head()   # 一列一个属性（0–100）
+results.head()  # 每个属性输出一列 0 到 100 的评分
 ```
 
 ## 功能一览
 
-| 类别 | 函数 |
-|---|---|
-| **测量** | `rate`（0–100 评分）、`rank`（两两排序，BT 拟合 + z 分数 + 标准误）、`classify`（标签）、`extract`（事实抽取，支持多实体展开）、`discover`（发现判别特征，pair 模式出 `net_pct` 汇总） |
-| **清洗** | `merge`（模糊合并，kmeans2 聚类）、`deduplicate`（去重）、`filter`（条件筛选）、`deidentify`（脱敏） |
-| **生成/辅助** | `seed`、`ideate`、`poll`、`paraphrase`（递归校验）、`codify`（补全循环）、`compare`、`bucket`（多轮投票）、`debias`（两步去偏）、`whatever` |
-| **数据** | `load`（文件夹 → DataFrame） |
+| 函数 | 类别 | 说明 |
+|---|---|---|
+| `rate` | 测量 | 按自然语言属性对条目打 0 到 100 分 |
+| `rank` | 测量 | 通过多轮两两比较拟合 Bradley-Terry 排序分数与标准误 |
+| `classify` | 测量 | 判断条目是否符合指定布尔标签 |
+| `extract` | 测量 | 从文本中抽取结构化事实，支持单条文本展开多个实体 |
+| `discover` | 测量 | 从单列或成对文本中发现判别特征并归类汇总 |
+| `merge` | 清洗 | 结合向量聚类与 LLM 模糊连接两张表 |
+| `deduplicate` | 清洗 | 将语义等价的术语映射到同一代表词 |
+| `filter` | 清洗 | 按自然语言条件筛选条目 |
+| `deidentify` | 清洗 | 用一致的虚构信息替换文本中的个人敏感信息 |
+| `seed` | 生成与辅助 | 按指令批量生成互不重复的实体列表 |
+| `ideate` | 生成与辅助 | 围绕指定主题批量生成结构化构想报告 |
+| `poll` | 生成与辅助 | 生成虚拟群体画像并开展问卷调查 |
+| `paraphrase` | 生成与辅助 | 按指令改写文本，支持多轮递归校验 |
+| `codify` | 生成与辅助 | 摘录文本中符合编码规则的原文片段，支持多轮补全 |
+| `compare` | 生成与辅助 | 对比成对文本并列出差异或共同点 |
+| `bucket` | 生成与辅助 | 通过多轮投票将候选术语归并为互斥类别桶 |
+| `debias` | 生成与辅助 | 剥离混淆因素并执行两步去偏与稳健回归 |
+| `whatever` | 生成与辅助 | 使用统一并发与检查点引擎运行自定义提示词 |
+| `load` | 数据加载 | 将文件夹中的文本文件读取为 DataFrame |
 
-## 逐任务参考
+## 任务参考
 
-> 约定：`{base}` = `save_dir/{column_name}` 或 `save_dir/{n}_tokens` 等任务基名。`reset_files=False`（默认）时断点续跑，见「断点续跑」节。
+下文中的 `{base}` 表示 `file_name` 参数去掉 `.csv` 后缀后的文件名主干，所有输出文件与检查点都保存在 `save_dir` 目录下。所有任务默认 `reset_files=False`，中断后再次运行会自动从检查点续跑。
 
-### rate / classify / filter / deidentify / seed / ideate / poll（AttributeTask 系）
+### 基础测量与清洗
 
-- `rate(df, column_name, *, attributes, save_dir, n_runs=1, n_parallels=50, modality="text", ...)` → 每属性一列（0–100）。
-- `classify(df, column_name, *, labels, ...)` → 每标签一列（True/False）。
-- `filter(df, column_name, *, condition, ...)` → 布尔列。
-- `deidentify(df, column_name, *, grouping_column=None, mapping_column=None, ...)` → 打码列。
-- `seed(instructions, *, num_entities=1000, ...)` / `ideate(topic, *, n_ideas=1000, ...)` / `poll(df=None, *, population_description, questions, ...)`。
-- 落盘：`{base}_raw_responses.csv`（原始响应）、`{base}_cleaned.csv`（解析后聚合）、`n_runs>1` 时 `{base}_full_disaggregated.csv`（MultiIndex id×run 全量）；属性持久化 `{base}_attrs.json`。
+这组任务直接对输入 DataFrame 的目标列逐条执行测量或变换，并在输出 DataFrame 中追加结果列：
 
-### extract（多实体展开）
+- **`rate`。** 调用签名为 `rate(df, column_name, *, attributes, save_dir, n_runs=1, n_parallels=50, modality="text", ...)`。它为每个属性添加一列 0 到 100 的数值评分，多次运行时取各次 `run` 的均值。原始响应写入 `{base}_raw_responses.csv`，聚合结果写入 `{base}_cleaned.csv`，属性定义写入 `attributes.json`。当 `n_runs` 大于 1 时，按 `(id, run)` 展开的完整记录额外写入 `{base}_full_disaggregated.csv`。
+- **`classify`。** 调用签名为 `classify(df, column_name=None, *, labels, save_dir, ...)`。它为每个标签添加一列布尔值，并附带汇总列 `predicted_classes`。当通过 Decision Provider 运行且 `include_probabilities=True` 时，结果额外包含 `{label}_prob` 概率列。清洗后的结果写入 `{base}_cleaned.csv`。
+- **`filter`。** 调用签名为 `filter(df, column_name, *, condition, save_dir, ...)`。它按自然语言条件 `condition` 筛选条目，输出布尔列 `keep` 与得分列 `score`，结果写入 `{base}_cleaned.csv`。
+- **`deidentify`。** 调用签名为 `deidentify(df, column_name, *, save_dir, grouping_column=None, mapping_column=None, ...)`。它将文本中的个人敏感信息替换为一致的虚构信息，并输出 `deidentified_text` 与 `mapping` 两列，结果写入 `{base}_cleaned.csv`。指定 `grouping_column` 时，同组文本共享同一份替换映射。指定 `mapping_column` 时，任务会沿用传入的既有映射。
+- **`compare`。** 调用签名为 `compare(df, circle_column_name, square_column_name, *, save_dir, differentiate=True, ...)`。它对比成对文本的差异或共同点，返回长表格式的 DataFrame，包含 `circle`、`square`、`attribute` 与 `explanation` 四列。
 
-- `extract(df, column_name, *, attributes, types=None, ...)` → 每个实体一行：`entity_name` 列 + 每属性一列。
-- 嵌套 dict 值自动按 entity 展开多行（打印 drop_duplicates 提示）；聚合取首个非 "unknown"。
-- `types` 强转：`int` → `Int64`（四舍五入）、`datetime` → `pd.to_datetime`，失败计数打印；强转结果落 `{base}_cleaned_coerced.csv`。
+### 合成生成
 
-### rank（BT MLE + 标准误）
+这组任务不依赖已有评分表，而是按指令批量生成实体、构想或虚拟受访者问卷结果，并在输出目录中保存 `{task}_state.json` 以支持完成态缓存与任务级重试：
 
-- `rank(df, column_name, *, attributes, n_rounds=5, matches_per_round=3, ...)` → 每属性三列：`{attr}`（总体 z-score）、`{attr}_raw`（居中 BT 分）、`{attr}_se`（标准误）。
-- 每轮结束用**全部历史 outcomes** 重拟合；每轮落 `{base}_round{rnd}.csv`（含 Batch/Pair/IdA/IdB 列），断点续跑按 round CSV 数推断。
+- **`seed`。** 调用签名为 `seed(instructions, *, save_dir, num_entities=1000, ...)`。它生成 `num_entities` 个互不重复的实体，返回包含 `entity` 与 `entity_id` 两列的 DataFrame，默认写入 `seed_entities.csv`。
+- **`ideate`。** 调用签名为 `ideate(topic, *, save_dir, n_ideas=1000, ...)`。它围绕指定主题生成 `n_ideas` 份结构化构想报告并解析字段，默认写入 `ideation.csv`。
+- **`poll`。** 调用签名为 `poll(df=None, column_name=None, *, population_description, questions, save_dir, ...)`。它根据群体描述生成虚拟画像并逐题作答，也可以直接对传入的既有实体列开展调查，默认写入 `poll_results.csv`。
 
-### bucket（三阶段多轮投票）
+### `extract`
 
-- `bucket(df, column_name, *, bucket_count=10, repeat_bucketing=5, next_round_frac=0.5, top_k_per_round=3, raw_term_definitions=False, ...)` → `bucket_definitions.csv`（bucket + definition）与 DataFrame。
-- 生成 → 归约（tally 降序 + `keep=max(bucket_count, len·next_round_frac)`）→ 终选（`top_k_per_round` 补足）三阶段；`bucket_state.json` 全程状态，**签名（sha1，含 term 定义）变化自动清空**；阶段文件 `bucket_generation.csv` / `vote_reduce{r}.csv` / `vote_final{i}.csv`。
+调用签名为 `extract(df, column_name, *, attributes, save_dir, types=None, ...)`。
 
-### codify（补全循环）
+该任务从每条文本中抽取结构化事实。如果模型在单条文本中识别出多个实体，任务会将每个实体展开为独立一行，输出 `entity_name` 列以及各属性列，并在控制台打印去重提示。多次运行时，同一属性取首个非 `"unknown"` 的有效值。
 
-- `codify(df, column_name, *, categories=None, dynamic_mode=False, n_rounds=1, ...)`
-  - 静态模式（给定 `categories`）：**每类别一列**，值为 snippet 列表（GABRIEL 契约）。
-  - 动态模式：`coded_passages` 单列。
-- `n_rounds>1` 时补全循环：每轮 Classify 判「残留文本仍有可编码片段」→ strip 已提取片段 → 只补 flagged 类别；每轮落 `completion_checks/{stem}_completion_iter{i}.csv` + `{stem}_iter{i}.csv`；最终落 `coded_passages.csv`。
+传入 `types` 参数后，任务会对对应列执行类型转换。例如 `int` 会四舍五入后转为 pandas `Int64`，`datetime` 会交由 `pd.to_datetime` 解析，并打印转换失败的条数。原始聚合结果写入 `{base}_cleaned.csv`，类型转换后的结果写入 `{base}_cleaned_coerced.csv`。
 
-### paraphrase（递归校验）
+### `rank`
 
-- `paraphrase(df, column_name, *, instructions, n_rounds=1, later_round_run_multiplier=5, validation_attribute=None, ...)` → `{column_name}`（+多 run `_{i}`）+ 每列 `{column_name}_approved`。
-- `n_rounds>1` 走递归校验：候选 `round{r}_cand{c}`，每轮 Classify 判 `instructions_followed`，失败进入下一轮；每轮落 `{stem}_round{r}.csv`。
+调用签名为 `rank(df, column_name, *, attributes, save_dir, n_rounds=5, matches_per_round=3, ...)`。
 
-### discover（net_pct 汇总）
+该任务通过多轮两两比较评估条目在各属性上的相对顺序，默认运行 5 轮，每轮每个条目参与 3 场对决。每轮结束后，任务会使用截至当前轮次的全部历史胜负记录重新拟合 Bradley-Terry 模型。
 
-- `discover(df, *, column_name | circle_column_name+square_column_name, bucket_count=10, max_retries=0, ...)` → 8 键 dict：`candidates, buckets, classification, bucket_df, summary, compare|codify`。
-- pair 模式：`build_combined_metadata` 生成 `{lab}_actual`/`{lab}_inverted`（swap_cs 整词互换）；`summary` 列 `label, actual_true, inverted_true, total, actual_pct, inverted_pct, net_pct`。
-- 落盘：`discover_results_snapshot.json` + `discover_results_export.zip`（每键一个 csv）；`discover_state.json` 记录输入签名——**同输入重跑直接加载 snapshot，零 provider 调用**（实测：fresh 1350s → resume 0.0s）。
+每个属性输出三列，其中 `{attr}` 为总体 z 分数，`{attr}_raw` 为居中后的 Bradley-Terry 估计值，`{attr}_se` 为标准误。每轮对决记录保存在 `{base}_round{rnd}.csv` 中，包含 `Batch`、`Pair`、`IdA` 与 `IdB` 列。断点续跑时，任务会根据已生成的轮次文件自动接续未完成的轮次。
 
-### merge（kmeans2 + attempts 循环）
+### `bucket`
 
-- `merge(df_left, df_right, *, on|left_on+right_on, how="left", short_list_len=16, long_list_len=256, use_embeddings=True, max_attempts=4, auto_match_threshold=0.75, ...)` → 左表按右键合并结果。
-- short 侧在 `max_attempts` 轮内匹配（short_len 16→8→4→2）；剩余键 kmeans2 聚类（`use_embeddings` 需 long 表 ≥ 256 项，否则纯 LLM）+ 簇内分段 + 窗口候选；`sims >= auto_match_threshold` 唯一命中直接自动匹配。
-- 落盘：`merge_responses.csv`、组计划 `merge_groups_attempt{n}.json`（断点续跑）、进度 `merge_progress.csv`、嵌入缓存 `short_embeddings.json` / `long_embeddings.json`。
+调用签名为 `bucket(df, column_name, *, save_dir, bucket_count=10, repeat_bucketing=5, repeat_voting=25, next_round_frac=0.25, top_k_per_round=1, raw_term_definitions=True, ...)`。
 
-### deduplicate
+该任务将大量候选术语归并为 `bucket_count` 个互斥的类别桶，返回包含 `bucket` 与 `definition` 两列的 DataFrame，默认写入 `bucket_definitions.csv`。
 
-- `deduplicate(df, column_name, *, group_size=500, ...)` → 每项一行 + `{column_name}_deduplicated` 代表列。
-- 落盘：`deduplicate_responses.csv`、`{base}_cleaned.csv`。
+任务按三个阶段依次执行：
 
-### debias（两步去偏 + 稳健回归）
+1. 生成阶段重复调用模型产出多组候选类别桶方案，结果写入 `bucket_generation.csv`。
+2. 归约阶段通过多轮投票按得票从高到低淘汰候选桶，每轮保留 `max(bucket_count, 当前候选数 * next_round_frac)` 个桶，投票记录写入 `vote_reduce{r}.csv`。
+3. 终选阶段按每轮选出 `top_k_per_round` 个桶的方式补足最终名额，记录写入 `vote_final{i}.csv`。
 
-- `debias(df, column_name, *, measurement_attribute, removal_attribute, attributes, signal_dictionary, removal_method="codify", remaining_signal=True, strip_percentages=None, robust_regression=True, random_seed=12345, run_name=None, max_retries=0, ...)` → `DebiasResult(results, metadata, regression)`。
-- 流程：基线测量 → `_strip_passages`（确定性 RNG，seed 含 random_seed:row:pct:n）剥离 confounder 变体 → 剩余信号测量（恒 Rate）→ 两步去偏 `{attr} (debiased) = y - s + δ·r` + 差异列 `{attr} (raw - stripped)`。
-- 回归：`fit_ols`（statsmodels HC3 → HC1 回退 → numpy 兜底）；`robust_regression` 只影响 SE 不影响系数。
-- 落盘（`run_dir = save_dir/{run_name or debias_{attr}}`）：`debias_results.csv` + `debias_metadata.json` + `debias_state.json`（输入签名含**整个输入 df** 与全部关键参数——同输入重跑直接重建 `DebiasResult`，零 provider 调用）。
+全流程状态保存在 `bucket_state.json` 中，文件内记录了包含术语及其定义在内的 SHA-1 签名。输入术语或定义一旦变化，任务会自动清空旧状态并重新执行。
 
-### whatever（自定义提示）
+### `codify`
 
-- `whatever(prompts | df+column_name, *, identifiers=None, save_dir, ...)` → DataFrame。任意提示走同一引擎与检查点设施。
-- **联网检索（web_search）**：传 `web_search=True`（或提供 `web_search_filters`）时，每个 prompt 先用检索工具（Tavily）取回上下文、拼到 prompt 头部再交给模型——相当于 GABRIEL 教程里 `whatever` + 原生 web_search 的厂商中立版。参数对齐 GABRIEL：
-  - `web_search: bool | None`（`None` 时由 `web_search_filters` 是否存在推导）
-  - `web_search_filters: dict`：`{"allowed_domains": [...], "country": ...}` → Tavily `include_domains` / `country`
-  - `search_context_size: "low"|"medium"|"high"` → Tavily `search_depth`（`small`/`large` 别名兼容）
-  - 需要 `LEXIMETER_SEARCH_PROVIDER=tavily` + `TAVILY_API_KEY`（或注入 `search_tool=`）；未配置时 warning 并按原样跑。
+调用签名为 `codify(df, column_name, *, save_dir, categories=None, additional_instructions="", n_rounds=2, ...)`。
 
-## 断点续跑与 reset_files
+该任务从文本中摘录符合编码规则的原文片段，最终结果统一写入 `coded_passages.csv`。传入 `categories` 时进入静态模式，输出 DataFrame 为每个编码类别单独建一列，单元格内是摘录到的原文片段列表。不传 `categories` 而提供 `additional_instructions` 时进入动态模式，输出单个 `coded_passages` 列。
 
-- **逐请求检查点**：所有任务按确定性 identifier（文本哈希 + batch/run/iteration 段）写入检查点 CSV——已完成的样本不会重跑（`CountingClient` 在测试中断言无重复调用）。
-- **任务级已完成验证**（TICKET-001）：`discover` / `debias` / `ideate` / `poll` / `seed` / `codify` 维护 `{task}_state.json`（`input_signature` = 输入数据 + 关键参数的 sha1）。**同输入重跑直接加载结果文件，零 provider 调用**；输入（含数据、`model` 等参数）变化则全量重跑，绝不误用旧结果。
-- **任务级 `max_retries`**（`discover` / `debias` / `ideate` / `poll` / `seed`，默认 0）：整个 run 抛异常时自动从检查点续跑（重试强制 `reset_files=False`），最多重试 `max_retries` 次；参数错误等确定性异常不重试。单次请求的重试由 SDK 层负责（默认 600s 超时 + 2 次重试），不叠加。
-- `reset_files=True` 时清空本任务的检查点文件与 state 后重跑；`save_dir` 与 column_name 相同即视为同一任务。
-- **标识符为 GABRIEL 契约格式**：从旧版 leximeter 升级后 identifier 变化会使旧检查点失效——用 `reset_files=True` 或删除 `save_dir` 重跑（详见 spec「已知偏离与代价」）。
+默认 `n_rounds=2`。当 `n_rounds` 大于 1 时，任务会启动多轮补全循环。每一轮先剥离已摘录的原文片段，再调用 `Classify` 判断剩余文本中是否仍有遗漏的可编码片段。随后任务仅对被标记存在遗漏的类别再次摘录并合并结果。每轮的遗漏检查结果写入 `completion_checks/{base}_completion_iter{i}.csv`，当轮新增摘录写入 `{base}_iter{i}.csv`。
 
-## Decision Provider（System One 决策模型，v0.2.0）
+### `paraphrase`
 
-对于有界判断类任务，专用 **Decision Provider**（如 TypeSafe Jev、Cloudflare Clef / Clef-Flash、Google `gemini-decision-1`、AMD/vLLM-SR `d3` / `d3-flash`、OpenAI `gpt-6-luna-decisions`）可在**单次前向传播**内并行评估几十到上百个类型化问题（`noul` / `choice` / `score`），返回校准概率且 **$0 输出 token 计费**。`SystemOneClient` 实现开放协议 `POST /v1/systemone`，自动完成非 ASCII / 含空格标签键的安全转义、单层重试（遵循 `Retry-After`）与逐题 `refusal` 降级。
+调用签名为 `paraphrase(df, column_name, *, instructions, save_dir, n_rounds=1, n_runs=1, later_round_run_multiplier=5, validation_attribute=None, ...)`。
 
-- **纯 Decision 路径**（传入 `decision_client=` 或配置 `LEXIMETER_DECISION_PROTOCOL=systemone` 时零 `LLMClient` 调用；未配置时自动回退 `LLMClient`）：
-  - `classify`：单列走并行 `noul`（支持 `include_probabilities=True` 输出 `{label}_prob` 列，原始概率始终落盘检查点）；配对 `differentiate=True` 走 3 选 1 `choice`（`option_a` / `option_b` / `neither`，将正反命题直接绑定选项并随机化顺序，结构性保证互斥且无需自然语言极性猜测）。
-  - `rank`：两两对决走 4 选 1 `choice`（`circle` / `square` / `draw` / `insufficient_signal`），保留 `circle_first` 随机化与 Bradley–Terry MLE + 标准误。
-  - `filter`：反向扇出（`state = condition`，去重候选项批量作为并行 `noul`），单轮即得校准 `score` 与 `keep`。
-- **混合路径**（生成阶段继续使用 `LLMClient` + `model`，内部判断子阶段自动委派给 `DecisionClient` + 独立 `decision_model`）：
-  - `discover`（Stage 3 `classify`）、`paraphrase`（`n_rounds>1` 递归校验）、`codify`（`n_rounds>1` 补全检查）、`debias`（`mode="classify"` / `mode="rank"`）。
+该任务按 `instructions` 改写每条文本。输出列名为 `revised_column_name`，未指定时默认为 `{column_name}_revised`。当 `n_runs` 大于 1 时，结果按 `_1` 到 `_n` 后缀拆分为多列，每个改写列都附带对应的 `{col}_approved` 布尔列。最终结果写入 `{base}_cleaned.csv`。
+
+当 `n_rounds` 大于 1 时，任务会启动多轮递归校验。每一轮先为尚未通过的条目生成多个改写候选。第 0 轮生成 `n_runs` 个候选，后续轮次生成 `n_runs * later_round_run_multiplier` 个候选，各轮候选结果保存在 `{base}_round{r}.csv` 中。接着任务调用 `Classify` 对比原文与改写稿，默认判断改写是否遵循了 `instructions`，也可以通过 `validation_attribute` 自定义校验标准。通过校验的条目采纳首个合格候选，未通过的条目进入下一轮重新生成。如果达到轮次上限仍未通过，任务会从最后一轮候选中随机选取一条，并将对应的 `_approved` 标记为 `False`。
+
+### `discover`
+
+调用签名为 `discover(df, *, column_name=None, circle_column_name=None, square_column_name=None, save_dir, bucket_count=10, max_retries=0, ...)`。
+
+该任务自动挖掘文本中的判别特征并量化其频率，分为三个阶段。传入单个 `column_name` 时，第一阶段通过动态模式 `codify` 挖掘候选特征。传入 `circle_column_name` 与 `square_column_name` 时，第一阶段通过 `compare` 挖掘两列文本的差异特征。第二阶段调用 `bucket` 将候选特征归并为互斥类别桶。第三阶段调用 `classify` 将这些标签回标到数据上。
+
+任务返回一个字典，包含 `candidates`、`buckets`、`classification`、`bucket_df`、`summary` 以及中间阶段结果 `compare` 或 `codify`。成对模式下，每个标签会自动扩展为 `{lab}_actual` 以及互换 `circle` 和 `square` 后的 `{lab}_inverted` 两个方向，`summary` 表包含 `label`、`actual_true`、`inverted_true`、`total`、`actual_pct`、`inverted_pct` 与 `net_pct` 七列。完整快照写入 `discover_results_snapshot.json`，同时将各张表打包为 `discover_results_export.zip`。`discover_state.json` 会记录输入签名，相同输入再次运行时直接加载快照，不发起任何 Provider 调用。
+
+### `merge`
+
+调用签名为 `merge(df_left, df_right, *, save_dir, on=None, left_on=None, right_on=None, how="left", short_list_len=16, long_list_len=256, use_embeddings=True, max_attempts=4, auto_match_threshold=0.75, ...)`。
+
+该任务借助 LLM 与向量聚类对两张表执行模糊连接，默认按 `how="left"` 将右表合并到左表。
+
+任务最多执行 `max_attempts` 轮匹配，默认 4 轮，每轮将短表侧的分组长度减半，依次为 16、8、4、2。默认 `long_list_len` 为 256，`auto_match_threshold` 为 0.75。启用文本嵌入且长表去重后的键数不少于 `long_list_len` 时，任务先用 `kmeans2` 对未匹配键聚类，再在簇内分段并构造候选窗口。如果某个键与唯一候选的余弦相似度达到 `auto_match_threshold`，任务直接完成自动匹配。未满足嵌入条件时，任务自动走纯 LLM 分批匹配。运行过程会保存 `merge_responses.csv`、每轮分组计划 `merge_groups_attempt{n}.json`、进度表 `merge_progress.csv` 以及嵌入缓存 `short_embeddings.json` 与 `long_embeddings.json`。
+
+### `deduplicate`
+
+调用签名为 `deduplicate(df, column_name, *, save_dir, group_size=500, use_embeddings=True, ...)`。
+
+该任务将语义等价的术语映射到同一代表词，并在输出 DataFrame 中新增 `mapped_{column_name}` 列。默认 `group_size` 为 500。启用文本嵌入且去重后的术语数不少于 `group_size` 时，任务先用 `kmeans2` 将相近术语聚到同一分组再交由模型归并，否则直接按顺序分块。原始响应写入 `deduplicate_responses.csv`，嵌入缓存写入 `deduplicate_embeddings.json`，最终结果写入 `{base}_cleaned.csv`。
+
+### `debias`
+
+调用签名为 `debias(df, column_name, *, save_dir="debias", measurement_attribute, removal_attribute, attributes, signal_dictionary, removal_method="codify", remaining_signal=True, strip_percentages=None, robust_regression=True, random_seed=12345, run_name=None, max_retries=0, ...)`。
+
+该任务衡量并剔除文本中混淆因素对目标属性测量的影响，返回包含 `results`、`metadata` 与 `regression` 三个字段的 `DebiasResult`。
+
+流程包含四个步骤。首先对原始文本测量 `measurement_attribute`。接着按 `removal_method` 移除 `removal_attribute` 对应的混淆因素，可选 `codify` 剥离原文片段或 `paraphrase` 改写文本。选择 `codify` 时，任务依据 `random_seed` 确定性地按 `strip_percentages` 构造多个剥离比例的文本变体。随后任务重新测量各变体，并在 `remaining_signal=True` 时使用 `rate` 测量剥离后的残余信号。最后计算简单差值列 `{attr} (raw - stripped)` 与两步去偏列 `{attr} (debiased)`，计算公式为 `y - s + delta * r`。
+
+回归诊断由 `fit_ols` 执行，默认使用 statsmodels 计算 HC3 稳健标准误，不可用时回退到 HC1 或 numpy。`robust_regression` 仅影响标准误估计，不改变回归系数。输出保存在 `save_dir/{run_name}` 目录下，未指定 `run_name` 时默认为 `save_dir/debias_{attr}`，包含 `debias_results.csv`、`debias_metadata.json` 与 `debias_state.json`。输入 DataFrame 与关键参数不变时，再次运行会直接从磁盘重建 `DebiasResult`，不发起任何 Provider 调用。
+
+### `whatever`
+
+调用签名为 `whatever(prompts=None, *, df=None, column_name=None, identifiers=None, save_dir="whatever", web_search=None, web_search_filters=None, search_context_size="medium", ...)`。
+
+该任务使用统一的并发调度与检查点机制运行任意自定义提示词，既可以直接传入 `prompts` 列表，也可以传入 `df` 与 `column_name`。
+
+传入 `web_search=True` 或提供 `web_search_filters` 时，任务会在调用模型前先通过检索工具拉取网页上下文并拼接到提示词头部。相关参数与 GABRIEL 对齐：
+
+- `web_search` 默认为 `None`，此时根据是否传入 `web_search_filters` 自动推导。
+- `web_search_filters` 中的 `allowed_domains` 与 `country` 会映射到 Tavily 的 `include_domains` 与 `country`。
+- `search_context_size` 支持 `"low"`、`"medium"` 与 `"high"`，并兼容 `"small"` 与 `"large"` 别名。
+
+启用联网检索需要配置 `LEXIMETER_SEARCH_PROVIDER=tavily` 与 `TAVILY_API_KEY`，或通过 `search_tool=` 注入自定义检索工具。未配置时任务会打印警告，并按原始提示词继续运行。
+
+## 断点续跑与 `reset_files`
+
+Leximeter 通过四层机制保障长任务可安全续跑且不复用过期结果：
+
+- **逐请求检查点。** 所有任务都会按确定性标识符将原始响应写入检查点 CSV，标识符包含文本哈希以及批次、run 与轮次信息。中断后重新执行时，已完成的请求会自动跳过。
+- **子阶段检查点自动失效。** 当模型名称、Provider 类型或提示词配置发生变化时，`classify`、`filter`、`rank`、`codify` 等子阶段检查点会自动失效并清理旧产物，防止误用旧配置生成的缓存。
+- **任务级完成状态缓存。** `discover`、`debias`、`ideate`、`poll`、`seed`、`codify` 与 `bucket` 会在输出目录维护 `{task}_state.json`，记录输入数据与关键参数的 SHA-1 签名。相同输入再次运行时直接加载磁盘结果，不发起任何 Provider 调用。输入数据或模型等参数发生变化时，任务自动全量重跑。
+- **任务级重试。** `discover`、`debias`、`ideate`、`poll` 与 `seed` 接受 `max_retries` 参数，默认值为 0。整个任务抛出异常时，重试包装器会自动将 `reset_files` 设为 `False` 并从检查点续跑，最多重试 `max_retries` 次。参数错误等确定性异常不会触发重试。单次请求的超时与重试由底层 SDK 负责，默认超时 600 秒并重试 2 次，任务层不叠加内层重试。
+
+传入 `reset_files=True` 会清空当前任务的检查点文件与状态文件后重新执行。标识符格式遵循 GABRIEL 契约。如果从早期版本的 Leximeter 升级后遇到检查点不兼容，传入 `reset_files=True` 或删除旧的 `save_dir` 即可。
+
+## Decision Provider
+
+对于有界判断类任务，专用 Decision Provider 可以在单次前向传播中并行评估几十到上百个类型化问题，包括是非判断 `noul`、单选 `choice` 与评分 `score`，直接返回校准概率且不产生输出 token 费用。
+
+`SystemOneClient` 实现了开放协议 `POST /v1/systemone`，自动完成非 ASCII 或含空格标签键的安全转义、遵循 `Retry-After` 的单层重试以及逐题拒答降级。支持的服务包括 TypeSafe Jev、OpenRouter、AMD Radeon Token Factory 以及自托管的 vLLM 和 SGLang。其中 OpenRouter 托管了 44 款决策模型，包括 Cloudflare Clef、Google `gemini-decision-1` 与 OpenAI `gpt-6-luna-decisions`，AMD Radeon Token Factory 提供 `d3` 与 `d3-flash`。
+
+各任务对 Decision Provider 的使用分为两类路径：
+
+- **纯 Decision 路径。** 传入 `decision_client=` 或配置 `LEXIMETER_DECISION_PROTOCOL=systemone` 后，下列任务完全不调用 `LLMClient`。未配置时自动回退到 `LLMClient`。
+  - `classify` 在单列模式下走并行 `noul` 判断，传入 `include_probabilities=True` 时额外输出 `{label}_prob` 列，原始概率始终写入检查点。在成对模式 `differentiate=True` 下走三选一 `choice` 判断，将正反命题直接绑定到选项并随机化顺序，在结构上保证互斥，无需解析自然语言极性。
+  - `rank` 的两两对决走四选一 `choice` 判断，选项对应 `circle`、`square`、`draw` 与 `insufficient_signal`，同时保留 `circle_first` 顺序随机化以及 Bradley-Terry 极大似然估计与标准误计算。
+  - `filter` 采用反向扇出，将筛选条件作为状态上下文，把去重后的候选条目批量提交为并行 `noul` 问题，单轮即可得到校准后的 `score` 与 `keep`。
+- **混合路径。** 生成阶段继续使用 `LLMClient` 与 `model`，内部的判断子阶段自动委派给 `DecisionClient` 与独立的 `decision_model`。采用混合路径的任务包括 `discover` 的第三阶段分类、`paraphrase` 多轮模式的递归校验、`codify` 多轮模式的遗漏检查，以及 `debias` 中 `mode="classify"` 或 `mode="rank"` 的测量阶段。
+
+以下是通过 OpenRouter 与 AMD Radeon Token Factory 调用 Decision Provider 的示例：
 
 ```python
 import os
 import leximeter
 from leximeter.client import SystemOneClient
 
-# 例 1：通过 OpenRouter 调用 Cloudflare Clef-Flash / TypeSafe Jev / Gemini Decision 1
+# 示例 1：通过 OpenRouter 调用 Cloudflare Clef-Flash、TypeSafe Jev 或 Gemini Decision 1
 or_decision = SystemOneClient(
     base_url="https://openrouter.ai/api/v1",
     api_key=os.environ["OPENROUTER_API_KEY"],
 )
 out = await leximeter.classify(
-    df, "text", labels=labels, save_dir="run_cls",
+    df,
+    "text",
+    labels=labels,
+    save_dir="run_cls",
     decision_client=or_decision,
     decision_model="cloudflare/clef-flash",
     include_probabilities=True,
 )
 
-# 例 2：通过 AMD Radeon Token Factory 调用 d3-flash（或混合搭配 DeepSeek 生成 + d3-flash 校验）
+# 示例 2：混合使用 DeepSeek 生成改写稿与 AMD Radeon Token Factory 的 d3-flash 校验
 rad_decision = SystemOneClient(
     base_url="https://developer.amd.com.cn/radeon/api/v1",
     api_key=os.environ["RADEON_API_KEY"],
-    send_noul_criteria=False,  # d3 严格模式：noul 不附带 criteria
+    send_noul_criteria=False,  # d3 严格模式要求 noul 问题不附带 criteria
 )
 revised = await leximeter.paraphrase(
-    df, "text", instructions="...", save_dir="run_para",
+    df,
+    "text",
+    instructions="...",
+    save_dir="run_para",
     model="deepseek-v4-flash",
     n_rounds=2,
     decision_client=rad_decision,
@@ -221,34 +304,48 @@ revised = await leximeter.paraphrase(
 )
 ```
 
-## KV-Cache 友好提示词与 `order_strategy`（v0.2.0）
+## 前缀缓存友好提示词与 `order_strategy`
 
-- **前缀固定布局**：全部 14 份提示词模板将静态指令、量表/定义、输出格式与 `additional_instructions` 置顶，动态文本（`Item` / `Circle & Square` / `Persona` / 增量映射）置底；配对任务的 `circle_first` 随机化仅发生在未缓存后缀中，兼顾位置去偏与前缀缓存命中。
-- **键序策略 `order_strategy`**（支持于 `rate` / `classify` / `extract` / `rank` / `codify` / `merge`）：
-  - `"per_run"`（默认）：按 run-major（`batch → run → item`）派发，同一 run 内所有样本共享固定顺序以最大化 KV-cache 命中，不同 run（`n_runs > 1` / `rank` 多轮）采用严格互异的确定性置换，抵消局部属性锚定偏差。
-  - `"fixed"`：所有 run 复用调用方原始顺序，多次 run 可触发跨轮热缓存（实测高达 `86.7%` 命中率）。
-  - `"per_item"`：保留上游 GABRIEL 逐条随机打乱行为。
-- **自适应首条预热**：`batch_execute` 支持 `warmup_first: bool | None = None`（默认自动在 `len(pending) > max(8, n_parallels)` 时先顺序预热首条请求填充前缀缓存，再并发放行其余请求，小批次零额外串行开销）。
-- 实测与质量对照报告见 [research/kv-cache-experiment-results.md](research/kv-cache-experiment-results.md) 与 [docs/adr/0005-prefix-first-prompts-and-per-run-ordering.md](docs/adr/0005-prefix-first-prompts-and-per-run-ordering.md)。
+Leximeter 对提示词布局与请求派发顺序做了三项优化，在保持测量质量的同时提高服务端前缀缓存命中率：
 
-## Provider 覆盖
+- **前缀固定布局。** 全部 14 份提示词模板都将静态指令、量表定义、输出格式与 `additional_instructions` 放在开头，将动态内容如待测条目、`circle` 与 `square` 文本、虚拟画像以及增量映射放在末尾。成对任务的 `circle_first` 顺序随机化只发生在未缓存后缀中，在消除位置偏差的同时不影响前缀缓存命中。
+- **键序策略 `order_strategy`。** `rate`、`classify`、`extract`、`rank`、`codify` 与 `merge` 均支持该参数，包含三种模式：
+  - `"per_run"` 为默认策略，按批次、run、条目的顺序派发任务。同一次 run 内的所有条目共享固定键序以提高前缀缓存命中率。不同 run 或不同轮次采用严格互异的确定性置换，抵消局部属性锚定偏差。
+  - `"fixed"` 在所有 run 中保持调用方原始键序，多次重复运行时可触发跨轮热缓存，在 DeepSeek 实测中命中率最高达到 86.7%。
+  - `"per_item"` 保留上游 GABRIEL 逐条随机打乱键序的行为。
+- **自适应首条预热。** `batch_execute` 提供 `warmup_first` 参数，默认为 `None`。当待处理请求数超过 `max(8, n_parallels)` 时，引擎先顺序发送首条请求以填充服务端前缀缓存，再并发派发其余请求。小批次不会产生额外的串行等待。
 
-每次调用可用关键字参数注入 provider（覆盖 `.env` 默认）：
+完整实验数据与质量对照见 [research/kv-cache-experiment-results.md](research/kv-cache-experiment-results.md) 与 [docs/adr/0005-prefix-first-prompts-and-per-run-ordering.md](docs/adr/0005-prefix-first-prompts-and-per-run-ordering.md)。
+
+## 覆盖与扩展 Provider
+
+每次调用任务时都可以通过关键字参数注入 Provider 实例，覆盖 `.env` 中的默认配置：
 
 ```python
 import leximeter
 from leximeter.client import ChatCompletionsClient, ResponsesClient, SystemOneClient
 
 results = await leximeter.rate(
-    df, "text", attributes=attrs, save_dir="run_a",
-    client=ChatCompletionsClient(api_key="sk-...", base_url="https://api.deepseek.com"),  # 本调用走 DeepSeek
+    df,
+    "text",
+    attributes=attrs,
+    save_dir="run_a",
+    client=ChatCompletionsClient(api_key="sk-...", base_url="https://api.deepseek.com"),
 )
-# 或逐条混用：
-a = await leximeter.rate(..., client=ResponsesClient())   # OpenAI
-b = await leximeter.classify(..., decision_client=SystemOneClient(...), decision_model="typesafe/jev-1.14")
+
+# 也可以在不同调用中混用不同 Provider
+a = await leximeter.rate(df, "text", attributes=attrs, save_dir="run_b", client=ResponsesClient())
+b = await leximeter.classify(
+    df,
+    "text",
+    labels=labels,
+    save_dir="run_c",
+    decision_client=SystemOneClient(base_url="https://openrouter.ai/api/v1", api_key="sk-or-..."),
+    decision_model="typesafe/jev-1.14",
+)
 ```
 
-自定义 provider 只需实现最小协议：
+如需接入自定义后端，实现以下最小协议即可：
 
 ```python
 class LLMClient:
@@ -261,46 +358,48 @@ class EmbeddingClient:
     async def embed(self, texts: list[str]) -> list[list[float]]: ...
 ```
 
-**测试桩**：`DummyClient` / `DummyDecisionClient` / `DummyEmbeddingClient` / `DummySearchTool` 无需密钥即可跑通全链路，`DictClient` / `DictDecisionClient` / `CountingClient` / `CountingDecisionClient` / `RecordingClient` 见 `tests/conftest.py`。
+离线测试可以使用内置的 `DummyClient`、`DummyDecisionClient`、`DummyEmbeddingClient` 与 `DummySearchTool`。`tests/conftest.py` 中还提供了 `DictClient`、`DictDecisionClient`、`CountingClient`、`CountingDecisionClient` 与 `RecordingClient`。
 
 ## 完整示例
 
-[examples/reference.py](examples/reference.py) 与 GABRIEL 教程 notebook 的文本任务一一对应（14 节，每节标注 notebook cell 编号），玩具数据与参数和原项目完全一致，可直接跑完并对照 notebook 的输出（含 `whatever` 联网检索示例，需 `TAVILY_API_KEY`）。配置好 `.env` 后：
+[examples/reference.py](examples/reference.py) 包含 14 个章节，与 GABRIEL 教程 notebook 中的文本任务逐一对应，并标注了对应的 notebook cell 编号。示例使用的数据、参数与上游一致，其中包括需要 `TAVILY_API_KEY` 的 `whatever` 联网检索示例。配置好 `.env` 后可直接运行：
 
 ```bash
-python examples/reference.py
+uv run python examples/reference.py
 ```
 
 ## 测试
 
-```bash
-uv run pytest        # 零网络、零密钥，用假 provider 跑全链路（201 tests）
-```
-
-真实 provider 冒烟（读取 `.env` 配置，逐个任务独立运行，单任务失败不阻塞）：
+运行离线测试套件不需要 API 密钥或网络连接，全部用例通过假 Provider 跑通完整链路：
 
 ```bash
-uv run python examples/smoke_tasks.py            # 全跑 18 个任务
-uv run python examples/smoke_tasks.py rank       # 指定单个任务
-uv run python examples/smoke_tasks.py discover_checkpoint   # checkpoint 复验变体（跑两次：fresh → resume 零调用）
+uv run pytest
 ```
 
-## FAQ
+如需针对 `.env` 中配置的真实 Provider 执行冒烟验证，可以运行以下脚本。脚本逐个独立执行各任务，单个任务失败不会阻塞后续任务：
 
-- **想换模型？** 改 `.env` 的 `LEXIMETER_MODEL`，或每次调用传 `model=` / `client=`。模型名不校验，协议由 `LEXIMETER_PROTOCOL` 决定。
-- **怎么用本地模型？** 起一个 OpenAI 兼容网关（Ollama / vLLM / LM Studio），`LEXIMETER_PROTOCOL=chat` + `LEXIMETER_BASE_URL=http://localhost:11434/v1`。
-- **嵌入不可用怎么办？** `LEXIMETER_EMBEDDING_PROVIDER=none`（或未装 `[embeddings]`）时，merge/deduplicate 自动回退纯 LLM 路径；merge 的 `use_embeddings=False` 可强制关闭。
-- **运行中断了？** 直接重跑同一命令即可续跑：已完成的请求按检查点跳过；完整跑过的复杂任务（discover/debias/ideate/poll/seed/codify）重跑同输入直接加载结果（零 API，`{task}_state.json` 命中）；想强制重跑传 `reset_files=True`。
-- **`.env` 不生效？** 确认文件在项目根目录（import leximeter 的进程 CWD 会依次向上找），且同名环境变量未设置（环境变量优先）。
-- **输出列与 GABRIEL 不一致？** 列名严格对齐 GABRIEL 契约；本 fork 的差异只有两处：merge 嵌入缓存为 JSON（安全性）、`view` UI 未移植（见 spec Backlog）。
+```bash
+uv run python examples/smoke_tasks.py                      # 运行全部 18 个任务
+uv run python examples/smoke_tasks.py rank                 # 仅运行指定任务
+uv run python examples/smoke_tasks.py discover_checkpoint  # 复验断点续跑，第二次运行零 Provider 调用
+```
+
+## 常见问题
+
+- **如何切换模型？** 修改 `.env` 中的 `LEXIMETER_MODEL`，或在调用任务时传入 `model=` 或 `client=`。Leximeter 不限制模型名称，请求协议由 `LEXIMETER_PROTOCOL` 决定。
+- **如何使用本地模型？** 启动 Ollama、vLLM 或 LM Studio 等 OpenAI 兼容网关后，设置 `LEXIMETER_PROTOCOL=chat` 并将 `LEXIMETER_BASE_URL` 指向本地服务地址，例如 `http://localhost:11434/v1`。
+- **文本嵌入不可用怎么办？** 当 `LEXIMETER_EMBEDDING_PROVIDER=none` 或未安装 `embeddings` 可选依赖时，`merge` 与 `deduplicate` 会自动回退到纯 LLM 路径。在 `merge` 中也可以传入 `use_embeddings=False` 强制关闭嵌入。
+- **任务运行中途中断怎么办？** 直接重新执行同一命令即可续跑。已完成的请求会按检查点跳过，完整跑过的 `discover`、`debias`、`ideate`、`poll`、`seed`、`codify` 与 `bucket` 在输入不变时会直接从磁盘加载结果。如需强制重新运行，传入 `reset_files=True`。
+- **`.env` 配置没有生效怎么办？** 确认 `.env` 位于项目根目录或其上层目录，并且当前环境中没有设置同名的系统环境变量，因为系统环境变量优先级更高。
+- **输出列与上游 GABRIEL 有差异吗？** 输出列名严格对齐 GABRIEL 契约。目前本 fork 与上游仅有两处刻意差异，详见 [research/spec.md](research/spec.md)。一是 `merge` 的嵌入缓存改为 JSON 格式以保证反序列化安全，二是 `view` 界面暂未移植。
 
 ## 引用
 
-本项目 fork 自 GABRIEL，请同时引用上游：
+本项目 fork 自 GABRIEL。在学术研究中使用时，请同时引用上游论文与仓库：
 
 - Asirvatham, H., Mokski, E., and Shleifer, A. (2026). *GPT as a Measurement Tool*. NBER Working Paper No. 34834.
 - Asirvatham, H. and Mokski, E. (2026). *GABRIEL*. https://github.com/openai/GABRIEL
 
-## License
+## 许可证
 
-Apache License 2.0（同上游 [openai/GABRIEL](https://github.com/openai/GABRIEL)）。详见 [LICENSE](LICENSE) 与 [NOTICE](NOTICE)。
+本项目沿用上游 [openai/GABRIEL](https://github.com/openai/GABRIEL) 的 Apache License 2.0 协议，详见 [LICENSE](LICENSE) 与 [NOTICE](NOTICE)。
