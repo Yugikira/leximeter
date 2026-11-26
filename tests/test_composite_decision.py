@@ -2084,3 +2084,343 @@ def test_composite_and_debias_non_decision_paths_ignore_unset_systemone_model(
     )
     assert dc_rem2.calls == 4
     assert all(m == "dec-r2" for _, _, m in dc_rem2.requests)
+
+
+def test_debias_measurement_kwargs_systemone_client_and_deterministic_cache(
+    tmp_path,
+) -> None:
+    """SystemOneClient in measurement_kwargs works (fresh, reused, explicit http_client) and caches deterministically."""
+    import httpx
+
+    from leximeter.client import SystemOneClient
+
+    def make_transport(counter: list[int], expected_model: str) -> httpx.MockTransport:
+        def handler(request: httpx.Request) -> httpx.Response:
+            counter[0] += 1
+            body = json.loads(request.content.decode("utf-8"))
+            assert body["model"] == expected_model
+            qkey = next(iter(body["questions"]))
+            score = 0.9 if "Delta" not in str(body.get("state", "")) else 0.1
+            return httpx.Response(
+                200,
+                json={
+                    "model": expected_model,
+                    "answers": {qkey: {"type": "noul", "noul": score}},
+                    "usage": {"input_tokens": 5, "output_tokens": 0},
+                },
+            )
+
+        return httpx.MockTransport(handler)
+
+    df = _debias_df()
+
+    # 1. Fresh SystemOneClient in measurement_kwargs["decision_client"]
+    fresh_dir = tmp_path / "db_meas_fresh"
+    fresh_calls = [0]
+    s1_fresh = SystemOneClient(
+        base_url="https://api.typesafe.ai",
+        api_key="test-key",
+        transport=make_transport(fresh_calls, "dec-meas"),
+    )
+    llm = RecordingDebiasClient()
+
+    async def _run_fresh() -> Any:
+        try:
+            return await debias(
+                df,
+                "text",
+                save_dir=str(fresh_dir),
+                mode="classify",
+                attributes={"brand": "overall brand strength"},
+                signal_dictionary={"ceo": "mentions of the chief executive"},
+                removal_method="codify",
+                measurement_kwargs={
+                    "decision_client": s1_fresh,
+                    "decision_model": "dec-meas",
+                },
+                removal_kwargs={"n_rounds": 1},
+                remaining_signal=False,
+                client=llm,
+                verbose=False,
+            )
+        finally:
+            await s1_fresh.aclose()
+
+    res_fresh = run(_run_fresh())
+    assert fresh_calls[0] == 8  # 4 baseline + 4 stripped
+    llm_calls_after_fresh = llm.calls
+    assert llm_calls_after_fresh > 0
+    assert list(res_fresh.results["brand"]) == [True, True, True, False]
+
+    state_path = fresh_dir / "debias_brand" / "debias_state.json"
+    meta_path = fresh_dir / "debias_brand" / "debias_metadata.json"
+    state_1 = json.loads(state_path.read_text(encoding="utf-8"))
+    meta_1 = json.loads(meta_path.read_text(encoding="utf-8"))
+    assert state_1["status"] == "complete"
+    assert (
+        meta_1["config"]["measurement_kwargs"]["decision_client"] == "SystemOneClient"
+    )
+    assert json.dumps(res_fresh.to_dict())
+
+    # 2. Second fresh SystemOneClient instance on same save_dir -> deterministic cache hit (0 calls)
+    second_calls = [0]
+    s1_second = SystemOneClient(
+        base_url="https://api.typesafe.ai",
+        api_key="test-key",
+        transport=make_transport(second_calls, "dec-meas"),
+    )
+    res_cached = run(
+        debias(
+            df,
+            "text",
+            save_dir=str(fresh_dir),
+            mode="classify",
+            attributes={"brand": "overall brand strength"},
+            signal_dictionary={"ceo": "mentions of the chief executive"},
+            removal_method="codify",
+            measurement_kwargs={
+                "decision_client": s1_second,
+                "decision_model": "dec-meas",
+            },
+            removal_kwargs={"n_rounds": 1},
+            remaining_signal=False,
+            client=llm,
+            verbose=False,
+        )
+    )
+    assert second_calls[0] == 0
+    assert llm.calls == llm_calls_after_fresh
+    state_2 = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state_2["input_signature"] == state_1["input_signature"]
+    assert list(res_cached.results["brand"]) == [True, True, True, False]
+
+    # 3. Already-used SystemOneClient (opened _http_client) in measurement_kwargs
+    reused_dir = tmp_path / "db_meas_reused"
+    reused_calls = [0]
+    s1_reused = SystemOneClient(
+        base_url="https://api.typesafe.ai",
+        api_key="test-key",
+        transport=make_transport(reused_calls, "dec-meas"),
+    )
+    llm_reused = RecordingDebiasClient()
+
+    async def _run_reused() -> Any:
+        try:
+            await s1_reused.decide(
+                "warmup",
+                {"brand": NoulQuestion(instructions="brand strength")},
+                model="dec-meas",
+            )
+            assert s1_reused._http_client is not None
+            return await debias(
+                df,
+                "text",
+                save_dir=str(reused_dir),
+                mode="classify",
+                attributes={"brand": "overall brand strength"},
+                signal_dictionary={"ceo": "mentions of the chief executive"},
+                removal_method="codify",
+                measurement_kwargs={
+                    "decision_client": s1_reused,
+                    "decision_model": "dec-meas",
+                },
+                removal_kwargs={"n_rounds": 1},
+                remaining_signal=False,
+                client=llm_reused,
+                verbose=False,
+            )
+        finally:
+            await s1_reused.aclose()
+
+    res_reused = run(_run_reused())
+    assert reused_calls[0] == 9  # 1 warmup + 8 debias
+    assert list(res_reused.results["brand"]) == [True, True, True, False]
+    assert (reused_dir / "debias_brand" / "debias_state.json").exists()
+
+    # 4. Explicit http_client=httpx.AsyncClient() SystemOneClient in measurement_kwargs
+    ext_dir = tmp_path / "db_meas_ext_http"
+    ext_calls = [0]
+    llm_ext = RecordingDebiasClient()
+
+    async def _run_external_http() -> Any:
+        ext_http = httpx.AsyncClient(transport=make_transport(ext_calls, "dec-meas"))
+        s1_ext = SystemOneClient(
+            base_url="https://api.typesafe.ai",
+            api_key="test-key",
+            http_client=ext_http,
+        )
+        try:
+            return await debias(
+                df,
+                "text",
+                save_dir=str(ext_dir),
+                mode="classify",
+                attributes={"brand": "overall brand strength"},
+                signal_dictionary={"ceo": "mentions of the chief executive"},
+                removal_method="codify",
+                measurement_kwargs={
+                    "decision_client": s1_ext,
+                    "decision_model": "dec-meas",
+                },
+                removal_kwargs={"n_rounds": 1},
+                remaining_signal=False,
+                client=llm_ext,
+                verbose=False,
+            )
+        finally:
+            await ext_http.aclose()
+
+    res_ext = run(_run_external_http())
+    assert ext_calls[0] == 8
+    assert list(res_ext.results["brand"]) == [True, True, True, False]
+    assert (ext_dir / "debias_brand" / "debias_state.json").exists()
+
+
+def test_debias_removal_kwargs_systemone_client_no_deepcopy_crash(tmp_path) -> None:
+    """SystemOneClient in removal_kwargs works for fresh, already-used, and explicit http_client instances."""
+    import httpx
+
+    from leximeter.client import SystemOneClient
+
+    def make_transport(counter: list[int], expected_model: str) -> httpx.MockTransport:
+        def handler(request: httpx.Request) -> httpx.Response:
+            counter[0] += 1
+            body = json.loads(request.content.decode("utf-8"))
+            assert body["model"] == expected_model
+            qkey = next(iter(body["questions"]))
+            return httpx.Response(
+                200,
+                json={
+                    "model": expected_model,
+                    "answers": {qkey: {"type": "noul", "noul": 0.1}},
+                    "usage": {"input_tokens": 5, "output_tokens": 0},
+                },
+            )
+
+        return httpx.MockTransport(handler)
+
+    df = _debias_df()
+
+    # 1. Fresh SystemOneClient in removal_kwargs
+    fresh_dir = tmp_path / "db_rem_fresh"
+    fresh_calls = [0]
+    s1_fresh = SystemOneClient(
+        base_url="https://api.typesafe.ai",
+        api_key="test-key",
+        transport=make_transport(fresh_calls, "dec-rem"),
+    )
+    llm_fresh = RecordingDebiasClient()
+
+    async def _run_fresh() -> Any:
+        try:
+            return await debias(
+                df,
+                "text",
+                save_dir=str(fresh_dir),
+                mode="rate",
+                attributes={"brand": "overall brand strength"},
+                signal_dictionary={"ceo": "mentions of the chief executive"},
+                removal_method="codify",
+                removal_kwargs={
+                    "decision_client": s1_fresh,
+                    "decision_model": "dec-rem",
+                    "n_rounds": 2,
+                },
+                remaining_signal=False,
+                client=llm_fresh,
+                verbose=False,
+            )
+        finally:
+            await s1_fresh.aclose()
+
+    res_fresh = run(_run_fresh())
+    assert fresh_calls[0] == 4
+    meta_fresh = json.loads(
+        (fresh_dir / "debias_brand" / "debias_metadata.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert (
+        meta_fresh["config"]["removal_kwargs"]["decision_client"] == "SystemOneClient"
+    )
+    assert json.dumps(res_fresh.to_dict())
+    assert (fresh_dir / "debias_brand" / "debias_state.json").exists()
+
+    # 2. Already-used SystemOneClient (opened _http_client) in removal_kwargs
+    reused_dir = tmp_path / "db_rem_reused"
+    reused_calls = [0]
+    s1_reused = SystemOneClient(
+        base_url="https://api.typesafe.ai",
+        api_key="test-key",
+        transport=make_transport(reused_calls, "dec-rem"),
+    )
+    llm_reused = RecordingDebiasClient()
+
+    async def _run_reused() -> Any:
+        try:
+            await s1_reused.decide(
+                "warmup",
+                {"ceo": NoulQuestion(instructions="ceo mention")},
+                model="dec-rem",
+            )
+            assert s1_reused._http_client is not None
+            return await debias(
+                df,
+                "text",
+                save_dir=str(reused_dir),
+                mode="rate",
+                attributes={"brand": "overall brand strength"},
+                signal_dictionary={"ceo": "mentions of the chief executive"},
+                removal_method="codify",
+                removal_kwargs={
+                    "decision_client": s1_reused,
+                    "decision_model": "dec-rem",
+                    "n_rounds": 2,
+                },
+                remaining_signal=False,
+                client=llm_reused,
+                verbose=False,
+            )
+        finally:
+            await s1_reused.aclose()
+
+    run(_run_reused())
+    assert reused_calls[0] == 5  # 1 warmup + 4 codify completion
+    assert (reused_dir / "debias_brand" / "debias_state.json").exists()
+
+    # 3. Explicit http_client=httpx.AsyncClient() SystemOneClient in removal_kwargs
+    ext_dir = tmp_path / "db_rem_ext"
+    ext_calls = [0]
+    llm_ext = RecordingDebiasClient()
+
+    async def _run_ext() -> Any:
+        ext_http = httpx.AsyncClient(transport=make_transport(ext_calls, "dec-rem"))
+        s1_ext = SystemOneClient(
+            base_url="https://api.typesafe.ai",
+            api_key="test-key",
+            http_client=ext_http,
+        )
+        try:
+            return await debias(
+                df,
+                "text",
+                save_dir=str(ext_dir),
+                mode="rate",
+                attributes={"brand": "overall brand strength"},
+                signal_dictionary={"ceo": "mentions of the chief executive"},
+                removal_method="codify",
+                removal_kwargs={
+                    "decision_client": s1_ext,
+                    "decision_model": "dec-rem",
+                    "n_rounds": 2,
+                },
+                remaining_signal=False,
+                client=llm_ext,
+                verbose=False,
+            )
+        finally:
+            await ext_http.aclose()
+
+    run(_run_ext())
+    assert ext_calls[0] == 4
+    assert (ext_dir / "debias_brand" / "debias_state.json").exists()

@@ -28,12 +28,14 @@ import os
 import random
 import re
 import warnings
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import dataclass, field, fields
 from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
 
+from ...client.base import LLMClient
+from ...client.decision import DecisionClient
 from ...utils.file_utils import save_dataframe_with_fallback
 from ...utils.regression import _safe_fit_ols
 from .. import _common
@@ -58,6 +60,38 @@ def _dump_json(path: str, payload: dict, *, indent: int | None = None) -> None:
 def _to_float_series(series: pd.Series) -> pd.Series:
     """Coerce numeric or boolean values to float64 (safe for subtraction & OLS)."""
     return pd.to_numeric(series, errors="coerce").astype(float)
+
+
+def _normalise_config_value(value: Any, *, key: str | None = None) -> Any:
+    """Convert config values into deterministic, JSON-safe representations without deepcopy."""
+    if key in ("decision_client", "client"):
+        if value is None:
+            return None
+        if isinstance(value, _UnsetType):
+            return "_UNSET"
+        if isinstance(value, str):
+            return value
+        return type(value).__name__
+    if isinstance(value, (DecisionClient, LLMClient)):
+        return type(value).__name__
+    if isinstance(value, _UnsetType):
+        return "_UNSET"
+    if isinstance(value, dict):
+        return {k: _normalise_config_value(v, key=str(k)) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_normalise_config_value(v) for v in value]
+    if isinstance(value, set):
+        return sorted((_normalise_config_value(v) for v in value), key=str)
+    if isinstance(value, np.generic):
+        return value.item()
+    if callable(value):
+        name = getattr(value, "__name__", None)
+        return name or repr(value)
+    try:
+        json.dumps(value)
+        return value
+    except TypeError:
+        return repr(value)
 
 
 @dataclass
@@ -380,10 +414,16 @@ class Debias(Task):
         # completed run with the same signature is reloaded from disk
         # (zero provider calls) instead of re-measuring.
         cfg_for_sig = {
-            k: v
-            for k, v in asdict(self.cfg).items()
-            if k not in ("save_dir", "run_name")
+            f.name: getattr(self.cfg, f.name)
+            for f in fields(self.cfg)
+            if f.name not in ("save_dir", "run_name")
         }
+        cfg_for_sig["measurement_kwargs"] = _normalise_config_value(
+            cfg_for_sig.get("measurement_kwargs") or {}
+        )
+        cfg_for_sig["removal_kwargs"] = _normalise_config_value(
+            cfg_for_sig.get("removal_kwargs") or {}
+        )
         cfg_for_sig["decision_model"] = {
             "measurement": meas_effective_dec_model,
             "removal": rem_effective_dec_model,
@@ -1412,26 +1452,11 @@ class Debias(Task):
 
     # ------------------------------------------------------------------
     def _serialise_config(self) -> dict[str, Any]:
-        def _convert(value: Any) -> Any:
-            if isinstance(value, dict):
-                return {k: _convert(v) for k, v in value.items()}
-            if isinstance(value, (list, tuple, set)):
-                return [_convert(v) for v in value]
-            if isinstance(value, np.generic):
-                return value.item()
-            if callable(value):
-                name = getattr(value, "__name__", None)
-                return name or repr(value)
-            try:
-                json.dumps(value)
-                return value
-            except TypeError:
-                return repr(value)
-
-        cfg_dict = asdict(self.cfg)
+        cfg_dict = {
+            f.name: _normalise_config_value(getattr(self.cfg, f.name), key=f.name)
+            for f in fields(self.cfg)
+        }
         cfg_dict["save_dir"] = os.path.expandvars(os.path.expanduser(self.cfg.save_dir))
-        cfg_dict["measurement_kwargs"] = _convert(self.cfg.measurement_kwargs)
-        cfg_dict["removal_kwargs"] = _convert(self.cfg.removal_kwargs)
         return cfg_dict
 
     # ------------------------------------------------------------------
