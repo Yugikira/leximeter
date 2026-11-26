@@ -12,7 +12,7 @@ import json
 import math
 import os
 import random
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Literal, TypeVar, cast
 
 import pandas as pd
@@ -221,17 +221,95 @@ def should_reset_substage_checkpoint(
     expected_model: str,
     decision_provider: bool,
     reset_files: bool,
+    extra_metadata: Mapping[str, Any] | None = None,
+    untracked_raw_path: str | None = None,
 ) -> bool:
-    """Return ``True`` when a sub-stage checkpoint must reset due to model/provider change."""
+    """Return ``True`` when a sub-stage checkpoint must reset due to model/provider/state change."""
     if reset_files:
         return True
     prev_meta = load_run_metadata(save_dir, base_name, reset_files=False)
     if not prev_meta:
-        return False
-    return (
+        return bool(untracked_raw_path and os.path.exists(untracked_raw_path))
+    if (
         prev_meta.get("model") != expected_model
         or bool(prev_meta.get("decision_provider", False)) != decision_provider
+    ):
+        return True
+    if extra_metadata:
+        for key, expected_val in extra_metadata.items():
+            if key not in prev_meta or prev_meta.get(key) != expected_val:
+                return True
+    return False
+
+
+def prepare_substage_checkpoint(
+    save_dir: str,
+    base_name: str,
+    *,
+    expected_model: str,
+    decision_provider: bool,
+    reset_files: bool,
+    extra_metadata: Mapping[str, Any] | None = None,
+    artifacts: Sequence[str] = (),
+    untracked_raw_path: str | None = None,
+) -> tuple[bool, dict[str, Any]]:
+    """Validate sub-stage metadata and purge stale checkpoint artifacts on mismatch."""
+    effective_reset = should_reset_substage_checkpoint(
+        save_dir,
+        base_name,
+        expected_model=expected_model,
+        decision_provider=decision_provider,
+        reset_files=reset_files,
+        extra_metadata=extra_metadata,
+        untracked_raw_path=untracked_raw_path,
     )
+    if effective_reset:
+        for artifact in artifacts:
+            remove_file(artifact)
+    run_metadata = load_run_metadata(save_dir, base_name, reset_files=effective_reset)
+    return effective_reset, run_metadata
+
+
+def list_numbered_files(
+    directory: str,
+    prefix: str,
+    suffix: str = ".csv",
+    *,
+    min_index: int = 0,
+) -> list[tuple[int, str]]:
+    """Return sorted ``(index, full_path)`` pairs for ``{prefix}{index}{suffix}`` files."""
+    if not directory or not os.path.isdir(directory):
+        return []
+    try:
+        names = os.listdir(directory)
+    except OSError:
+        return []
+    found: list[tuple[int, str]] = []
+    plen = len(prefix)
+    slen = len(suffix)
+    for fname in names:
+        if not (fname.startswith(prefix) and fname.endswith(suffix)):
+            continue
+        middle = fname[plen : len(fname) - slen if slen else None]
+        if not middle.isdigit():
+            continue
+        idx = int(middle)
+        if idx >= min_index:
+            found.append((idx, os.path.join(directory, fname)))
+    found.sort(key=lambda item: item[0])
+    return found
+
+
+def purge_numbered_files(
+    directory: str,
+    prefix: str,
+    suffix: str = ".csv",
+    *,
+    min_index: int = 0,
+) -> None:
+    """Remove ``{prefix}{index}{suffix}`` files with ``index >= min_index``."""
+    for _, path in list_numbered_files(directory, prefix, suffix, min_index=min_index):
+        remove_file(path)
 
 
 def task_state_path(save_dir: str, task_name: str) -> str:

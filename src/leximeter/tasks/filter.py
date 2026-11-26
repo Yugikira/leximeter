@@ -88,35 +88,19 @@ class Filter(Task):
         csv_path = os.path.join(self.cfg.save_dir, f"{base_name}_raw_responses.csv")
         cleaned_path = os.path.join(self.cfg.save_dir, f"{base_name}_cleaned.csv")
         norm_instructions = _normalize_optional_text(self.cfg.additional_instructions)
-        if reset_files:
-            effective_reset = True
-            prev_meta: dict[str, Any] = {}
-        else:
-            prev_meta = _common.load_run_metadata(
-                self.cfg.save_dir, base_name, reset_files=False
-            )
-            if not prev_meta:
-                effective_reset = False
-            else:
-                effective_reset = (
-                    "decision_provider" not in prev_meta
-                    or bool(prev_meta.get("decision_provider")) != decision_provider
-                    or prev_meta.get("model") != expected_model
-                    or "condition" not in prev_meta
-                    or prev_meta.get("condition") != self.cfg.condition
-                    or _normalize_optional_text(
-                        prev_meta.get("additional_instructions")
-                    )
-                    != norm_instructions
-                )
-        if effective_reset:
-            _common.remove_file(csv_path)
-            _common.remove_file(cleaned_path)
-            run_metadata = _common.load_run_metadata(
-                self.cfg.save_dir, base_name, reset_files=True
-            )
-        else:
-            run_metadata = prev_meta
+        effective_reset, run_metadata = _common.prepare_substage_checkpoint(
+            self.cfg.save_dir,
+            base_name,
+            expected_model=expected_model,
+            decision_provider=decision_provider,
+            reset_files=reset_files,
+            extra_metadata={
+                "condition": self.cfg.condition,
+                "additional_instructions": norm_instructions,
+            },
+            artifacts=(csv_path, cleaned_path),
+            untracked_raw_path=csv_path,
+        )
         return effective_reset, run_metadata, norm_instructions
 
     async def run(

@@ -183,7 +183,7 @@ results.head()   # 一列一个属性（0–100）
 对于有界判断类任务，专用 **Decision Provider**（如 TypeSafe Jev、Cloudflare Clef / Clef-Flash、Google `gemini-decision-1`、AMD/vLLM-SR `d3` / `d3-flash`、OpenAI `gpt-6-luna-decisions`）可在**单次前向传播**内并行评估几十到上百个类型化问题（`noul` / `choice` / `score`），返回校准概率且 **$0 输出 token 计费**。`SystemOneClient` 实现开放协议 `POST /v1/systemone`，自动完成非 ASCII / 含空格标签键的安全转义、单层重试（遵循 `Retry-After`）与逐题 `refusal` 降级。
 
 - **纯 Decision 路径**（传入 `decision_client=` 或配置 `LEXIMETER_DECISION_PROTOCOL=systemone` 时零 `LLMClient` 调用；未配置时自动回退 `LLMClient`）：
-  - `classify`：单列走并行 `noul`（支持 `include_probabilities=True` 输出 `{label}_prob` 列，原始概率始终落盘检查点）；配对 `differentiate=True` 走 3 选 1 `choice`（`circle` / `square` / `neither`，结构性保证互斥并自动适配 Circle/Square 双向极性）。
+  - `classify`：单列走并行 `noul`（支持 `include_probabilities=True` 输出 `{label}_prob` 列，原始概率始终落盘检查点）；配对 `differentiate=True` 走 3 选 1 `choice`（`option_a` / `option_b` / `neither`，将正反命题直接绑定选项并随机化顺序，结构性保证互斥且无需自然语言极性猜测）。
   - `rank`：两两对决走 4 选 1 `choice`（`circle` / `square` / `draw` / `insufficient_signal`），保留 `circle_first` 随机化与 Bradley–Terry MLE + 标准误。
   - `filter`：反向扇出（`state = condition`，去重候选项批量作为并行 `noul`），单轮即得校准 `score` 与 `keep`。
 - **混合路径**（生成阶段继续使用 `LLMClient` + `model`，内部判断子阶段自动委派给 `DecisionClient` + 独立 `decision_model`）：

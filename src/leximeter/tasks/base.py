@@ -100,6 +100,15 @@ class Task(ABC):
             self._decision_client_resolved = True
         return self._decision_client
 
+    def _resolve_decision_client_override(
+        self,
+        override: DecisionClient | None | _UnsetType = _UNSET,
+    ) -> DecisionClient | None:
+        """Return ``self._get_decision_client()`` when ``override`` is ``_UNSET``, else ``override``."""
+        if isinstance(override, _UnsetType):
+            return self._get_decision_client()
+        return override
+
     # ------------------------------------------------------------------
     # Common helpers
     # ------------------------------------------------------------------

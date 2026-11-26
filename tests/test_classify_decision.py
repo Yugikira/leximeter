@@ -242,20 +242,20 @@ def test_classify_differentiate_three_way_choice_and_mutual_exclusivity(
     }
 
     probs_by_circle: dict[str, dict[str, float]] = {
-        "warm A": {"circle": 0.85, "square": 0.05, "neither": 0.10},
-        "cold B": {"circle": 0.10, "square": 0.80, "neither": 0.10},
-        "equal C": {"circle": 0.10, "square": 0.10, "neither": 0.80},
-        # Both circle and square exceed min_frequency=0.40, yet only strict winner is True
-        "close D": {"circle": 0.48, "square": 0.45, "neither": 0.07},
-        # Exact tie between circle and square -> neither wins (both False)
-        "tie E": {"circle": 0.50, "square": 0.50, "neither": 0.00},
+        "warm A": {"option_a": 0.85, "option_b": 0.05, "neither": 0.10},
+        "cold B": {"option_a": 0.10, "option_b": 0.80, "neither": 0.10},
+        "equal C": {"option_a": 0.10, "option_b": 0.10, "neither": 0.80},
+        # Both option_a and option_b exceed min_frequency=0.40, yet only strict winner is True
+        "close D": {"option_a": 0.48, "option_b": 0.45, "neither": 0.07},
+        # Exact tie between option_a and option_b -> neither wins (both False)
+        "tie E": {"option_a": 0.50, "option_b": 0.50, "neither": 0.00},
     }
 
     def handler(state: Any, key: str, question: Any) -> dict[str, float]:
         assert isinstance(state, dict)
         assert set(state.keys()) >= {"circle", "square"}
         assert isinstance(question, ChoiceQuestion)
-        assert set(question.criteria.keys()) == {"circle", "square", "neither"}
+        assert set(question.criteria.keys()) == {"option_a", "option_b", "neither"}
         return probs_by_circle[state["circle"]]
 
     decision_client = CountingDecisionClient(handler=handler)
@@ -306,7 +306,7 @@ def test_classify_differentiate_preserves_circle_first_randomization(tmp_path) -
 
     # Explicit circle_first=True
     df_small = pd.DataFrame({"c": ["c1", "c2"], "s": ["s1", "s2"]})
-    client_true = CountingDecisionClient({"tone": "circle"})
+    client_true = CountingDecisionClient({"tone": "option_a"})
     run(
         classify(
             df_small,
@@ -321,11 +321,12 @@ def test_classify_differentiate_preserves_circle_first_randomization(tmp_path) -
     )
     assert all(
         list(state.keys())[:2] == ["circle", "square"]
-        for state, _, _ in client_true.requests
+        and list(qs["tone"].criteria.keys()) == ["option_a", "option_b", "neither"]
+        for state, qs, _ in client_true.requests
     )
 
     # Explicit circle_first=False
-    client_false = CountingDecisionClient({"tone": "square"})
+    client_false = CountingDecisionClient({"tone": "option_b"})
     run(
         classify(
             df_small,
@@ -340,7 +341,8 @@ def test_classify_differentiate_preserves_circle_first_randomization(tmp_path) -
     )
     assert all(
         list(state.keys())[:2] == ["square", "circle"]
-        for state, _, _ in client_false.requests
+        and list(qs["tone"].criteria.keys()) == ["option_b", "option_a", "neither"]
+        for state, qs, _ in client_false.requests
     )
 
     # Randomized circle_first=None produces both orderings across 20 pairs
@@ -381,8 +383,8 @@ def test_classify_differentiate_discover_pair_conventions(tmp_path) -> None:
     def handler(state: Any, key: str, question: Any) -> str:
         assert isinstance(question, ChoiceQuestion)
         if key == "quality":
-            return "circle"
-        return "square"
+            return "option_a"
+        return "option_b"
 
     decision_client = CountingDecisionClient(handler=handler)
     res = run(
@@ -507,7 +509,7 @@ def test_classify_differentiate_checkpoint_resume_zero_duplicate_calls(
     }
     save_dir = str(tmp_path / "cls_diff_resume")
     client = CountingDecisionClient(
-        {"warmth": {"circle": 0.85, "square": 0.05, "neither": 0.10}}
+        {"warmth": {"option_a": 0.85, "option_b": 0.05, "neither": 0.10}}
     )
 
     first = run(
@@ -600,7 +602,7 @@ def test_classify_end_to_end_with_systemone_mock_transport_and_non_ascii_labels(
 
 
 def test_classify_differentiate_square_primary_label_polarity(tmp_path) -> None:
-    """Square-primary directional pairs bind 'square' -> actual and 'circle' -> inverted."""
+    """Square-primary directional pairs bind 'option_a' -> actual and 'option_b' -> inverted."""
     actual_key = "square entries emphasize cost more than circle entries_actual"
     inverted_key = "circle entries emphasize cost more than square entries_inverted"
     labels = {
@@ -619,15 +621,19 @@ def test_classify_differentiate_square_primary_label_polarity(tmp_path) -> None:
     def handler(state: Any, key: str, question: Any) -> dict[str, float]:
         assert isinstance(question, ChoiceQuestion)
         seen_questions.append(question)
-        assert set(question.criteria.keys()) == {"circle", "square", "neither"}
-        assert question.criteria["square"] == "Square emphasizes cost more than Circle"
-        assert question.criteria["circle"] == "Circle emphasizes cost more than Square"
+        assert set(question.criteria.keys()) == {"option_a", "option_b", "neither"}
+        assert (
+            question.criteria["option_a"] == "Square emphasizes cost more than Circle"
+        )
+        assert (
+            question.criteria["option_b"] == "Circle emphasizes cost more than Square"
+        )
         assert "feature" not in str(question.instructions).lower()
         assert "feature" not in str(question.criteria["neither"]).lower()
-        # Evaluate faithfully against the state: whichever side mentions "price" wins
+        # Evaluate faithfully against the propositions: option_a says Square mentions price
         if "price" in state["square"]:
-            return {"circle": 0.05, "square": 0.90, "neither": 0.05}
-        return {"circle": 0.85, "square": 0.05, "neither": 0.10}
+            return {"option_a": 0.90, "option_b": 0.05, "neither": 0.05}
+        return {"option_a": 0.05, "option_b": 0.85, "neither": 0.10}
 
     dc = CountingDecisionClient(handler=handler)
     res = run(
@@ -708,7 +714,8 @@ def test_classify_resume_rechunks_when_provider_cap_shrinks(tmp_path) -> None:
     }
     save_diff = str(tmp_path / "resume_cap_diff")
     cd_large = CountingDecisionClient(
-        {"p1": "circle", "p2": "square", "p3": "circle"}, max_questions_per_call=64
+        {"p1": "option_a", "p2": "option_b", "p3": "option_a"},
+        max_questions_per_call=64,
     )
     run(
         classify(
@@ -725,7 +732,7 @@ def test_classify_resume_rechunks_when_provider_cap_shrinks(tmp_path) -> None:
     assert len(cd_large.requests[0][1]) == 3
 
     cd_small = CountingDecisionClient(
-        {"p1": "circle", "p2": "square", "p3": "circle"}, max_questions_per_call=2
+        {"p1": "option_a", "p2": "option_b", "p3": "option_a"}, max_questions_per_call=2
     )
     res_diff = run(
         classify(
@@ -819,3 +826,181 @@ def test_classify_systemone_missing_decision_model_fails_fast_without_disk_mutat
     assert attrs_path.read_text(encoding="utf-8") == attrs_sentinel
     assert legacy_attrs_path.read_text(encoding="utf-8") == attrs_sentinel
     assert raw_path.read_text(encoding="utf-8") == raw_sentinel
+
+
+def test_classify_differentiate_issue_18_comparatives_negations_and_multilingual(
+    tmp_path,
+) -> None:
+    """Proposition-bound ChoiceQuestion avoids polarity inversion across arbitrary phrasing and languages (#18)."""
+    labels = {
+        # Exact Issue #18 reproduction (reference side named first)
+        "evidence_actual": "Compared to square entries, circle entries cite more quantitative evidence.",
+        "evidence_inverted": "Compared to circle entries, square entries cite more quantitative evidence.",
+        # Plural-noun '-s' + relative-clause negation (Square lacks reliance on Circle)
+        "autonomy_actual": "Square's new systems metrics that omit details do not rely on Circle",
+        "autonomy_inverted": "Circle's new systems metrics that omit details do not rely on Square",
+        # Chinese comparative naming 'square' before 'circle'
+        "zh_evidence_actual": "与 square 相比，circle 引用了更多定量证据。",
+        "zh_evidence_inverted": "与 circle 相比，square 引用了更多定量证据。",
+        # Directional label stem with undirected shared description
+        "Square is detailed": "uses concrete numbers",
+        "Circle is detailed": "uses concrete numbers",
+        # Undirected pair with empty descriptions
+        "warmth_actual": "",
+        "warmth_inverted": "",
+        # Solo directional label (no explicit inverted key)
+        "Unlike Square, Circle cites primary sources": "",
+    }
+    df = pd.DataFrame(
+        {
+            "c": ["Circle cites p < 0.01 and primary archive sources.", "Brief note."],
+            "s": ["Brief note.", "Square cites 42 benchmarks independently."],
+        }
+    )
+
+    def handler(state: Any, key: str, question: Any) -> dict[str, float]:
+        assert isinstance(question, ChoiceQuestion)
+        crit = question.criteria
+        if key == "evidence":
+            assert (
+                crit["option_a"]
+                == "Compared to square entries, circle entries cite more quantitative evidence."
+            )
+            assert (
+                crit["option_b"]
+                == "Compared to circle entries, square entries cite more quantitative evidence."
+            )
+        elif key == "zh_evidence":
+            assert crit["option_a"] == "与 square 相比，circle 引用了更多定量证据。"
+            assert crit["option_b"] == "与 circle 相比，square 引用了更多定量证据。"
+        elif key == "Square is detailed":
+            assert crit["option_a"] == "Square is detailed: uses concrete numbers"
+            assert crit["option_b"] == "Circle is detailed: uses concrete numbers"
+        elif key == "warmth":
+            assert (
+                "Circle clearly manifests 'warmth' more than Square."
+                == crit["option_a"]
+            )
+            assert (
+                "Square clearly manifests 'warmth' more than Circle."
+                == crit["option_b"]
+            )
+        elif key == "Unlike Square, Circle cites primary sources":
+            assert (
+                crit["option_a"]
+                == "The label 'Unlike Square, Circle cites primary sources' applies."
+            )
+            assert (
+                crit["option_b"]
+                == "The label 'Unlike Circle, Square cites primary sources' applies."
+            )
+
+        # Row 0: actual holds for Circle-favoring pairs; inverted holds for Square-favoring pairs
+        if "p < 0.01" in state["circle"]:
+            if key in {"autonomy", "Square is detailed"}:
+                return {"option_a": 0.05, "option_b": 0.90, "neither": 0.05}
+            return {"option_a": 0.90, "option_b": 0.05, "neither": 0.05}
+        # Row 1: opposite
+        if key in {"autonomy", "Square is detailed"}:
+            return {"option_a": 0.88, "option_b": 0.06, "neither": 0.06}
+        return {"option_a": 0.06, "option_b": 0.88, "neither": 0.06}
+
+    dc = CountingDecisionClient(handler=handler)
+    res = run(
+        classify(
+            df,
+            labels=labels,
+            save_dir=str(tmp_path / "cls_issue18"),
+            differentiate=True,
+            circle_column_name="c",
+            square_column_name="s",
+            include_probabilities=True,
+            decision_client=dc,
+        )
+    )
+
+    assert dc.calls == 2
+    assert list(res["evidence_actual"]) == [True, False]
+    assert list(res["evidence_inverted"]) == [False, True]
+    assert list(res["autonomy_actual"]) == [False, True]
+    assert list(res["autonomy_inverted"]) == [True, False]
+    assert list(res["zh_evidence_actual"]) == [True, False]
+    assert list(res["zh_evidence_inverted"]) == [False, True]
+    assert list(res["Square is detailed"]) == [False, True]
+    assert list(res["Circle is detailed"]) == [True, False]
+    assert list(res["warmth_actual"]) == [True, False]
+    assert list(res["warmth_inverted"]) == [False, True]
+    assert list(res["Unlike Square, Circle cites primary sources"]) == [True, False]
+
+
+def test_classify_differentiate_legacy_v1_checkpoint_auto_invalidates(tmp_path) -> None:
+    """Pre-v2 differentiate checkpoints with old 'circle'/'square' option keys auto-reset on resume."""
+    import json
+
+    from leximeter.tasks import _common
+
+    save_dir = tmp_path / "cls_v1_upgrade"
+    save_dir.mkdir(parents=True, exist_ok=True)
+    ident = _common.hash_identifier("c1|s1")
+    (save_dir / "classify_responses_run_metadata.json").write_text(
+        json.dumps(
+            {
+                "model": "dummy-decision",
+                "decision_provider": True,
+                "n_attributes_per_run": 64,
+                "attribute_batches": [["evidence_actual", "evidence_inverted"]],
+            }
+        ),
+        encoding="utf-8",
+    )
+    legacy_resp = json.dumps(
+        {
+            "model": "dummy-decision",
+            "answers": {
+                "evidence": {
+                    "type": "choice",
+                    "choice": "circle",
+                    "probabilities": {"circle": 0.95, "square": 0.03, "neither": 0.02},
+                    "confidence": 0.95,
+                    "refused": False,
+                }
+            },
+            "input_tokens": 10,
+            "output_tokens": 0,
+        }
+    )
+    pd.DataFrame(
+        [
+            {
+                "Identifier": f"{ident}_batch0",
+                "Response": legacy_resp,
+                "Successful": True,
+                "Error Log": "",
+                "Time Taken": 0.01,
+            }
+        ]
+    ).to_csv(save_dir / "classify_responses_raw_responses.csv", index=False)
+
+    dc = CountingDecisionClient(
+        {"evidence": {"option_a": 0.85, "option_b": 0.10, "neither": 0.05}}
+    )
+    res = run(
+        classify(
+            pd.DataFrame({"c": ["c1"], "s": ["s1"]}),
+            labels={
+                "evidence_actual": "Compared to square, circle cites more data.",
+                "evidence_inverted": "Compared to circle, square cites more data.",
+            },
+            save_dir=str(save_dir),
+            differentiate=True,
+            circle_column_name="c",
+            square_column_name="s",
+            reset_files=False,
+            include_probabilities=True,
+            decision_client=dc,
+        )
+    )
+
+    assert dc.calls == 1
+    assert bool(res["evidence_actual"].iloc[0]) is True
+    assert res["evidence_actual_prob"].iloc[0] == pytest.approx(0.85)

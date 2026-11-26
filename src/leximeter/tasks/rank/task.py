@@ -829,32 +829,18 @@ class Rank(Task):
             or self.cfg.model
         )
         base_name = self._base_name()
-        effective_reset = _common.should_reset_substage_checkpoint(
+        final_path = os.path.join(self.cfg.save_dir, f"{base_name}_final.csv")
+        effective_reset, run_metadata = _common.prepare_substage_checkpoint(
             self.cfg.save_dir,
             base_name,
             expected_model=effective_model,
             decision_provider=decision_client is not None,
             reset_files=reset_files,
+            artifacts=(final_path,),
         )
-        final_path = os.path.join(self.cfg.save_dir, f"{base_name}_final.csv")
         if effective_reset:
-            _common.remove_file(final_path)
-            try:
-                for fname in os.listdir(self.cfg.save_dir):
-                    if fname.startswith(f"{base_name}_round") and fname.endswith(
-                        ".csv"
-                    ):
-                        try:
-                            int(fname[len(base_name) + 6 : -4])
-                        except ValueError:
-                            continue
-                        _common.remove_file(os.path.join(self.cfg.save_dir, fname))
-            except OSError:
-                pass
+            _common.purge_numbered_files(self.cfg.save_dir, f"{base_name}_round")
 
-        run_metadata = _common.load_run_metadata(
-            self.cfg.save_dir, base_name, reset_files=effective_reset
-        )
         self.cfg.attributes = _common.load_persisted_attributes(
             save_dir=self.cfg.save_dir,
             incoming=self.cfg.attributes,
@@ -906,22 +892,13 @@ class Rank(Task):
         start_round = 0
         existing_rounds: list[int] = []
         if not effective_reset:
-            try:
-                for fname in os.listdir(self.cfg.save_dir):
-                    if fname.startswith(f"{base_name}_round") and fname.endswith(
-                        ".csv"
-                    ):
-                        try:
-                            idx_str = fname[len(base_name) + 6 : -4]
-                            rnd_idx = int(idx_str)
-                        except ValueError:
-                            continue
-                        if _is_completed_round_csv(
-                            os.path.join(self.cfg.save_dir, fname)
-                        ):
-                            existing_rounds.append(rnd_idx)
-            except OSError:
-                existing_rounds = []
+            existing_rounds = [
+                rnd_idx
+                for rnd_idx, path in _common.list_numbered_files(
+                    self.cfg.save_dir, f"{base_name}_round"
+                )
+                if _is_completed_round_csv(path)
+            ]
         if existing_rounds:
             last_completed = max(existing_rounds)
             if os.path.exists(final_path):

@@ -564,7 +564,7 @@ def test_explicit_decision_client_beats_both_explicit_client_and_env(
         llm = _RecordingHybridClient()
         dc = CountingDecisionClient(
             handler=lambda state, key, q: (
-                {"circle": 0.9, "square": 0.05, "neither": 0.05}
+                {"option_a": 0.9, "option_b": 0.05, "neither": 0.05}
                 if isinstance(q, ChoiceQuestion)
                 else (0.1 if key in {"ceo", "finance"} else 0.9)
             )

@@ -159,12 +159,12 @@ def test_discover_pair_differentiate_delegates_stage3_choice_to_decision_client(
 
     def decide_pair(state: Any, key: str, question: Any) -> dict[str, float]:
         assert isinstance(question, ChoiceQuestion)
-        assert set(question.criteria.keys()) == {"circle", "square", "neither"}
+        assert set(question.criteria.keys()) == {"option_a", "option_b", "neither"}
         assert isinstance(state, dict)
-        # First row favours circle; second row favours square -> net_pct = 0.0
+        # First row favours option_a (actual); second row favours option_b (inverted) -> net_pct = 0.0
         if state["circle"] == "sunny":
-            return {"circle": 0.85, "square": 0.05, "neither": 0.10}
-        return {"circle": 0.05, "square": 0.85, "neither": 0.10}
+            return {"option_a": 0.85, "option_b": 0.05, "neither": 0.10}
+        return {"option_a": 0.05, "option_b": 0.85, "neither": 0.10}
 
     dc = CountingDecisionClient(handler=decide_pair)
 
@@ -211,9 +211,13 @@ def test_discover_completed_manifest_cache_and_decision_model_invalidation(
     save_dir = str(tmp_path / "disc_sig")
     llm = RecordingStageClient(_discover_pair_payloads())
 
-    # Run 1: explicit decision_model="dec-v1" -> circle always wins (net_pct = +100)
+    # Run 1: explicit decision_model="dec-v1" -> option_a always wins (net_pct = +100)
     dc_v1 = CountingDecisionClient(
-        handler=lambda state, key, q: {"circle": 0.9, "square": 0.05, "neither": 0.05}
+        handler=lambda state, key, q: {
+            "option_a": 0.9,
+            "option_b": 0.05,
+            "neither": 0.05,
+        }
     )
     first = run(
         discover(
@@ -254,7 +258,11 @@ def test_discover_completed_manifest_cache_and_decision_model_invalidation(
 
     # Run 3: change decision_model via explicit arg -> invalidates manifest, re-runs Stage 3
     dc_v2 = CountingDecisionClient(
-        handler=lambda state, key, q: {"circle": 0.05, "square": 0.9, "neither": 0.05}
+        handler=lambda state, key, q: {
+            "option_a": 0.05,
+            "option_b": 0.9,
+            "neither": 0.05,
+        }
     )
     third = run(
         discover(
@@ -277,7 +285,11 @@ def test_discover_completed_manifest_cache_and_decision_model_invalidation(
     # Run 4: change decision_model via LEXIMETER_DECISION_MODEL env var (decision_model=None)
     monkeypatch.setenv("LEXIMETER_DECISION_MODEL", "dec-env-v3")
     dc_v3 = CountingDecisionClient(
-        handler=lambda state, key, q: {"circle": 0.9, "square": 0.05, "neither": 0.05}
+        handler=lambda state, key, q: {
+            "option_a": 0.9,
+            "option_b": 0.05,
+            "neither": 0.05,
+        }
     )
     fourth = run(
         discover(
@@ -323,7 +335,11 @@ def test_discover_resumes_interrupted_decision_run_with_zero_extra_calls(
     save_dir = str(tmp_path / "disc_resume")
     llm = RecordingStageClient(_discover_pair_payloads())
     dc = CountingDecisionClient(
-        handler=lambda state, key, q: {"circle": 0.9, "square": 0.05, "neither": 0.05}
+        handler=lambda state, key, q: {
+            "option_a": 0.9,
+            "option_b": 0.05,
+            "neither": 0.05,
+        }
     )
 
     first = run(
@@ -922,6 +938,15 @@ def test_paraphrase_validation_attribute_and_instructions_change_resets_checkpoi
     )
     assert dc_1.calls == 2
     assert bool(res_1["text_revised_approved"].iloc[0]) is True
+    val_meta_1 = json.loads(
+        (
+            tmp_path
+            / "para_attr_reset"
+            / "validation"
+            / "classify_responses_run_metadata.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert "validation_signature" in val_meta_1
 
     # 1. Change validation_attribute key with reset_files=False (must not KeyError)
     dc_2 = CountingDecisionClient({"concise": 0.10})
@@ -1984,10 +2009,14 @@ def test_discover_pair_square_primary_label_yields_positive_net_pct(tmp_path) ->
 
     def decide_cost(state: Any, key: str, question: Any) -> dict[str, float]:
         assert isinstance(question, ChoiceQuestion)
-        assert question.criteria["square"] == "Square emphasizes cost more than Circle"
-        assert question.criteria["circle"] == "circle emphasizes cost more than square"
-        # Square genuinely emphasizes cost more than Circle in both rows
-        return {"circle": 0.05, "square": 0.90, "neither": 0.05}
+        assert (
+            question.criteria["option_a"] == "Square emphasizes cost more than Circle"
+        )
+        assert (
+            question.criteria["option_b"] == "circle emphasizes cost more than square"
+        )
+        # Square genuinely emphasizes cost more than Circle in both rows -> option_a wins
+        return {"option_a": 0.90, "option_b": 0.05, "neither": 0.05}
 
     dc = CountingDecisionClient(handler=decide_cost)
     res = run(
@@ -2025,7 +2054,7 @@ def test_discover_mid_stage_classify_crash_resumes_with_zero_duplicate_calls(
     class _SimulatedCrash(BaseException):
         pass
 
-    class CrashOnSecondRowClient(DecisionClient):
+    class CrashOnSecondItemClient(DecisionClient):
         def __init__(self) -> None:
             self.seen_circles: list[str] = []
             self.should_crash = True
@@ -2039,8 +2068,12 @@ def test_discover_mid_stage_classify_crash_resumes_with_zero_duplicate_calls(
             return DecisionResult(
                 answers={
                     qkey: ChoiceAnswer(
-                        choice="circle",
-                        probabilities={"circle": 0.9, "square": 0.05, "neither": 0.05},
+                        choice="option_a",
+                        probabilities={
+                            "option_a": 0.9,
+                            "option_b": 0.05,
+                            "neither": 0.05,
+                        },
                         confidence=0.9,
                     )
                 },
@@ -2050,7 +2083,7 @@ def test_discover_mid_stage_classify_crash_resumes_with_zero_duplicate_calls(
     df = _discover_pair_df()
     save_dir = str(tmp_path / "disc_mid_crash")
     llm = RecordingStageClient(_discover_pair_payloads())
-    dc = CrashOnSecondRowClient()
+    dc = CrashOnSecondItemClient()
 
     with pytest.raises(_SimulatedCrash):
         run(

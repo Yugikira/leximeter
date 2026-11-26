@@ -36,7 +36,7 @@ import pandas as pd
 from .. import _common
 from ..base import Task
 from ..bucket import Bucket, BucketConfig
-from ..classify import Classify, ClassifyConfig
+from ..classify import DIFFERENTIATE_CHOICE_VERSION, Classify, ClassifyConfig
 from ..codify import Codify, CodifyConfig
 from ..compare import Compare, CompareConfig
 
@@ -345,6 +345,11 @@ class Discover(Task):
             expected_model=effective_decision_model or self.cfg.model,
             decision_provider=decision_client is not None,
             reset_files=reset_files,
+            extra_metadata=(
+                {"differentiate_choice_version": DIFFERENTIATE_CHOICE_VERSION}
+                if (pair and decision_client is not None)
+                else None
+            ),
         )
         if not labels:
             classify_result = df.reset_index(drop=True).copy()

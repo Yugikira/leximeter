@@ -323,60 +323,30 @@ class Paraphrase(Task):
         # Create the classifier configuration once.  A dedicated
         # validation directory is used to store classification results.
         validation_dir = os.path.join(self.cfg.save_dir, "validation")
-        validation_reset = _common.should_reset_substage_checkpoint(
-            validation_dir,
-            "classify_responses",
-            expected_model=effective_decision_model or self.cfg.model,
-            decision_provider=decision_client is not None,
-            reset_files=reset_files,
-        )
+        expected_val_model = effective_decision_model or self.cfg.model
         validation_signature = _common.compute_input_signature(
             labels, self.cfg.instructions
         )
+        validation_reset = _common.should_reset_substage_checkpoint(
+            validation_dir,
+            "classify_responses",
+            expected_model=expected_val_model,
+            decision_provider=decision_client is not None,
+            reset_files=reset_files,
+            extra_metadata={"validation_signature": validation_signature},
+        )
         if not validation_reset:
-            prev_meta = _common.load_run_metadata(
-                validation_dir, "classify_responses", reset_files=False
-            )
-            if (
-                prev_meta
-                and "validation_signature" in prev_meta
-                and prev_meta.get("validation_signature") != validation_signature
-            ):
-                validation_reset = True
-            else:
-                for attr_fname in ("attributes.json", "classify_responses_attrs.json"):
-                    attr_path = os.path.join(validation_dir, attr_fname)
-                    if os.path.exists(attr_path):
-                        persisted_attrs = _common.load_json_cache(attr_path)
-                        if persisted_attrs is not None and persisted_attrs != labels:
-                            validation_reset = True
-                        break
+            for attr_fname in ("attributes.json", "classify_responses_attrs.json"):
+                attr_path = os.path.join(validation_dir, attr_fname)
+                if os.path.exists(attr_path):
+                    persisted_attrs = _common.load_json_cache(attr_path)
+                    if persisted_attrs is not None and persisted_attrs != labels:
+                        validation_reset = True
+                    break
 
         stem = os.path.splitext(self.cfg.file_name)[0]
-        if reset_files and os.path.isdir(self.cfg.save_dir):
-            round_pattern = re.compile(rf"^{re.escape(stem)}_round\d+\.csv$")
-            for fname in os.listdir(self.cfg.save_dir):
-                if round_pattern.match(fname):
-                    _common.remove_file(os.path.join(self.cfg.save_dir, fname))
-
-        if validation_reset:
-            for fname in (
-                "classify_responses_raw_responses.csv",
-                "classify_responses_run_metadata.json",
-                "classify_responses_cleaned.csv",
-                "classify_responses_full_disaggregated.csv",
-                "attributes.json",
-                "classify_responses_attrs.json",
-            ):
-                _common.remove_file(os.path.join(validation_dir, fname))
-
-        os.makedirs(validation_dir, exist_ok=True)
-        if to_check:
-            _common.update_run_metadata(
-                validation_dir,
-                "classify_responses",
-                validation_signature=validation_signature,
-            )
+        if reset_files:
+            _common.purge_numbered_files(self.cfg.save_dir, f"{stem}_round")
 
         classify_cfg = ClassifyConfig(
             labels=labels,
@@ -391,6 +361,16 @@ class Paraphrase(Task):
             client=self._get_client(),
             decision_client=decision_client,
         )
+        if validation_reset:
+            classifier.purge_checkpoints(remove_shared_attributes=True)
+        if to_check:
+            _common.update_run_metadata(
+                validation_dir,
+                "classify_responses",
+                model=expected_val_model,
+                decision_provider=decision_client is not None,
+                validation_signature=validation_signature,
+            )
 
         def _flag_passes(flag: Any) -> bool:
             """None / NA (uncertain) counts as a pass; only False fails."""

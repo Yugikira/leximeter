@@ -25,15 +25,16 @@ from leximeter.client.decision import (
 
 
 @pytest.fixture(autouse=True)
-def _isolate_decision_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Prevent .env or host LEXIMETER_DECISION_* vars from leaking into offline tests.
+def _isolate_provider_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Prevent .env or host decision/search vars from leaking into offline tests.
 
     Runs in setup before each test body, so tests that intentionally call
-    ``monkeypatch.setenv("LEXIMETER_DECISION_*", ...)`` (e.g. ``test_resolve.py``)
+    ``monkeypatch.setenv(...)`` (e.g. ``test_resolve.py``, ``test_search_tavily.py``)
     continue to override cleanly within that test.
     """
+    isolated_prefixes = ("LEXIMETER_DECISION_", "LEXIMETER_SEARCH_")
     for key in list(os.environ):
-        if key.startswith("LEXIMETER_DECISION_"):
+        if key.startswith(isolated_prefixes) or key == "TAVILY_API_KEY":
             monkeypatch.delenv(key, raising=False)
 
 

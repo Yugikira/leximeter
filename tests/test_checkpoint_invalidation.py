@@ -142,7 +142,7 @@ def test_classify_provider_toggle_bidirectional_with_same_model_name(
         "tone_inverted": "Square is warmer",
     }
     diff_dir = tmp_path / "cls_toggle_diff"
-    dc_diff = CountingDecisionClient({"tone": "circle"})
+    dc_diff = CountingDecisionClient({"tone": "option_a"})
     res_diff_dc = run(
         classify(
             pair_df,
@@ -364,7 +364,7 @@ def test_classify_interrupted_reset_or_provider_toggle_does_not_leak_prior_rows(
 # ---------------------------------------------------------------------------
 
 
-def test_codify_reset_files_true_multi_round_purges_all_iterations_and_completion_checks(
+def test_codify_reset_files_true_multi_round_purges_all_rounds_and_completion_checks(
     tmp_path: Path,
 ) -> None:
     """codify(..., reset_files=True, n_rounds=3) purges iter1+ and completion_iter1+."""
@@ -544,7 +544,7 @@ def test_codify_interrupted_in_progress_resume_on_model_or_provider_change(
     assert done_state["status"] == "complete"
 
 
-def test_codify_unlinked_state_manifest_purges_completion_and_colliding_iter_batches(
+def test_codify_unlinked_state_manifest_purges_completion_and_colliding_round_batches(
     tmp_path: Path,
 ) -> None:
     """Even if codify_state.json is missing, substage metadata resets completion_checks and iter1+."""
@@ -1370,3 +1370,97 @@ def test_checkpoint_invalidation_preserves_systemone_fail_fast(
         encoding="utf-8"
     ) == flt_cleaned_before
     assert http_calls == 0
+
+
+def test_filter_legacy_untracked_raw_csv_invalidates_on_resume(tmp_path: Path) -> None:
+    """Pre-metadata filter_responses_raw_responses.csv is invalidated rather than reused blindly."""
+    from leximeter.tasks import _common
+
+    save_dir = tmp_path / "flt_legacy_raw"
+    save_dir.mkdir(parents=True, exist_ok=True)
+    batch_hash = _common.hash_identifier(json.dumps(["apple"], ensure_ascii=False))
+    pd.DataFrame(
+        [
+            {
+                "Identifier": f"{batch_hash}_run1",
+                "Response": json.dumps({"entities meeting condition": ["apple"]}),
+                "Successful": True,
+                "Error Log": "",
+                "Time Taken": 0.01,
+            }
+        ]
+    ).to_csv(save_dir / "filter_responses_raw_responses.csv", index=False)
+
+    llm_reject = ScriptedLLMClient(lambda p, m, i: {"entities meeting condition": []})
+    res = run(
+        leximeter_filter(
+            pd.DataFrame({"item": ["apple"]}),
+            "item",
+            condition="must be a mineral",
+            save_dir=str(save_dir),
+            model="gen-v1",
+            reset_files=False,
+            client=llm_reject,
+        )
+    )
+    assert llm_reject.calls == 1
+    assert list(res["keep"]) == [False]
+
+
+def test_codify_early_exit_no_added_snippets_purges_trailing_rounds(
+    tmp_path: Path,
+) -> None:
+    """Unlinked codify_state.json + early exit on 'not added' purges trailing round & completion files."""
+    df = pd.DataFrame(
+        {"text": ["First alpha claim one. Second beta remainder claim two."]}
+    )
+    categories = {"alpha": "alpha claims"}
+    save_dir = tmp_path / "codify_no_added_exit"
+
+    # Seed stale round 2 and completion_iter1 artifacts alongside missing codify_state.json
+    save_dir.mkdir(parents=True, exist_ok=True)
+    comp_dir = save_dir / "completion_checks"
+    comp_dir.mkdir(parents=True, exist_ok=True)
+    stale_iter2 = save_dir / "coding_results_iter2.csv"
+    stale_comp1 = comp_dir / "coding_results_completion_iter1_raw_responses.csv"
+    stale_iter2.write_text(
+        "Identifier,Response,Successful,Error Log,Time Taken\n", encoding="utf-8"
+    )
+    stale_comp1.write_text(
+        "Identifier,Response,Successful,Error Log,Time Taken\n", encoding="utf-8"
+    )
+    (comp_dir / "coding_results_completion_iter0_run_metadata.json").write_text(
+        json.dumps({"model": "old-dec", "decision_provider": True}),
+        encoding="utf-8",
+    )
+
+    def llm_no_new_in_round1(prompt: str, model: str, call_idx: int) -> dict[str, Any]:
+        del prompt, model
+        if call_idx == 1:
+            return {
+                "alpha": [
+                    {"beginning excerpt": "First alpha", "ending excerpt": "claim one."}
+                ]
+            }
+        # Round 1 returns empty -> triggers 'if not added: break'
+        return {"alpha": []}
+
+    llm = ScriptedLLMClient(llm_no_new_in_round1)
+    dc = CountingDecisionClient({"alpha": 0.95})
+    res = run(
+        codify(
+            df,
+            "text",
+            categories=categories,
+            save_dir=str(save_dir),
+            model="gen-v1",
+            decision_model="new-dec",
+            n_rounds=3,
+            reset_files=False,
+            client=llm,
+            decision_client=dc,
+        )
+    )
+    assert res["alpha"].iloc[0] == ["First alpha claim one."]
+    assert not stale_iter2.exists()
+    assert not stale_comp1.exists()

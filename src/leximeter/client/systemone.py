@@ -35,6 +35,8 @@ from .decision import (
 DEFAULT_BASE_URL = "https://api.typesafe.ai"
 DEFAULT_ENDPOINT_PATH = "/v1/systemone"
 _RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
+_GATEWAY_VERSION_SEGMENTS = frozenset({"v1"})
+_GATEWAY_STAGE_SEGMENTS = frozenset({"alpha"})
 
 
 def _segment_overlap(base_segs: list[str], path_segs: list[str]) -> int:
@@ -44,6 +46,22 @@ def _segment_overlap(base_segs: list[str], path_segs: list[str]) -> int:
         if base_segs[-k:] == path_segs[:k]:
             return k
     return 0
+
+
+def _should_strip_trailing_version(base_segs: list[str], path_segs: list[str]) -> bool:
+    """Return ``True`` when ``base_url``'s trailing ``/v1`` should yield to ``endpoint_path``.
+
+    Gateways such as OpenRouter document ``base_url=".../api/v1"`` while hosting
+    sibling endpoints under ``/api/alpha/decisions`` or ``/alpha/decisions``.
+    """
+    return (
+        bool(base_segs)
+        and base_segs[-1] in _GATEWAY_VERSION_SEGMENTS
+        and (
+            path_segs[0] in _GATEWAY_STAGE_SEGMENTS
+            or _segment_overlap(base_segs[:-1], path_segs) > 0
+        )
+    )
 
 
 def _join_endpoint_url(base_url: str, endpoint_path: str) -> str:
@@ -58,15 +76,7 @@ def _join_endpoint_url(base_url: str, endpoint_path: str) -> str:
 
     if path_segs:
         overlap = _segment_overlap(base_segs, path_segs)
-        if (
-            overlap == 0
-            and base_segs
-            and base_segs[-1] == "v1"
-            and (
-                path_segs[0] == "alpha"
-                or _segment_overlap(base_segs[:-1], path_segs) > 0
-            )
-        ):
+        if overlap == 0 and _should_strip_trailing_version(base_segs, path_segs):
             base_segs = base_segs[:-1]
             overlap = _segment_overlap(base_segs, path_segs)
         joined_segs = [*base_segs, *path_segs[overlap:]]

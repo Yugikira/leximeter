@@ -21,6 +21,7 @@ import os
 import random
 import re
 from collections import defaultdict
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -47,46 +48,21 @@ _CIRCLE_SQUARE_WORD_RE = re.compile(
     r"(?<![A-Za-z])(circle|square)(?![A-Za-z])", re.IGNORECASE
 )
 
-
-def _is_square_primary(actual_label: str, actual_desc: str) -> bool:
-    """Return ``True`` when the actual label or definition describes Square over Circle."""
-    for text in (actual_label, actual_desc):
-        if not text:
-            continue
-        match = _CIRCLE_SQUARE_WORD_RE.search(str(text))
-        if match is not None:
-            return match.group(1).lower() == "square"
-    return False
+DIFFERENTIATE_CHOICE_VERSION = 2
+_OPT_ACTUAL = "option_a"
+_OPT_INVERTED = "option_b"
+_OPT_NEITHER = "neither"
 
 
 @dataclass(frozen=True)
 class _DifferentiatePair:
-    """One directional Circle/Square label pair evaluated as a 3-way choice."""
+    """One directional label pair evaluated as a 3-way ChoiceQuestion."""
 
     question_key: str
     actual_label: str
     actual_desc: str
     inverted_label: str | None
     inverted_desc: str | None
-    square_primary: bool = False
-
-    @property
-    def circle_label(self) -> str | None:
-        return self.inverted_label if self.square_primary else self.actual_label
-
-    @property
-    def square_label(self) -> str | None:
-        return self.actual_label if self.square_primary else self.inverted_label
-
-    @property
-    def circle_desc(self) -> str:
-        raw = self.inverted_desc if self.square_primary else self.actual_desc
-        return str(raw).strip() if raw is not None else ""
-
-    @property
-    def square_desc(self) -> str:
-        raw = self.actual_desc if self.square_primary else self.inverted_desc
-        return str(raw).strip() if raw is not None else ""
 
 
 def _collect_predictions(row: pd.Series) -> list[str]:
@@ -220,59 +196,117 @@ def _group_differentiate_labels(labels: dict[str, str]) -> list[_DifferentiatePa
                 inverted_desc=(
                     labels[inverted_key] if inverted_key is not None else None
                 ),
-                square_primary=_is_square_primary(actual_key, labels[actual_key]),
             )
         )
     return pairs
 
 
+def _has_circle_or_square(text: str | None) -> bool:
+    return bool(text and _CIRCLE_SQUARE_WORD_RE.search(text))
+
+
+def _strip_direction_suffix(label: str) -> str:
+    for suffix in ("_actual", "_inverted", " (inverted)"):
+        if label.endswith(suffix) and len(label) > len(suffix):
+            return label[: -len(suffix)]
+    return label
+
+
+def _format_differentiate_statements(pair: _DifferentiatePair) -> tuple[str, str]:
+    """Return ``(actual_statement, inverted_statement)`` without guessing English polarity."""
+    act_desc = str(pair.actual_desc).strip() if pair.actual_desc is not None else ""
+    inv_desc = str(pair.inverted_desc).strip() if pair.inverted_desc is not None else ""
+    act_stem = _strip_direction_suffix(pair.actual_label)
+    inv_stem = (
+        _strip_direction_suffix(pair.inverted_label)
+        if pair.inverted_label is not None
+        else _swap_circle_square(act_stem)
+    )
+
+    if _has_circle_or_square(act_desc) or _has_circle_or_square(inv_desc):
+        if act_desc and not inv_desc:
+            swapped = _swap_circle_square(act_desc)
+            inv_desc = swapped if swapped.lower() != act_desc.lower() else ""
+        elif inv_desc and not act_desc:
+            swapped = _swap_circle_square(inv_desc)
+            act_desc = swapped if swapped.lower() != inv_desc.lower() else ""
+
+        actual_text = (
+            act_desc
+            if _has_circle_or_square(act_desc)
+            else (
+                f"{act_stem}: {act_desc}"
+                if act_desc
+                else f"The label '{act_stem}' applies."
+            )
+        )
+        inverted_text = (
+            inv_desc
+            if _has_circle_or_square(inv_desc)
+            else (
+                f"{inv_stem}: {inv_desc}"
+                if inv_desc
+                else _swap_circle_square(actual_text)
+            )
+        )
+        return actual_text, inverted_text
+
+    if _has_circle_or_square(act_stem) or _has_circle_or_square(inv_stem):
+        if inv_stem.lower() == act_stem.lower():
+            inv_stem = _swap_circle_square(act_stem)
+        actual_text = (
+            f"{act_stem}: {act_desc}"
+            if act_desc
+            else f"The label '{act_stem}' applies."
+        )
+        shared_desc = inv_desc or act_desc
+        inverted_text = (
+            f"{inv_stem}: {shared_desc}"
+            if shared_desc
+            else f"The label '{inv_stem}' applies."
+        )
+        return actual_text, inverted_text
+
+    act_clause = (
+        f"'{pair.question_key}' ({act_desc})" if act_desc else f"'{pair.question_key}'"
+    )
+    inv_detail = inv_desc or act_desc
+    inv_clause = (
+        f"'{pair.question_key}' ({inv_detail})"
+        if inv_detail
+        else f"'{pair.question_key}'"
+    )
+    return (
+        f"Circle clearly manifests {act_clause} more than Square.",
+        f"Square clearly manifests {inv_clause} more than Circle.",
+    )
+
+
 def _build_differentiate_choice(
     pair: _DifferentiatePair, *, circle_first: bool
 ) -> ChoiceQuestion:
-    circle_desc = pair.circle_desc
-    square_desc = pair.square_desc
-    if not circle_desc and square_desc:
-        swapped = _swap_circle_square(square_desc)
-        circle_desc = swapped if swapped.lower() != square_desc.lower() else ""
-    if not square_desc and circle_desc:
-        swapped = _swap_circle_square(circle_desc)
-        square_desc = swapped if swapped.lower() != circle_desc.lower() else ""
-
-    if pair.square_primary:
-        circle_fallback = f"The label '{pair.circle_label or _swap_circle_square(pair.question_key)}' applies."
-        square_fallback = (
-            f"The label '{pair.square_label or pair.question_key}' applies."
-        )
-    else:
-        circle_fallback = (
-            f"Circle clearly manifests '{pair.question_key}' more than Square."
-        )
-        square_fallback = (
-            f"Square clearly manifests '{pair.question_key}' more than Circle."
-        )
-    circle_text = circle_desc or circle_fallback
-    square_text = square_desc or square_fallback
+    actual_text, inverted_text = _format_differentiate_statements(pair)
     neither_text = (
         "Neither applies: the label does not distinguish Circle from Square "
         "(absent from both, or equally present in both)."
     )
     if circle_first:
         criteria: dict[str, str | None] = {
-            "circle": circle_text,
-            "square": square_text,
-            "neither": neither_text,
+            _OPT_ACTUAL: actual_text,
+            _OPT_INVERTED: inverted_text,
+            _OPT_NEITHER: neither_text,
         }
     else:
         criteria = {
-            "square": square_text,
-            "circle": circle_text,
-            "neither": neither_text,
+            _OPT_INVERTED: inverted_text,
+            _OPT_ACTUAL: actual_text,
+            _OPT_NEITHER: neither_text,
         }
     instructions = (
         f"Compare Circle and Square on the label '{pair.question_key}'. "
-        "Choose 'circle' if the 'circle' description applies clearly, "
-        "'square' if the 'square' description applies clearly, "
-        "or 'neither' if neither applies or both are equal."
+        f"Choose '{_OPT_ACTUAL}' if the '{_OPT_ACTUAL}' statement applies clearly, "
+        f"'{_OPT_INVERTED}' if the '{_OPT_INVERTED}' statement applies clearly, "
+        f"or '{_OPT_NEITHER}' if neither applies or both are equal."
     )
     return ChoiceQuestion(instructions=instructions, criteria=criteria)
 
@@ -281,16 +315,20 @@ def _choice_answer_probs(ans: ChoiceAnswer) -> tuple[float, float, float] | None
     if ans.refused:
         return None
     if ans.probabilities:
+        if not (
+            {_OPT_ACTUAL, _OPT_INVERTED, _OPT_NEITHER} & set(ans.probabilities.keys())
+        ):
+            return None
         return (
-            float(ans.probabilities.get("circle", 0.0)),
-            float(ans.probabilities.get("square", 0.0)),
-            float(ans.probabilities.get("neither", 0.0)),
+            float(ans.probabilities.get(_OPT_ACTUAL, 0.0)),
+            float(ans.probabilities.get(_OPT_INVERTED, 0.0)),
+            float(ans.probabilities.get(_OPT_NEITHER, 0.0)),
         )
-    if ans.choice == "circle":
+    if ans.choice == _OPT_ACTUAL:
         return (1.0, 0.0, 0.0)
-    if ans.choice == "square":
+    if ans.choice == _OPT_INVERTED:
         return (0.0, 1.0, 0.0)
-    if ans.choice == "neither":
+    if ans.choice == _OPT_NEITHER:
         return (0.0, 0.0, 1.0)
     return None
 
@@ -378,6 +416,67 @@ class Classify(Task):
     def __init__(self, cfg: ClassifyConfig, **kwargs: Any) -> None:
         super().__init__(cfg, **kwargs)
         self._template = load_prompt("classification_prompt.jinja2")
+
+    @staticmethod
+    def purge_checkpoint_files(
+        save_dir: str,
+        file_name: str = "classify_responses.csv",
+        *,
+        remove_shared_attributes: bool = False,
+    ) -> None:
+        """Remove persisted checkpoint and output artifacts owned by :class:`Classify`."""
+        base_name = os.path.splitext(file_name)[0]
+        for suffix in (
+            "_raw_responses.csv",
+            "_cleaned.csv",
+            "_full_disaggregated.csv",
+            "_run_metadata.json",
+            "_attrs.json",
+        ):
+            _common.remove_file(os.path.join(save_dir, f"{base_name}{suffix}"))
+        if remove_shared_attributes:
+            _common.remove_file(os.path.join(save_dir, "attributes.json"))
+
+    def purge_checkpoints(self, *, remove_shared_attributes: bool = False) -> None:
+        """Remove checkpoint and output artifacts for this classifier instance."""
+        self.purge_checkpoint_files(
+            self.cfg.save_dir,
+            self.cfg.file_name,
+            remove_shared_attributes=remove_shared_attributes,
+        )
+
+    def _prepare_checkpoint(
+        self,
+        *,
+        expected_model: str,
+        decision_provider: bool,
+        reset_files: bool,
+        extra_metadata: Mapping[str, Any] | None = None,
+    ) -> tuple[str, str, bool, dict[str, Any]]:
+        base_name = os.path.splitext(self.cfg.file_name)[0]
+        csv_path = os.path.join(self.cfg.save_dir, f"{base_name}_raw_responses.csv")
+        cleaned_path = os.path.join(self.cfg.save_dir, f"{base_name}_cleaned.csv")
+        disagg_path = os.path.join(
+            self.cfg.save_dir, f"{base_name}_full_disaggregated.csv"
+        )
+        effective_reset, run_metadata = _common.prepare_substage_checkpoint(
+            self.cfg.save_dir,
+            base_name,
+            expected_model=expected_model,
+            decision_provider=decision_provider,
+            reset_files=reset_files,
+            extra_metadata=extra_metadata,
+            artifacts=(csv_path, cleaned_path, disagg_path),
+        )
+        self.cfg.labels = _common.load_persisted_attributes(
+            save_dir=self.cfg.save_dir,
+            incoming=self.cfg.labels,
+            reset_files=effective_reset,
+            task_name="Classify",
+            item_name="labels",
+            legacy_filename=f"{base_name}_attrs.json",
+        )
+        return base_name, csv_path, effective_reset, run_metadata
 
     # ------------------------------------------------------------------
     # Parsing raw model output
@@ -467,35 +566,10 @@ class Classify(Task):
             raise ValueError("n_runs must be an integer >= 1")
 
         df_proc = df.reset_index(drop=True).copy()
-        base_name = os.path.splitext(self.cfg.file_name)[0]
-        csv_path = os.path.join(self.cfg.save_dir, f"{base_name}_raw_responses.csv")
-        cleaned_path = os.path.join(self.cfg.save_dir, f"{base_name}_cleaned.csv")
-        disagg_path = os.path.join(
-            self.cfg.save_dir, f"{base_name}_full_disaggregated.csv"
-        )
-        effective_reset = _common.should_reset_substage_checkpoint(
-            self.cfg.save_dir,
-            base_name,
+        base_name, csv_path, effective_reset, run_metadata = self._prepare_checkpoint(
             expected_model=self.cfg.model,
             decision_provider=False,
             reset_files=reset_files,
-        )
-        if effective_reset:
-            _common.remove_file(csv_path)
-            _common.remove_file(cleaned_path)
-            _common.remove_file(disagg_path)
-
-        run_metadata = _common.load_run_metadata(
-            self.cfg.save_dir, base_name, reset_files=effective_reset
-        )
-
-        self.cfg.labels = _common.load_persisted_attributes(
-            save_dir=self.cfg.save_dir,
-            incoming=self.cfg.labels,
-            reset_files=effective_reset,
-            task_name="Classify",
-            item_name="labels",
-            legacy_filename=f"{base_name}_attrs.json",
         )
 
         label_items = list(self.cfg.labels.items())
@@ -799,35 +873,16 @@ class Classify(Task):
         )
 
         df_proc = df.reset_index(drop=True).copy()
-        base_name = os.path.splitext(self.cfg.file_name)[0]
-        csv_path = os.path.join(self.cfg.save_dir, f"{base_name}_raw_responses.csv")
-        cleaned_path = os.path.join(self.cfg.save_dir, f"{base_name}_cleaned.csv")
-        disagg_path = os.path.join(
-            self.cfg.save_dir, f"{base_name}_full_disaggregated.csv"
+        diff_meta = (
+            {"differentiate_choice_version": DIFFERENTIATE_CHOICE_VERSION}
+            if self.cfg.differentiate
+            else None
         )
-        effective_reset = _common.should_reset_substage_checkpoint(
-            self.cfg.save_dir,
-            base_name,
+        base_name, csv_path, effective_reset, run_metadata = self._prepare_checkpoint(
             expected_model=effective_model,
             decision_provider=True,
             reset_files=reset_files,
-        )
-        if effective_reset:
-            _common.remove_file(csv_path)
-            _common.remove_file(cleaned_path)
-            _common.remove_file(disagg_path)
-
-        run_metadata = _common.load_run_metadata(
-            self.cfg.save_dir, base_name, reset_files=effective_reset
-        )
-
-        self.cfg.labels = _common.load_persisted_attributes(
-            save_dir=self.cfg.save_dir,
-            incoming=self.cfg.labels,
-            reset_files=effective_reset,
-            task_name="Classify",
-            item_name="labels",
-            legacy_filename=f"{base_name}_attrs.json",
+            extra_metadata=diff_meta,
         )
 
         provider_cap = max(
@@ -925,6 +980,7 @@ class Classify(Task):
                 base_name,
                 model=effective_model,
                 decision_provider=True,
+                differentiate_choice_version=DIFFERENTIATE_CHOICE_VERSION,
                 n_attributes_per_run=effective_limit,
                 attribute_batches=[
                     [
@@ -1052,28 +1108,26 @@ class Classify(Task):
                         triple = run_triples[ident][pair.question_key]
                         id_pair_runs[ident][pair.question_key].append(triple)
                         if triple is None:
-                            if pair.circle_label is not None:
-                                rec[pair.circle_label] = None
-                                rec[f"{pair.circle_label}_prob"] = None
-                            if pair.square_label is not None:
-                                rec[pair.square_label] = None
-                                rec[f"{pair.square_label}_prob"] = None
+                            rec[pair.actual_label] = None
+                            rec[f"{pair.actual_label}_prob"] = None
+                            if pair.inverted_label is not None:
+                                rec[pair.inverted_label] = None
+                                rec[f"{pair.inverted_label}_prob"] = None
                         else:
-                            p_c, p_s, p_n = triple
-                            if pair.circle_label is not None:
-                                rec[pair.circle_label] = bool(
-                                    p_c > p_s
-                                    and p_c > p_n
-                                    and p_c >= self.cfg.min_frequency
+                            p_act, p_inv, p_n = triple
+                            rec[pair.actual_label] = bool(
+                                p_act > p_inv
+                                and p_act > p_n
+                                and p_act >= self.cfg.min_frequency
+                            )
+                            rec[f"{pair.actual_label}_prob"] = p_act
+                            if pair.inverted_label is not None:
+                                rec[pair.inverted_label] = bool(
+                                    p_inv > p_act
+                                    and p_inv > p_n
+                                    and p_inv >= self.cfg.min_frequency
                                 )
-                                rec[f"{pair.circle_label}_prob"] = p_c
-                            if pair.square_label is not None:
-                                rec[pair.square_label] = bool(
-                                    p_s > p_c
-                                    and p_s > p_n
-                                    and p_s >= self.cfg.min_frequency
-                                )
-                                rec[f"{pair.square_label}_prob"] = p_s
+                                rec[f"{pair.inverted_label}_prob"] = p_inv
                     full_records.append(rec)
 
             if self.cfg.n_runs > 1 and full_records:
@@ -1097,30 +1151,28 @@ class Classify(Task):
                         if t is not None
                     ]
                     if not valid_t:
-                        if pair.circle_label is not None:
-                            bool_vals[pair.circle_label] = None
-                            prob_vals[pair.circle_label] = None
-                        if pair.square_label is not None:
-                            bool_vals[pair.square_label] = None
-                            prob_vals[pair.square_label] = None
+                        bool_vals[pair.actual_label] = None
+                        prob_vals[pair.actual_label] = None
+                        if pair.inverted_label is not None:
+                            bool_vals[pair.inverted_label] = None
+                            prob_vals[pair.inverted_label] = None
                     else:
-                        p_c = sum(t[0] for t in valid_t) / len(valid_t)
-                        p_s = sum(t[1] for t in valid_t) / len(valid_t)
+                        p_act = sum(t[0] for t in valid_t) / len(valid_t)
+                        p_inv = sum(t[1] for t in valid_t) / len(valid_t)
                         p_n = sum(t[2] for t in valid_t) / len(valid_t)
-                        if pair.circle_label is not None:
-                            bool_vals[pair.circle_label] = bool(
-                                p_c > p_s
-                                and p_c > p_n
-                                and p_c >= self.cfg.min_frequency
+                        bool_vals[pair.actual_label] = bool(
+                            p_act > p_inv
+                            and p_act > p_n
+                            and p_act >= self.cfg.min_frequency
+                        )
+                        prob_vals[pair.actual_label] = p_act
+                        if pair.inverted_label is not None:
+                            bool_vals[pair.inverted_label] = bool(
+                                p_inv > p_act
+                                and p_inv > p_n
+                                and p_inv >= self.cfg.min_frequency
                             )
-                            prob_vals[pair.circle_label] = p_c
-                        if pair.square_label is not None:
-                            bool_vals[pair.square_label] = bool(
-                                p_s > p_c
-                                and p_s > p_n
-                                and p_s >= self.cfg.min_frequency
-                            )
-                            prob_vals[pair.square_label] = p_s
+                            prob_vals[pair.inverted_label] = p_inv
                 row_data: dict[str, Any] = {"_gid": ident}
                 for lab in all_labels:
                     row_data[lab] = bool_vals.get(lab)

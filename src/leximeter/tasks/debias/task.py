@@ -28,6 +28,7 @@ import os
 import random
 import re
 import warnings
+from collections.abc import Mapping
 from dataclasses import dataclass, field, fields
 from typing import Any, Literal
 
@@ -60,6 +61,29 @@ def _dump_json(path: str, payload: dict, *, indent: int | None = None) -> None:
 def _to_float_series(series: pd.Series) -> pd.Series:
     """Coerce numeric or boolean values to float64 (safe for subtraction & OLS)."""
     return pd.to_numeric(series, errors="coerce").astype(float)
+
+
+def _effective_removal_rounds(rem_kw: Mapping[str, Any], removal_method: str) -> int:
+    """Resolve the effective multi-round count configured for a removal sub-task."""
+    raw: Any
+    if removal_method == "codify":
+        raw = (
+            rem_kw.get("completion_max_rounds")
+            if rem_kw.get("completion_max_rounds") is not None
+            else rem_kw.get("n_rounds", 3)
+        )
+    elif "n_rounds" in rem_kw:
+        raw = rem_kw["n_rounds"]
+    elif rem_kw.get("completion_max_rounds") is not None:
+        raw = rem_kw["completion_max_rounds"]
+    else:
+        raw = 3
+    if raw is None:
+        return 1
+    try:
+        return max(1, int(raw))
+    except (TypeError, ValueError):
+        return 1
 
 
 def _normalise_config_value(value: Any, *, key: str | None = None) -> Any:
@@ -323,6 +347,16 @@ class Debias(Task):
         self.cfg.measurement_kwargs = dict(self.cfg.measurement_kwargs or {})
         self.cfg.removal_kwargs = dict(self.cfg.removal_kwargs or {})
 
+    def _resolve_stage_decision_model(
+        self, stage_kwargs: Mapping[str, Any]
+    ) -> str | None:
+        dc = self._resolve_decision_client_override(
+            stage_kwargs.get("decision_client", _UNSET)
+        )
+        stage_model = stage_kwargs.get("model", self.cfg.model)
+        stage_dm = stage_kwargs.get("decision_model", self.cfg.decision_model)
+        return _common.effective_decision_model(dc, stage_dm, fallback=stage_model)
+
     # ------------------------------------------------------------------
     async def run(
         self,
@@ -344,69 +378,24 @@ class Debias(Task):
         uses_decision_measurement = self.cfg.mode in {"classify", "rank"} and (
             bool(missing_raw_attrs) or has_stripped_variant
         )
-        if uses_decision_measurement:
-            meas_dc_override = meas_kw.get("decision_client", _UNSET)
-            meas_dc = (
-                self._get_decision_client()
-                if isinstance(meas_dc_override, _UnsetType)
-                else meas_dc_override
-            )
-            meas_model = meas_kw.get("model", self.cfg.model)
-            meas_dm = meas_kw.get("decision_model", self.cfg.decision_model)
-            meas_effective_dec_model = _common.effective_decision_model(
-                meas_dc,
-                meas_dm,
-                fallback=meas_model,
-            )
-        else:
-            meas_effective_dec_model = None
+        meas_effective_dec_model = (
+            self._resolve_stage_decision_model(meas_kw)
+            if uses_decision_measurement
+            else None
+        )
 
         rem_kw = self.cfg.removal_kwargs or {}
-        if self.cfg.removal_method == "codify":
-            raw_rem_rounds = (
-                rem_kw.get("completion_max_rounds")
-                if rem_kw.get("completion_max_rounds") is not None
-                else rem_kw.get("n_rounds", 3)
-            )
-            try:
-                rem_n_rounds = max(1, int(raw_rem_rounds))
-            except (TypeError, ValueError):
-                rem_n_rounds = 1
-            uses_decision_removal = (
-                bool(self.cfg.signal_dictionary) and rem_n_rounds > 1
-            )
-        else:
-            if "n_rounds" in rem_kw:
-                raw_rem_rounds = rem_kw["n_rounds"]
-            elif (
-                "completion_max_rounds" in rem_kw
-                and rem_kw["completion_max_rounds"] is not None
-            ):
-                raw_rem_rounds = rem_kw["completion_max_rounds"]
-            else:
-                raw_rem_rounds = 3
-            try:
-                rem_n_rounds = max(1, int(raw_rem_rounds))
-            except (TypeError, ValueError):
-                rem_n_rounds = 1
-            uses_decision_removal = rem_n_rounds > 1
-
-        if uses_decision_removal:
-            rem_dc_override = rem_kw.get("decision_client", _UNSET)
-            rem_dc = (
-                self._get_decision_client()
-                if isinstance(rem_dc_override, _UnsetType)
-                else rem_dc_override
-            )
-            rem_model = rem_kw.get("model", self.cfg.model)
-            rem_dm = rem_kw.get("decision_model", self.cfg.decision_model)
-            rem_effective_dec_model = _common.effective_decision_model(
-                rem_dc,
-                rem_dm,
-                fallback=rem_model,
-            )
-        else:
-            rem_effective_dec_model = None
+        rem_n_rounds = _effective_removal_rounds(rem_kw, self.cfg.removal_method)
+        uses_decision_removal = (
+            bool(self.cfg.signal_dictionary) and rem_n_rounds > 1
+            if self.cfg.removal_method == "codify"
+            else rem_n_rounds > 1
+        )
+        rem_effective_dec_model = (
+            self._resolve_stage_decision_model(rem_kw)
+            if uses_decision_removal
+            else None
+        )
 
         # Input signature covers the whole input frame (the result embeds
         # every input column) plus every config field that shapes the run
@@ -680,35 +669,16 @@ class Debias(Task):
                 reset_files=reset_files_local,
             )
         elif mode == "classify":
-            dc_override = kwargs.pop("decision_client", _UNSET)
-            decision_client = (
-                self._get_decision_client()
-                if isinstance(dc_override, _UnsetType)
-                else dc_override
+            decision_client = self._resolve_decision_client_override(
+                kwargs.pop("decision_client", _UNSET)
             )
-            model_local = kwargs.pop("model", default_model)
-            decision_model_local = kwargs.pop("decision_model", self.cfg.decision_model)
             classify_cfg = ClassifyConfig(
                 labels=attributes or {},
                 save_dir=save_dir,
-                model=model_local,
-                decision_model=decision_model_local,
+                model=kwargs.pop("model", default_model),
+                decision_model=kwargs.pop("decision_model", self.cfg.decision_model),
                 n_parallels=kwargs.pop("n_parallels", self.cfg.n_parallels),
                 **kwargs,
-            )
-            base_name = os.path.splitext(classify_cfg.file_name)[0]
-            expected_model = (
-                _common.effective_decision_model(
-                    decision_client, decision_model_local, fallback=model_local
-                )
-                or model_local
-            )
-            reset_files_local = _common.should_reset_substage_checkpoint(
-                save_dir,
-                base_name,
-                expected_model=expected_model,
-                decision_provider=decision_client is not None,
-                reset_files=reset_files_local,
             )
             classify_runner = Classify(
                 classify_cfg,
@@ -737,35 +707,16 @@ class Debias(Task):
                 reset_files=reset_files_local,
             )
         elif mode == "rank":
-            dc_override = kwargs.pop("decision_client", _UNSET)
-            decision_client = (
-                self._get_decision_client()
-                if isinstance(dc_override, _UnsetType)
-                else dc_override
+            decision_client = self._resolve_decision_client_override(
+                kwargs.pop("decision_client", _UNSET)
             )
-            model_local = kwargs.pop("model", default_model)
-            decision_model_local = kwargs.pop("decision_model", self.cfg.decision_model)
             rank_cfg = RankConfig(
                 attributes=attributes or {},
                 save_dir=save_dir,
-                model=model_local,
-                decision_model=decision_model_local,
+                model=kwargs.pop("model", default_model),
+                decision_model=kwargs.pop("decision_model", self.cfg.decision_model),
                 n_parallels=kwargs.pop("n_parallels", self.cfg.n_parallels),
                 **kwargs,
-            )
-            base_name = os.path.splitext(rank_cfg.file_name)[0]
-            expected_model = (
-                _common.effective_decision_model(
-                    decision_client, decision_model_local, fallback=model_local
-                )
-                or model_local
-            )
-            reset_files_local = _common.should_reset_substage_checkpoint(
-                save_dir,
-                base_name,
-                expected_model=expected_model,
-                decision_provider=decision_client is not None,
-                reset_files=reset_files_local,
             )
             rank_runner = Rank(
                 rank_cfg,
@@ -900,11 +851,8 @@ class Debias(Task):
         os.makedirs(save_dir, exist_ok=True)
         additional_instructions = kwargs.pop("additional_instructions", "")
         kwargs.setdefault("n_rounds", 3)
-        dc_override = kwargs.pop("decision_client", _UNSET)
-        decision_client = (
-            self._get_decision_client()
-            if isinstance(dc_override, _UnsetType)
-            else dc_override
+        decision_client = self._resolve_decision_client_override(
+            kwargs.pop("decision_client", _UNSET)
         )
         cfg = CodifyConfig(
             save_dir=save_dir,
@@ -988,11 +936,8 @@ class Debias(Task):
             if replacement is not None:
                 response_kwargs["n_rounds"] = replacement
         response_kwargs.setdefault("n_rounds", 3)
-        dc_override = kwargs.pop("decision_client", _UNSET)
-        decision_client = (
-            self._get_decision_client()
-            if isinstance(dc_override, _UnsetType)
-            else dc_override
+        decision_client = self._resolve_decision_client_override(
+            kwargs.pop("decision_client", _UNSET)
         )
         cfg = ParaphraseConfig(
             instructions=instructions,

@@ -635,23 +635,40 @@ class Codify(Task):
         return parsed if isinstance(parsed, (list, dict)) else value
 
     def _purge_iteration_checkpoints(self) -> None:
-        """Remove stale per-iteration batch checkpoints after input changes."""
+        """Remove stale per-round batch checkpoints after input changes."""
         stem, ext = os.path.splitext(self.cfg.file_name)
         _common.remove_file(_common.run_metadata_path(self.cfg.save_dir, stem))
         _common.remove_file(os.path.join(self.cfg.save_dir, "coded_passages.csv"))
-        try:
-            names = os.listdir(self.cfg.save_dir)
-        except OSError:
-            return
-        for name in names:
-            if name == self.cfg.file_name or (
-                name.startswith(f"{stem}_iter") and name.endswith(ext)
-            ):
-                _common.remove_file(os.path.join(self.cfg.save_dir, name))
-        try:
-            shutil.rmtree(os.path.join(self.cfg.save_dir, "completion_checks"))
-        except OSError:
-            pass
+        _common.remove_file(os.path.join(self.cfg.save_dir, self.cfg.file_name))
+        _common.purge_numbered_files(self.cfg.save_dir, f"{stem}_iter", ext)
+        shutil.rmtree(
+            os.path.join(self.cfg.save_dir, "completion_checks"), ignore_errors=True
+        )
+
+    def _purge_trailing_rounds(
+        self,
+        *,
+        next_coding_depth: int,
+        next_check_iteration: int,
+        completion_iterations: int,
+    ) -> None:
+        """Remove unreached coding and completion-check artifacts after an early loop exit."""
+        from .classify import Classify
+
+        stem, ext = os.path.splitext(self.cfg.file_name)
+        _common.purge_numbered_files(
+            self.cfg.save_dir,
+            f"{stem}_iter",
+            ext,
+            min_index=next_coding_depth,
+        )
+        validation_dir = os.path.join(self.cfg.save_dir, "completion_checks")
+        if os.path.isdir(validation_dir):
+            for rem_iter in range(next_check_iteration, completion_iterations):
+                Classify.purge_checkpoint_files(
+                    validation_dir,
+                    f"{stem}_completion_iter{rem_iter}.csv",
+                )
 
     def _strip_snippets(
         self, text: str, snippets_by_category: dict[str, list[str]]
@@ -911,16 +928,6 @@ class Codify(Task):
             decision_provider=decision_client is not None,
             reset_files=reset_files,
         )
-        if effective_reset:
-            _common.remove_file(
-                os.path.join(validation_dir, f"{base_name}_raw_responses.csv")
-            )
-            _common.remove_file(
-                os.path.join(validation_dir, f"{base_name}_cleaned.csv")
-            )
-            _common.remove_file(
-                os.path.join(validation_dir, f"{base_name}_full_disaggregated.csv")
-            )
 
         base_instruction = (
             "These passages contain the remaining text after previously extracted snippets were removed. "
@@ -1002,13 +1009,11 @@ class Codify(Task):
                 loop_reset = True
             if not flagged:
                 if loop_reset:
-                    for rem_depth in range(depth, completion_iterations + 1):
-                        _common.remove_file(
-                            os.path.join(
-                                self.cfg.save_dir,
-                                self._iteration_file_name(rem_depth),
-                            )
-                        )
+                    self._purge_trailing_rounds(
+                        next_coding_depth=depth,
+                        next_check_iteration=depth,
+                        completion_iterations=completion_iterations,
+                    )
                 break
 
             category_subset = set().union(*flagged.values())
@@ -1020,6 +1025,12 @@ class Codify(Task):
                 if stripped:
                     row_texts[row_idx] = stripped
             if not row_texts:
+                if loop_reset:
+                    self._purge_trailing_rounds(
+                        next_coding_depth=depth,
+                        next_check_iteration=depth,
+                        completion_iterations=completion_iterations,
+                    )
                 break
 
             iteration_results = await self._gather_iteration(
@@ -1036,6 +1047,12 @@ class Codify(Task):
             )
             added = self._merge_snippet_results(aggregated, iteration_results)
             if not added:
+                if loop_reset:
+                    self._purge_trailing_rounds(
+                        next_coding_depth=depth + 1,
+                        next_check_iteration=depth,
+                        completion_iterations=completion_iterations,
+                    )
                 break
 
         return aggregated
