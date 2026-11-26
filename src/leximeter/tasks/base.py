@@ -12,7 +12,7 @@ import os
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import pandas as pd
 
@@ -23,12 +23,26 @@ from ..client.search import SearchTool
 from . import _common
 
 
+class _UnsetType:
+    """Sentinel type distinguishing an omitted ``decision_client`` from ``None``."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "<UNSET>"
+
+
+_UNSET = _UnsetType()
+
+
 class Task(ABC):
     """Common infrastructure every task shares.
 
     Providers are injected at construction (for tests / per-call override) or
     resolved lazily from the environment on first use.
     """
+
+    _prefer_explicit_llm_client: ClassVar[bool] = False
 
     def __init__(
         self,
@@ -37,14 +51,18 @@ class Task(ABC):
         client: LLMClient | None = None,
         embedding_client: EmbeddingClient | None = None,
         search_tool: SearchTool | None = None,
-        decision_client: DecisionClient | None = None,
+        decision_client: DecisionClient | None | _UnsetType = _UNSET,
     ) -> None:
         self.cfg = cfg
         self._client = client
         self._embedding_client = embedding_client
         self._search_tool = search_tool
-        self._decision_client = decision_client
-        self._decision_client_resolved = decision_client is not None
+        if isinstance(decision_client, _UnsetType):
+            self._decision_client: DecisionClient | None = None
+            self._decision_client_resolved = False
+        else:
+            self._decision_client = decision_client
+            self._decision_client_resolved = True
         self._expand_save_dir()
 
     # ------------------------------------------------------------------
@@ -73,9 +91,12 @@ class Task(ABC):
 
     def _get_decision_client(self) -> DecisionClient | None:
         if not self._decision_client_resolved:
-            from ..client.resolve import resolve_decision_client
+            if self._prefer_explicit_llm_client and self._client is not None:
+                self._decision_client = None
+            else:
+                from ..client.resolve import resolve_decision_client
 
-            self._decision_client = resolve_decision_client()
+                self._decision_client = resolve_decision_client()
             self._decision_client_resolved = True
         return self._decision_client
 

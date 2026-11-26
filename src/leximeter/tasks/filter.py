@@ -65,6 +65,8 @@ class FilterConfig:
 class Filter(Task):
     """Keep items whose natural-language ``condition`` holds."""
 
+    _prefer_explicit_llm_client = True
+
     def __init__(self, cfg: FilterConfig, **kwargs: Any) -> None:
         super().__init__(cfg, **kwargs)
         self._template = load_prompt("filter_prompt.jinja2")

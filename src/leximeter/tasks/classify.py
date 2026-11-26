@@ -374,6 +374,8 @@ class ClassifyConfig:
 class Classify(Task):
     """Robust passage classifier using an LLM."""
 
+    _prefer_explicit_llm_client = True
+
     def __init__(self, cfg: ClassifyConfig, **kwargs: Any) -> None:
         super().__init__(cfg, **kwargs)
         self._template = load_prompt("classification_prompt.jinja2")

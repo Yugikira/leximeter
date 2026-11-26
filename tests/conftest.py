@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Callable
 from typing import Any
+
+import pytest
 
 from leximeter.client.base import LLMClient
 from leximeter.client.decision import (
@@ -19,6 +22,19 @@ from leximeter.client.decision import (
     ScoreAnswer,
     ScoreQuestion,
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_decision_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Prevent .env or host LEXIMETER_DECISION_* vars from leaking into offline tests.
+
+    Runs in setup before each test body, so tests that intentionally call
+    ``monkeypatch.setenv("LEXIMETER_DECISION_*", ...)`` (e.g. ``test_resolve.py``)
+    continue to override cleanly within that test.
+    """
+    for key in list(os.environ):
+        if key.startswith("LEXIMETER_DECISION_"):
+            monkeypatch.delenv(key, raising=False)
 
 
 class DictClient(LLMClient):
