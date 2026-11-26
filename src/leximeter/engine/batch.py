@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import time
 import warnings
 from collections.abc import Sequence
@@ -267,12 +266,6 @@ async def batch_decide(
             f"{type(client).__name__} requires a non-empty decision model ID "
             "(pass decision_model=... or set LEXIMETER_DECISION_MODEL)."
         )
-
-    if save_path and reset_files and os.path.exists(save_path):
-        try:
-            os.remove(save_path)
-        except OSError:
-            pass
 
     checkpoint = (
         _checkpoint.load_checkpoint(save_path)

@@ -632,6 +632,491 @@ def test_paraphrase_without_decision_client_falls_back_to_llm_unchanged(
     assert bool(res["text_revised_approved"].iloc[0]) is True
 
 
+def test_paraphrase_reset_files_preserves_all_validation_rounds_and_purges_stale_rounds(
+    tmp_path,
+) -> None:
+    """reset_files=True purges stale round/validation files once before Round 0 and keeps all rounds' validation rows."""
+    df = pd.DataFrame({"text": ["Original technical sentence."]})
+    save_dir = tmp_path / "para_reset_multi"
+    val_dir = save_dir / "validation"
+    val_dir.mkdir(parents=True)
+
+    # Seed stale higher-round CSV, stale validation CSV rows, and stale attributes
+    (save_dir / "paraphrase_responses_round5.csv").write_text(
+        "Identifier,Response,Successful,Error Log,Time Taken\nstale_r5,stale,True,,0.1\n",
+        encoding="utf-8",
+    )
+    (val_dir / "classify_responses_raw_responses.csv").write_text(
+        'Identifier,Response,Successful,Error Log,Time Taken\nstale_val_id,"{}",True,,0.1\n',
+        encoding="utf-8",
+    )
+    (val_dir / "attributes.json").write_text('{"old_attr": "stale"}', encoding="utf-8")
+
+    llm = RecordingSeqClient(["r0_bad", "r1_bad", "r2_good"])
+
+    def validate(state: Any, key: str, question: Any) -> float:
+        text = state if isinstance(state, str) else str(state)
+        if "r0_bad" in text:
+            return 0.10
+        if "r1_bad" in text:
+            return 0.15
+        return 0.90
+
+    dc = CountingDecisionClient(handler=validate)
+
+    res = run(
+        paraphrase(
+            df,
+            "text",
+            instructions="simplify clearly",
+            save_dir=str(save_dir),
+            model="gen-model",
+            decision_model="dec-model",
+            n_rounds=3,
+            n_runs=1,
+            later_round_run_multiplier=1,
+            reset_files=True,
+            client=llm,
+            decision_client=dc,
+        )
+    )
+
+    assert res["text_revised"].iloc[0] == "r2_good"
+    assert bool(res["text_revised_approved"].iloc[0]) is True
+    assert llm.calls == 3
+    assert dc.calls == 3
+
+    # Stale round5 CSV and stale validation rows were purged before Round 0
+    assert not (save_dir / "paraphrase_responses_round5.csv").exists()
+    assert (save_dir / "paraphrase_responses_round0.csv").exists()
+    assert (save_dir / "paraphrase_responses_round1.csv").exists()
+    assert (save_dir / "paraphrase_responses_round2.csv").exists()
+
+    val_raw = pd.read_csv(val_dir / "classify_responses_raw_responses.csv")
+    assert "stale_val_id" not in set(val_raw["Identifier"])
+    assert len(val_raw) == 3
+
+    probs = []
+    for raw in val_raw["Response"]:
+        parsed = DecisionResult.from_json(raw)
+        assert parsed is not None
+        probs.append(parsed.answers["instructions_followed"].probability)
+    assert probs == pytest.approx([0.10, 0.15, 0.90])
+
+    # Subsequent reset_files=False makes 0 calls to both clients
+    llm_unused = RecordingSeqClient(["unused"])
+    dc_unused = CountingDecisionClient({"instructions_followed": 0.05})
+    res_cached = run(
+        paraphrase(
+            df,
+            "text",
+            instructions="simplify clearly",
+            save_dir=str(save_dir),
+            model="gen-model",
+            decision_model="dec-model",
+            n_rounds=3,
+            n_runs=1,
+            later_round_run_multiplier=1,
+            reset_files=False,
+            client=llm_unused,
+            decision_client=dc_unused,
+        )
+    )
+    assert llm_unused.calls == 0
+    assert dc_unused.calls == 0
+    assert res_cached["text_revised"].iloc[0] == "r2_good"
+    assert bool(res_cached["text_revised_approved"].iloc[0]) is True
+
+
+def test_paraphrase_provider_switch_reset_files_false_revalidates_all_rounds(
+    tmp_path, monkeypatch
+) -> None:
+    """Switching DecisionClient <-> LLMClient with reset_files=False purges validation and re-evaluates all rounds."""
+    monkeypatch.delenv("LEXIMETER_DECISION_PROTOCOL", raising=False)
+    monkeypatch.delenv("LEXIMETER_DECISION_MODEL", raising=False)
+    df = pd.DataFrame({"text": ["Original text."]})
+
+    # A. DecisionClient -> LLMClient
+    dir_a = tmp_path / "para_dc_to_llm"
+    llm_a1 = RecordingSeqClient(["cand_0", "cand_1"])
+    dc_a1 = CountingDecisionClient(
+        handler=lambda state, key, q: 0.90 if "cand_1" in str(state) else 0.10
+    )
+    res_a1 = run(
+        paraphrase(
+            df,
+            "text",
+            instructions="rephrase",
+            save_dir=str(dir_a),
+            model="gen-model",
+            decision_model="dec-model",
+            n_rounds=2,
+            n_runs=1,
+            later_round_run_multiplier=1,
+            client=llm_a1,
+            decision_client=dc_a1,
+        )
+    )
+    assert dc_a1.calls == 2
+    assert res_a1["text_revised"].iloc[0] == "cand_1"
+    assert bool(res_a1["text_revised_approved"].iloc[0]) is True
+
+    # Run 2: switch to LLMClient (decision_client=None, reset_files=False) returning False for all
+    def llm_fail_validation(prompt: str, idx: int) -> str:
+        if "BEGIN LABELS" in prompt:
+            return json.dumps({"instructions_followed": False})
+        raise AssertionError("Generation should reuse round0/round1 checkpoints")
+
+    llm_a2 = RecordingSeqClient(llm_fail_validation)
+    res_a2 = run(
+        paraphrase(
+            df,
+            "text",
+            instructions="rephrase",
+            save_dir=str(dir_a),
+            model="gen-model",
+            n_rounds=2,
+            n_runs=1,
+            later_round_run_multiplier=1,
+            reset_files=False,
+            client=llm_a2,
+            decision_client=None,
+        )
+    )
+    assert llm_a2.calls == 2
+    assert all("BEGIN LABELS" in p for p in llm_a2.prompts)
+    assert bool(res_a2["text_revised_approved"].iloc[0]) is False
+
+    # B. LLMClient -> DecisionClient
+    dir_b = tmp_path / "para_llm_to_dc"
+
+    def llm_b1_resp(prompt: str, idx: int) -> str:
+        if "BEGIN LABELS" in prompt:
+            passed = "cand_1" in prompt
+            return json.dumps({"instructions_followed": passed})
+        return "cand_0" if "cand_0" not in str(idx) and idx == 0 else "cand_1"
+
+    llm_b1 = RecordingSeqClient(llm_b1_resp)
+    res_b1 = run(
+        paraphrase(
+            df,
+            "text",
+            instructions="rephrase",
+            save_dir=str(dir_b),
+            model="gen-model",
+            n_rounds=2,
+            n_runs=1,
+            later_round_run_multiplier=1,
+            client=llm_b1,
+            decision_client=None,
+        )
+    )
+    assert llm_b1.calls == 4
+    assert res_b1["text_revised"].iloc[0] == "cand_1"
+    assert bool(res_b1["text_revised_approved"].iloc[0]) is True
+
+    # Run 2: switch to DecisionClient (reset_files=False) rejecting all candidates
+    llm_b2 = RecordingSeqClient(
+        lambda prompt, idx: (_ for _ in ()).throw(
+            AssertionError("Generation should reuse round0/round1 checkpoints")
+        )
+    )
+    dc_b2 = CountingDecisionClient({"instructions_followed": 0.10})
+    res_b2 = run(
+        paraphrase(
+            df,
+            "text",
+            instructions="rephrase",
+            save_dir=str(dir_b),
+            model="gen-model",
+            decision_model="dec-model",
+            n_rounds=2,
+            n_runs=1,
+            later_round_run_multiplier=1,
+            reset_files=False,
+            client=llm_b2,
+            decision_client=dc_b2,
+        )
+    )
+    assert llm_b2.calls == 0
+    assert dc_b2.calls == 2
+    assert bool(res_b2["text_revised_approved"].iloc[0]) is False
+
+
+def test_paraphrase_decision_model_change_revalidates_later_rounds(tmp_path) -> None:
+    """Changing decision_model with reset_files=False re-validates Round 1 instead of leaking prior model rows."""
+    df = pd.DataFrame({"text": ["Original text."]})
+    save_dir = str(tmp_path / "para_model_later")
+    llm = RecordingSeqClient(["cand_0", "cand_1"])
+
+    dc_v1 = CountingDecisionClient(
+        handler=lambda state, key, q: 0.90 if "cand_1" in str(state) else 0.10
+    )
+    first = run(
+        paraphrase(
+            df,
+            "text",
+            instructions="rephrase",
+            save_dir=save_dir,
+            model="gen-model",
+            decision_model="dec-v1",
+            n_rounds=2,
+            n_runs=1,
+            later_round_run_multiplier=1,
+            client=llm,
+            decision_client=dc_v1,
+        )
+    )
+    assert dc_v1.calls == 2
+    assert bool(first["text_revised_approved"].iloc[0]) is True
+
+    dc_v2 = CountingDecisionClient({"instructions_followed": 0.10})
+    second = run(
+        paraphrase(
+            df,
+            "text",
+            instructions="rephrase",
+            save_dir=save_dir,
+            model="gen-model",
+            decision_model="dec-v2",
+            n_rounds=2,
+            n_runs=1,
+            later_round_run_multiplier=1,
+            reset_files=False,
+            client=llm,
+            decision_client=dc_v2,
+        )
+    )
+    assert llm.calls == 2  # round0.csv & round1.csv reused
+    assert dc_v2.calls == 2
+    assert all(m == "dec-v2" for _, _, m in dc_v2.requests)
+    assert bool(second["text_revised_approved"].iloc[0]) is False
+
+
+def test_paraphrase_validation_attribute_and_instructions_change_resets_checkpoint(
+    tmp_path,
+) -> None:
+    """Changing validation_attribute (key or description) or instructions with reset_files=False resets validation cleanly."""
+    df = pd.DataFrame({"text": ["Original text."]})
+    save_dir = str(tmp_path / "para_attr_reset")
+    llm = RecordingSeqClient(["cand_0", "cand_1"])
+
+    dc_1 = CountingDecisionClient(
+        handler=lambda state, key, q: 0.90 if "cand_1" in str(state) else 0.10
+    )
+    res_1 = run(
+        paraphrase(
+            df,
+            "text",
+            instructions="rewrite formally",
+            save_dir=save_dir,
+            model="gen-model",
+            decision_model="dec-model",
+            n_rounds=2,
+            n_runs=1,
+            later_round_run_multiplier=1,
+            validation_attribute={"faithful": "obeys formal tone"},
+            client=llm,
+            decision_client=dc_1,
+        )
+    )
+    assert dc_1.calls == 2
+    assert bool(res_1["text_revised_approved"].iloc[0]) is True
+
+    # 1. Change validation_attribute key with reset_files=False (must not KeyError)
+    dc_2 = CountingDecisionClient({"concise": 0.10})
+    res_2 = run(
+        paraphrase(
+            df,
+            "text",
+            instructions="rewrite formally",
+            save_dir=save_dir,
+            model="gen-model",
+            decision_model="dec-model",
+            n_rounds=2,
+            n_runs=1,
+            later_round_run_multiplier=1,
+            validation_attribute={"concise": "short sentence"},
+            reset_files=False,
+            client=llm,
+            decision_client=dc_2,
+        )
+    )
+    assert dc_2.calls == 2
+    assert all(list(qs.keys()) == ["concise"] for _, qs, _ in dc_2.requests)
+    assert bool(res_2["text_revised_approved"].iloc[0]) is False
+
+    # 2. Change validation_attribute description only with reset_files=False
+    dc_3 = CountingDecisionClient({"concise": 0.90})
+    res_3 = run(
+        paraphrase(
+            df,
+            "text",
+            instructions="rewrite formally",
+            save_dir=save_dir,
+            model="gen-model",
+            decision_model="dec-model",
+            n_rounds=2,
+            n_runs=1,
+            later_round_run_multiplier=1,
+            validation_attribute={"concise": "under five words"},
+            reset_files=False,
+            client=llm,
+            decision_client=dc_3,
+        )
+    )
+    assert dc_3.calls == 1
+    assert bool(res_3["text_revised_approved"].iloc[0]) is True
+
+    # 3. Change instructions with same validation_attribute and reset_files=False
+    dc_4 = CountingDecisionClient({"concise": 0.10})
+    res_4 = run(
+        paraphrase(
+            df,
+            "text",
+            instructions="make it playful",
+            save_dir=save_dir,
+            model="gen-model",
+            decision_model="dec-model",
+            n_rounds=2,
+            n_runs=1,
+            later_round_run_multiplier=1,
+            validation_attribute={"concise": "under five words"},
+            reset_files=False,
+            client=llm,
+            decision_client=dc_4,
+        )
+    )
+    assert dc_4.calls == 2
+    assert bool(res_4["text_revised_approved"].iloc[0]) is False
+
+
+def test_paraphrase_interrupted_multiround_resume_same_vs_changed_model(
+    tmp_path, monkeypatch
+) -> None:
+    """Mid-Round-1 validation crash resumes remaining items on same model, or re-validates all rounds on changed model."""
+    monkeypatch.setattr("leximeter.engine.batch._SAVE_EVERY", 1)
+
+    class _SimulatedCrash(BaseException):
+        pass
+
+    class CrashOnSecondRound1CandClient(DecisionClient):
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def decide(self, state, questions, *, model, **kwargs):
+            self.calls += 1
+            text = state if isinstance(state, str) else str(state)
+            if "r1_cand1" in text:
+                raise _SimulatedCrash("crash mid-Round-1 validation")
+            qkey = next(iter(questions))
+            return DecisionResult(
+                answers={qkey: NoulAnswer(probability=0.10)}, model=model
+            )
+
+    df = pd.DataFrame({"text": ["Original text."]})
+
+    # Case 1: Resume with SAME decision_model
+    same_dir = str(tmp_path / "para_crash_same")
+    llm_same = RecordingSeqClient(["r0_cand0", "r1_cand0", "r1_cand1"])
+    crash_dc_1 = CrashOnSecondRound1CandClient()
+
+    with pytest.raises(_SimulatedCrash):
+        run(
+            paraphrase(
+                df,
+                "text",
+                instructions="rephrase",
+                save_dir=same_dir,
+                model="gen-model",
+                decision_model="dec-v1",
+                n_rounds=2,
+                n_runs=1,
+                later_round_run_multiplier=2,
+                n_parallels=1,
+                client=llm_same,
+                decision_client=crash_dc_1,
+            )
+        )
+    assert llm_same.calls == 3
+    assert crash_dc_1.calls == 3  # r0_cand0, r1_cand0, r1_cand1 (crashed)
+
+    dc_same_resume = CountingDecisionClient({"instructions_followed": 0.90})
+    res_same = run(
+        paraphrase(
+            df,
+            "text",
+            instructions="rephrase",
+            save_dir=same_dir,
+            model="gen-model",
+            decision_model="dec-v1",
+            n_rounds=2,
+            n_runs=1,
+            later_round_run_multiplier=2,
+            n_parallels=1,
+            reset_files=False,
+            client=llm_same,
+            decision_client=dc_same_resume,
+        )
+    )
+    assert llm_same.calls == 3  # generation checkpoints reused
+    assert (
+        dc_same_resume.calls == 1
+    )  # only r1_cand1 evaluated; r0_cand0 & r1_cand0 cached
+    assert res_same["text_revised"].iloc[0] == "r1_cand1"
+    assert bool(res_same["text_revised_approved"].iloc[0]) is True
+
+    # Case 2: Resume with CHANGED decision_model
+    changed_dir = str(tmp_path / "para_crash_changed")
+    llm_changed = RecordingSeqClient(["r0_cand0", "r1_cand0", "r1_cand1"])
+    crash_dc_2 = CrashOnSecondRound1CandClient()
+
+    with pytest.raises(_SimulatedCrash):
+        run(
+            paraphrase(
+                df,
+                "text",
+                instructions="rephrase",
+                save_dir=changed_dir,
+                model="gen-model",
+                decision_model="dec-v1",
+                n_rounds=2,
+                n_runs=1,
+                later_round_run_multiplier=2,
+                n_parallels=1,
+                client=llm_changed,
+                decision_client=crash_dc_2,
+            )
+        )
+    assert llm_changed.calls == 3
+
+    dc_changed_resume = CountingDecisionClient(
+        handler=lambda state, key, q: 0.90 if "r1_cand1" in str(state) else 0.10
+    )
+    res_changed = run(
+        paraphrase(
+            df,
+            "text",
+            instructions="rephrase",
+            save_dir=changed_dir,
+            model="gen-model",
+            decision_model="dec-v2",
+            n_rounds=2,
+            n_runs=1,
+            later_round_run_multiplier=2,
+            n_parallels=1,
+            reset_files=False,
+            client=llm_changed,
+            decision_client=dc_changed_resume,
+        )
+    )
+    assert llm_changed.calls == 3  # round0.csv & round1.csv reused
+    assert dc_changed_resume.calls == 3  # r0_cand0, r1_cand0, r1_cand1 all re-validated
+    assert all(m == "dec-v2" for _, _, m in dc_changed_resume.requests)
+    assert res_changed["text_revised"].iloc[0] == "r1_cand1"
+    assert bool(res_changed["text_revised_approved"].iloc[0]) is True
+
+
 # ---------------------------------------------------------------------------
 # Codify
 # ---------------------------------------------------------------------------

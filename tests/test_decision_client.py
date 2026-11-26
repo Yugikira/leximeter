@@ -1035,3 +1035,227 @@ def test_batch_decide_non_decision_error_and_empty_pending_do_not_raise(
     assert len(df_empty) == 0
     assert len(df_cached) == 1
     assert caught == []
+
+
+def test_batch_decide_reset_files_appends_and_supersedes_checkpoint(tmp_path) -> None:
+    """batch_decide(reset_files=True) appends fresh rows without deleting save_path and supersedes via keep='last'."""
+    import pandas as pd
+    from conftest import CountingDecisionClient
+
+    from leximeter.engine import batch_decide
+    from leximeter.engine import checkpoint as checkpoint_mod
+
+    save_path = tmp_path / "reset_append.csv"
+    q = {"ok": NoulQuestion(instructions="ok?")}
+
+    dc_v1 = CountingDecisionClient({"ok": 0.20})
+    res_v1 = run(
+        batch_decide(
+            states=["s1", "s2"],
+            question_sets=[q, q],
+            identifiers=["id_1", "id_2"],
+            client=dc_v1,
+            model="dec-v1",
+            save_path=str(save_path),
+            reset_files=False,
+        )
+    )
+    assert len(res_v1) == 2
+
+    dc_v2 = CountingDecisionClient({"ok": 0.85})
+    res_v2 = run(
+        batch_decide(
+            states=["s1", "s2"],
+            question_sets=[q, q],
+            identifiers=["id_1", "id_2"],
+            client=dc_v2,
+            model="dec-v2",
+            save_path=str(save_path),
+            reset_files=True,
+        )
+    )
+    assert len(res_v2) == 2
+    for raw in res_v2["Response"]:
+        parsed = DecisionResult.from_json(raw)
+        assert parsed is not None
+        assert parsed.answers["ok"].probability == pytest.approx(0.85)
+
+    # Prior rows are preserved on disk (non-deleting append)
+    disk_df = pd.read_csv(save_path)
+    assert len(disk_df) == 4
+    assert disk_df["Identifier"].value_counts().to_dict() == {"id_1": 2, "id_2": 2}
+
+    # load_checkpoint deduplicates with keep="last", keeping the fresh 0.85 rows
+    loaded = checkpoint_mod.load_checkpoint(str(save_path))
+    assert len(loaded) == 2
+    for raw in loaded["Response"]:
+        parsed = DecisionResult.from_json(raw)
+        assert parsed is not None
+        assert parsed.answers["ok"].probability == pytest.approx(0.85)
+
+    # Subsequent reset_files=False makes 0 client calls and returns 0.85 rows
+    dc_unused = CountingDecisionClient({"ok": 0.01})
+    res_cached = run(
+        batch_decide(
+            states=["s1", "s2"],
+            question_sets=[q, q],
+            identifiers=["id_1", "id_2"],
+            client=dc_unused,
+            model="dec-v2",
+            save_path=str(save_path),
+            reset_files=False,
+        )
+    )
+    assert dc_unused.calls == 0
+    assert len(res_cached) == 2
+    for raw in res_cached["Response"]:
+        parsed = DecisionResult.from_json(raw)
+        assert parsed is not None
+        assert parsed.answers["ok"].probability == pytest.approx(0.85)
+
+
+def test_batch_decide_reset_files_preserves_distinct_batches_on_shared_csv(
+    tmp_path,
+) -> None:
+    """Multiple batch_decide(..., reset_files=True) calls on one CSV preserve all distinct identifiers."""
+    import pandas as pd
+    from conftest import CountingDecisionClient
+
+    from leximeter.engine import batch_decide
+
+    save_path = tmp_path / "shared_batches.csv"
+    q = {"ok": NoulQuestion(instructions="ok?")}
+    dc = CountingDecisionClient({"ok": 0.90})
+
+    run(
+        batch_decide(
+            states=["s1", "s2"],
+            question_sets=[q, q],
+            identifiers=["b1_a", "b1_b"],
+            client=dc,
+            model="dec-m",
+            save_path=str(save_path),
+            reset_files=True,
+        )
+    )
+    res_b2 = run(
+        batch_decide(
+            states=["s3", "s4"],
+            question_sets=[q, q],
+            identifiers=["b2_a", "b2_b"],
+            client=dc,
+            model="dec-m",
+            save_path=str(save_path),
+            reset_files=True,
+        )
+    )
+    assert dc.calls == 4
+    assert list(res_b2["Identifier"]) == ["b2_a", "b2_b"]
+
+    disk_df = pd.read_csv(save_path)
+    assert list(disk_df["Identifier"]) == ["b1_a", "b1_b", "b2_a", "b2_b"]
+
+    res_resume = run(
+        batch_decide(
+            states=["s1", "s2", "s3", "s4"],
+            question_sets=[q, q, q, q],
+            identifiers=["b1_a", "b1_b", "b2_a", "b2_b"],
+            client=dc,
+            model="dec-m",
+            save_path=str(save_path),
+            reset_files=False,
+        )
+    )
+    assert dc.calls == 4
+    assert set(res_resume["Identifier"]) == {"b1_a", "b1_b", "b2_a", "b2_b"}
+
+
+def test_batch_decide_reset_files_4xx_failure_preserves_file_and_invalidates_via_keep_last(
+    tmp_path,
+) -> None:
+    """On reset_files=True + total 4xx failure, prior rows stay on disk while keep='last' invalidates completion."""
+    import pandas as pd
+    from conftest import CountingDecisionClient
+
+    from leximeter.engine import batch_decide
+    from leximeter.engine import checkpoint as checkpoint_mod
+
+    save_path = tmp_path / "reset_4xx.csv"
+    q = {"ok": NoulQuestion(instructions="ok?")}
+
+    # Seed with Successful=True rows
+    run(
+        batch_decide(
+            states=["s1", "s2"],
+            question_sets=[q, q],
+            identifiers=["id_1", "id_2"],
+            client=CountingDecisionClient({"ok": 0.90}),
+            model="dec-v1",
+            save_path=str(save_path),
+            reset_files=False,
+        )
+    )
+
+    # reset_files=True with failing 400 SystemOneClient
+    def fail_400(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={"error": "bad_request"})
+
+    bad_client = SystemOneClient(
+        base_url="https://api.typesafe.ai",
+        api_key="test-key",
+        transport=httpx.MockTransport(fail_400),
+    )
+
+    with (
+        pytest.warns(UserWarning, match=r"2/2 pending item\(s\) failed"),
+        pytest.raises(DecisionAPIError) as exc_info,
+    ):
+        run(
+            batch_decide(
+                states=["s1", "s2"],
+                question_sets=[q, q],
+                identifiers=["id_1", "id_2"],
+                client=bad_client,
+                model="dec-v2",
+                save_path=str(save_path),
+                reset_files=True,
+            )
+        )
+    assert exc_info.value.status_code == 400
+
+    disk_df = pd.read_csv(save_path)
+    assert len(disk_df) == 4
+    assert list(disk_df["Successful"].astype(bool)) == [True, True, False, False]
+
+    loaded = checkpoint_mod.load_checkpoint(str(save_path))
+    assert checkpoint_mod.completed_identifiers(loaded) == set()
+
+    # Subsequent reset_files=False with healthy client re-evaluates both IDs
+    healthy = CountingDecisionClient({"ok": 0.75})
+    res_retry = run(
+        batch_decide(
+            states=["s1", "s2"],
+            question_sets=[q, q],
+            identifiers=["id_1", "id_2"],
+            client=healthy,
+            model="dec-v2",
+            save_path=str(save_path),
+            reset_files=False,
+        )
+    )
+    assert healthy.calls == 2
+    # dict(zip(...)) (used by Classify/Filter callers) and load_checkpoint (keep="last") both resolve to the 0.75 rows
+    resp_lookup = dict(zip(res_retry["Identifier"], res_retry["Response"]))
+    assert set(resp_lookup.keys()) == {"id_1", "id_2"}
+    for raw in resp_lookup.values():
+        parsed = DecisionResult.from_json(raw)
+        assert parsed is not None
+        assert parsed.answers["ok"].probability == pytest.approx(0.75)
+
+    reloaded = checkpoint_mod.load_checkpoint(str(save_path))
+    assert len(reloaded) == 2
+    assert list(reloaded["Successful"].astype(bool)) == [True, True]
+    for raw in reloaded["Response"]:
+        parsed = DecisionResult.from_json(raw)
+        assert parsed is not None
+        assert parsed.answers["ok"].probability == pytest.approx(0.75)

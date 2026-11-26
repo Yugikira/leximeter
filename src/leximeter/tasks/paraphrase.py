@@ -293,10 +293,15 @@ class Paraphrase(Task):
         to_check: list[tuple[int, int]] = list(all_keys)
         round_number = 0
 
-        # Create the classifier configuration once.  A dedicated
-        # validation directory is used to store classification results.
-        validation_dir = os.path.join(self.cfg.save_dir, "validation")
-        os.makedirs(validation_dir, exist_ok=True)
+        # Resolve the decision client and model before touching disk so
+        # missing-model fail-fast never creates directories or purges state.
+        decision_client = self._get_decision_client()
+        effective_decision_model = _common.effective_decision_model(
+            decision_client,
+            self.cfg.decision_model,
+            fallback=self.cfg.model,
+        )
+
         # A single label is used to indicate whether the instructions
         # were followed.  Users may override the label definition by
         # supplying ``validation_attribute``; if multiple entries are
@@ -314,12 +319,10 @@ class Paraphrase(Task):
                     "Return False if key requirements are missing, contradicted, or only weakly addressed."
                 )
             }
-        decision_client = self._get_decision_client()
-        effective_decision_model = _common.effective_decision_model(
-            decision_client,
-            self.cfg.decision_model,
-            fallback=self.cfg.model,
-        )
+
+        # Create the classifier configuration once.  A dedicated
+        # validation directory is used to store classification results.
+        validation_dir = os.path.join(self.cfg.save_dir, "validation")
         validation_reset = _common.should_reset_substage_checkpoint(
             validation_dir,
             "classify_responses",
@@ -327,6 +330,54 @@ class Paraphrase(Task):
             decision_provider=decision_client is not None,
             reset_files=reset_files,
         )
+        validation_signature = _common.compute_input_signature(
+            labels, self.cfg.instructions
+        )
+        if not validation_reset:
+            prev_meta = _common.load_run_metadata(
+                validation_dir, "classify_responses", reset_files=False
+            )
+            if (
+                prev_meta
+                and "validation_signature" in prev_meta
+                and prev_meta.get("validation_signature") != validation_signature
+            ):
+                validation_reset = True
+            else:
+                for attr_fname in ("attributes.json", "classify_responses_attrs.json"):
+                    attr_path = os.path.join(validation_dir, attr_fname)
+                    if os.path.exists(attr_path):
+                        persisted_attrs = _common.load_json_cache(attr_path)
+                        if persisted_attrs is not None and persisted_attrs != labels:
+                            validation_reset = True
+                        break
+
+        stem = os.path.splitext(self.cfg.file_name)[0]
+        if reset_files and os.path.isdir(self.cfg.save_dir):
+            round_pattern = re.compile(rf"^{re.escape(stem)}_round\d+\.csv$")
+            for fname in os.listdir(self.cfg.save_dir):
+                if round_pattern.match(fname):
+                    _common.remove_file(os.path.join(self.cfg.save_dir, fname))
+
+        if validation_reset:
+            for fname in (
+                "classify_responses_raw_responses.csv",
+                "classify_responses_run_metadata.json",
+                "classify_responses_cleaned.csv",
+                "classify_responses_full_disaggregated.csv",
+                "attributes.json",
+                "classify_responses_attrs.json",
+            ):
+                _common.remove_file(os.path.join(validation_dir, fname))
+
+        os.makedirs(validation_dir, exist_ok=True)
+        if to_check:
+            _common.update_run_metadata(
+                validation_dir,
+                "classify_responses",
+                validation_signature=validation_signature,
+            )
+
         classify_cfg = ClassifyConfig(
             labels=labels,
             save_dir=validation_dir,
@@ -350,6 +401,9 @@ class Paraphrase(Task):
                     return True
             except (TypeError, ValueError):
                 pass
+            if isinstance(flag, str):
+                norm = flag.strip().lower()
+                return norm not in {"false", "no", "0"}
             return bool(flag)
 
         # Continue looping until there are no passages left to validate
@@ -417,11 +471,11 @@ class Paraphrase(Task):
 
             # Write the prompts to the paraphrasing API.  We construct a
             # unique filename for each round to preserve intermediate
-            # results.  The responses are appended to any existing
-            # files unless ``reset_files`` is true.
+            # results.  Stale round files are purged once before the loop
+            # when ``reset_files`` is true, so each round resumes cleanly.
             tmp_save_path = os.path.join(
                 self.cfg.save_dir,
-                f"{os.path.splitext(self.cfg.file_name)[0]}_round{round_number}.csv",
+                f"{stem}_round{round_number}.csv",
             )
             new_resp_df = await batch_execute(
                 prompts=prompts,
@@ -431,7 +485,7 @@ class Paraphrase(Task):
                 json_mode=self.cfg.json_mode,
                 n_parallels=self.cfg.n_parallels,
                 save_path=tmp_save_path,
-                reset_files=reset_files,
+                reset_files=False,
             )
 
             # Organise API responses by (row, run) so that
@@ -490,7 +544,7 @@ class Paraphrase(Task):
                 cand_res_df = await classifier.run(
                     cand_df,
                     column_name="text",
-                    reset_files=validation_reset if round_number == 0 else reset_files,
+                    reset_files=False,
                 )
             else:
                 cand_res_df = pd.DataFrame()
