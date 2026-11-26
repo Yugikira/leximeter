@@ -334,6 +334,8 @@ class RankConfig:
 class Rank(Task):
     """Compare items pairwise and output centered Bradley–Terry scores."""
 
+    _prefer_explicit_llm_client = True
+
     def __init__(self, cfg: RankConfig, **kwargs: Any) -> None:
         super().__init__(cfg, **kwargs)
         self._template = load_prompt("rankings_prompt.jinja2")

@@ -24,6 +24,7 @@ from .client.embedding import EmbeddingClient
 from .client.search import SearchTool
 from .engine.retry import run_task_with_retry
 from .tasks._common import OrderStrategy
+from .tasks.base import _UNSET, _UnsetType
 from .tasks.bucket import Bucket, BucketConfig
 from .tasks.classify import Classify, ClassifyConfig
 from .tasks.codify import Codify, CodifyConfig
@@ -117,7 +118,7 @@ async def classify(
     client: LLMClient | None = None,
     embedding_client: EmbeddingClient | None = None,
     search_tool: SearchTool | None = None,
-    decision_client: DecisionClient | None = None,
+    decision_client: DecisionClient | None | _UnsetType = _UNSET,
     **engine_kwargs: Any,
 ) -> pd.DataFrame:
     """Decide whether each label applies to each item.
@@ -228,7 +229,7 @@ async def filter(
     client: LLMClient | None = None,
     embedding_client: EmbeddingClient | None = None,
     search_tool: SearchTool | None = None,
-    decision_client: DecisionClient | None = None,
+    decision_client: DecisionClient | None | _UnsetType = _UNSET,
     **engine_kwargs: Any,
 ) -> pd.DataFrame:
     """Keep items whose natural-language ``condition`` holds.
@@ -389,7 +390,7 @@ async def paraphrase(
     client: LLMClient | None = None,
     embedding_client: EmbeddingClient | None = None,
     search_tool: SearchTool | None = None,
-    decision_client: DecisionClient | None = None,
+    decision_client: DecisionClient | None | _UnsetType = _UNSET,
     **engine_kwargs: Any,
 ) -> pd.DataFrame:
     """Rewrite each item per ``instructions``.
@@ -730,7 +731,7 @@ async def codify(
     client: LLMClient | None = None,
     embedding_client: EmbeddingClient | None = None,
     search_tool: SearchTool | None = None,
-    decision_client: DecisionClient | None = None,
+    decision_client: DecisionClient | None | _UnsetType = _UNSET,
     **engine_kwargs: Any,
 ) -> pd.DataFrame:
     """Mark snippets matching each qualitative code.
@@ -797,7 +798,7 @@ async def rank(
     client: LLMClient | None = None,
     embedding_client: EmbeddingClient | None = None,
     search_tool: SearchTool | None = None,
-    decision_client: DecisionClient | None = None,
+    decision_client: DecisionClient | None | _UnsetType = _UNSET,
     **engine_kwargs: Any,
 ) -> pd.DataFrame:
     """Run pairwise tournaments and fit Bradley–Terry ratings per attribute.
@@ -866,7 +867,7 @@ async def discover(
     client: LLMClient | None = None,
     embedding_client: EmbeddingClient | None = None,
     search_tool: SearchTool | None = None,
-    decision_client: DecisionClient | None = None,
+    decision_client: DecisionClient | None | _UnsetType = _UNSET,
     **engine_kwargs: Any,
 ) -> dict[str, Any]:
     """Contrast two columns (or mine one) and bucket distinguishing features.
@@ -1062,7 +1063,7 @@ async def debias(
     client: LLMClient | None = None,
     embedding_client: EmbeddingClient | None = None,
     search_tool: SearchTool | None = None,
-    decision_client: DecisionClient | None = None,
+    decision_client: DecisionClient | None | _UnsetType = _UNSET,
     **engine_kwargs: Any,
 ) -> DebiasResult:
     """Measure a signal, strip a confounder, re-measure, and regress out bias.

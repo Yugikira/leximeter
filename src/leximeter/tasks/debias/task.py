@@ -37,7 +37,7 @@ import pandas as pd
 from ...utils.file_utils import save_dataframe_with_fallback
 from ...utils.regression import _safe_fit_ols
 from .. import _common
-from ..base import Task
+from ..base import _UNSET, Task, _UnsetType
 from ..classify import Classify, ClassifyConfig
 from ..codify import Codify, CodifyConfig
 from ..extract import Extract, ExtractConfig
@@ -570,8 +570,11 @@ class Debias(Task):
                 reset_files=reset_files_local,
             )
         elif mode == "classify":
+            dc_override = kwargs.pop("decision_client", _UNSET)
             decision_client = (
-                kwargs.pop("decision_client", None) or self._get_decision_client()
+                self._get_decision_client()
+                if isinstance(dc_override, _UnsetType)
+                else dc_override
             )
             model_local = kwargs.pop("model", default_model)
             decision_model_local = kwargs.pop("decision_model", self.cfg.decision_model)
@@ -624,8 +627,11 @@ class Debias(Task):
                 reset_files=reset_files_local,
             )
         elif mode == "rank":
+            dc_override = kwargs.pop("decision_client", _UNSET)
             decision_client = (
-                kwargs.pop("decision_client", None) or self._get_decision_client()
+                self._get_decision_client()
+                if isinstance(dc_override, _UnsetType)
+                else dc_override
             )
             model_local = kwargs.pop("model", default_model)
             decision_model_local = kwargs.pop("decision_model", self.cfg.decision_model)
@@ -784,8 +790,11 @@ class Debias(Task):
         os.makedirs(save_dir, exist_ok=True)
         additional_instructions = kwargs.pop("additional_instructions", "")
         kwargs.setdefault("n_rounds", 3)
+        dc_override = kwargs.pop("decision_client", _UNSET)
         decision_client = (
-            kwargs.pop("decision_client", None) or self._get_decision_client()
+            self._get_decision_client()
+            if isinstance(dc_override, _UnsetType)
+            else dc_override
         )
         cfg = CodifyConfig(
             save_dir=save_dir,
@@ -869,8 +878,11 @@ class Debias(Task):
             if replacement is not None:
                 response_kwargs["n_rounds"] = replacement
         response_kwargs.setdefault("n_rounds", 3)
+        dc_override = kwargs.pop("decision_client", _UNSET)
         decision_client = (
-            kwargs.pop("decision_client", None) or self._get_decision_client()
+            self._get_decision_client()
+            if isinstance(dc_override, _UnsetType)
+            else dc_override
         )
         cfg = ParaphraseConfig(
             instructions=instructions,
