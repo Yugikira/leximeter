@@ -24,7 +24,7 @@ from leximeter.client.decision import (
     ScoreAnswer,
     ScoreQuestion,
 )
-from leximeter.client.systemone import SystemOneClient
+from leximeter.client.systemone import SystemOneClient, _join_endpoint_url
 
 
 def run(coro: Any) -> Any:
@@ -572,3 +572,185 @@ def test_batch_decide_with_systemone_no_nested_retry_amplification(tmp_path) -> 
         explicit_calls == 3
     )  # client layer handles retries; batch_decide does not stack
     assert bool(df_explicit["Successful"].iloc[0]) is False
+
+
+@pytest.mark.parametrize(
+    ("base_url", "endpoint_path", "expected"),
+    [
+        # OpenRouter Decisions (/api/alpha/decisions) across base_url forms
+        (
+            "https://openrouter.ai",
+            "/api/alpha/decisions",
+            "https://openrouter.ai/api/alpha/decisions",
+        ),
+        (
+            "https://openrouter.ai/api",
+            "/api/alpha/decisions",
+            "https://openrouter.ai/api/alpha/decisions",
+        ),
+        (
+            "https://openrouter.ai/api/v1",
+            "/api/alpha/decisions",
+            "https://openrouter.ai/api/alpha/decisions",
+        ),
+        (
+            "https://openrouter.ai/api/v1",
+            "/alpha/decisions",
+            "https://openrouter.ai/api/alpha/decisions",
+        ),
+        (
+            "https://openrouter.ai/api",
+            "/alpha/decisions",
+            "https://openrouter.ai/api/alpha/decisions",
+        ),
+        # OpenRouter /v1/systemone and trailing / missing leading slash variants
+        (
+            "https://openrouter.ai/api",
+            "/v1/systemone",
+            "https://openrouter.ai/api/v1/systemone",
+        ),
+        (
+            "https://openrouter.ai/api/v1",
+            "/v1/systemone",
+            "https://openrouter.ai/api/v1/systemone",
+        ),
+        (
+            "https://openrouter.ai/api/",
+            "/api/alpha/decisions/",
+            "https://openrouter.ai/api/alpha/decisions",
+        ),
+        (
+            "https://openrouter.ai/api/v1/",
+            "/api/alpha/decisions",
+            "https://openrouter.ai/api/alpha/decisions",
+        ),
+        (
+            "https://openrouter.ai/api/v1/",
+            "alpha/decisions",
+            "https://openrouter.ai/api/alpha/decisions",
+        ),
+        (
+            "https://openrouter.ai/api/v1",
+            "/api/v1/systemone",
+            "https://openrouter.ai/api/v1/systemone",
+        ),
+        # Preserved TypeSafe, AMD Token Factory, and full-overlap cases
+        (
+            "https://api.typesafe.ai",
+            "/v1/systemone",
+            "https://api.typesafe.ai/v1/systemone",
+        ),
+        (
+            "https://developer.amd.com.cn/radeon/api/v1",
+            "/v1/systemone",
+            "https://developer.amd.com.cn/radeon/api/v1/systemone",
+        ),
+        (
+            "https://developer.amd.com.cn/radeon/api/v1",
+            "/systemone",
+            "https://developer.amd.com.cn/radeon/api/v1/systemone",
+        ),
+        (
+            "https://api.typesafe.ai/v1/systemone",
+            "/v1/systemone",
+            "https://api.typesafe.ai/v1/systemone",
+        ),
+        (
+            "https://openrouter.ai/api/alpha/decisions",
+            "/api/alpha/decisions",
+            "https://openrouter.ai/api/alpha/decisions",
+        ),
+        # Custom proxies and non-OpenRouter /api/v1 prefixes preserved
+        (
+            "https://proxy.example.com/custom",
+            "/api/alpha/decisions",
+            "https://proxy.example.com/custom/api/alpha/decisions",
+        ),
+        (
+            "https://proxy.example.com/api/v1",
+            "/custom/decisions",
+            "https://proxy.example.com/api/v1/custom/decisions",
+        ),
+        (
+            "https://proxy.example.com/api/v1",
+            "/systemone",
+            "https://proxy.example.com/api/v1/systemone",
+        ),
+        # Empty/root endpoint paths and netloc containing segment name
+        ("https://api.typesafe.ai", "", "https://api.typesafe.ai/"),
+        ("https://api.typesafe.ai", "/", "https://api.typesafe.ai/"),
+        (
+            "https://openrouter.ai/api/alpha/decisions",
+            "",
+            "https://openrouter.ai/api/alpha/decisions",
+        ),
+        (
+            "https://openrouter.ai/api/alpha/decisions",
+            "/",
+            "https://openrouter.ai/api/alpha/decisions",
+        ),
+        (
+            "http://api:8000",
+            "/api/alpha/decisions",
+            "http://api:8000/api/alpha/decisions",
+        ),
+    ],
+)
+def test_join_endpoint_url_deduplicates_overlapping_segments(
+    base_url: str, endpoint_path: str, expected: str
+) -> None:
+    """_join_endpoint_url and SystemOneClient.url avoid duplicating overlapping segments."""
+    assert _join_endpoint_url(base_url, endpoint_path) == expected
+    client = SystemOneClient(base_url=base_url, endpoint_path=endpoint_path)
+    assert client.url == expected
+
+
+@pytest.mark.parametrize(
+    ("base_url", "endpoint_path"),
+    [
+        ("https://openrouter.ai", "/api/alpha/decisions"),
+        ("https://openrouter.ai/api", "/api/alpha/decisions"),
+        ("https://openrouter.ai/api/", "/api/alpha/decisions"),
+        ("https://openrouter.ai/api/v1", "/api/alpha/decisions"),
+        ("https://openrouter.ai/api/v1/", "/api/alpha/decisions"),
+        ("https://openrouter.ai/api", "/alpha/decisions"),
+        ("https://openrouter.ai/api/v1", "/alpha/decisions"),
+        ("https://openrouter.ai/api/v1/", "alpha/decisions"),
+    ],
+)
+def test_systemone_openrouter_endpoint_url_via_mock_transport(
+    base_url: str, endpoint_path: str
+) -> None:
+    """SystemOneClient.decide sends requests to https://openrouter.ai/api/alpha/decisions."""
+    captured_urls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured_urls.append(str(request.url))
+        return httpx.Response(
+            200,
+            json={
+                "model": "openai/gpt-6-luna-decisions",
+                "answers": {"q_0": {"type": "noul", "noul": 0.75}},
+                "usage": {"input_tokens": 25, "output_tokens": 0},
+            },
+        )
+
+    client = SystemOneClient(
+        base_url=base_url,
+        endpoint_path=endpoint_path,
+        api_key="or-test",
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = run(
+        client.decide(
+            state="Sample state",
+            questions={"flag": NoulQuestion(instructions="Applies?")},
+            model="openai/gpt-6-luna-decisions",
+        )
+    )
+
+    assert captured_urls == ["https://openrouter.ai/api/alpha/decisions"]
+    ans = result.answers["flag"]
+    assert isinstance(ans, NoulAnswer)
+    assert ans.probability == pytest.approx(0.75)
