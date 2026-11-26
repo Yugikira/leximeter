@@ -167,13 +167,24 @@ def resolve_decision_client(
     )
 
 
+def _clean_model_id(value: str | None) -> str | None:
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
 def resolve_decision_model(
     decision_model: str | None = None,
     *,
     fallback: str | None = None,
 ) -> str | None:
     """Resolve the Decision Provider model ID (explicit > env > fallback)."""
-    return decision_model or os.getenv("LEXIMETER_DECISION_MODEL") or fallback
+    return (
+        _clean_model_id(decision_model)
+        or _clean_model_id(os.getenv("LEXIMETER_DECISION_MODEL"))
+        or _clean_model_id(fallback)
+    )
 
 
 __all__ = [

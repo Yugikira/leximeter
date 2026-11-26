@@ -782,3 +782,256 @@ def test_systemone_openrouter_endpoint_url_via_mock_transport(
     ans = result.answers["flag"]
     assert isinstance(ans, NoulAnswer)
     assert ans.probability == pytest.approx(0.75)
+
+
+def test_systemone_decide_rejects_empty_or_whitespace_model_zero_http_calls() -> None:
+    """SystemOneClient.decide fails fast with ValueError when model is empty/whitespace."""
+    http_calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal http_calls
+        http_calls += 1
+        return httpx.Response(200, json={"model": "jev-latest", "answers": {}})
+
+    client = SystemOneClient(
+        base_url="https://api.typesafe.ai",
+        api_key="test-key",
+        transport=httpx.MockTransport(handler),
+    )
+    q = {"ok": NoulQuestion(instructions="ok?")}
+
+    for bad_model in ("", "   ", "\t\n"):
+        with pytest.raises(ValueError, match="decision model"):
+            run(client.decide(state="hi", questions=q, model=bad_model))
+        with pytest.raises(ValueError, match="decision model"):
+            run(client.decide(state="hi", questions={}, model=bad_model))
+
+    assert http_calls == 0
+
+    res_empty = run(client.decide(state="hi", questions={}, model="  jev-latest  "))
+    assert res_empty.model == "jev-latest"
+    assert http_calls == 0
+
+
+def test_batch_decide_systemone_empty_model_fails_before_touching_save_path(
+    tmp_path,
+) -> None:
+    """batch_decide fails fast on SystemOneClient with empty/whitespace model without wiping save_path."""
+    from leximeter.engine import batch_decide
+
+    http_calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal http_calls
+        http_calls += 1
+        return httpx.Response(200, json={"answers": {}})
+
+    client = SystemOneClient(
+        base_url="https://api.typesafe.ai",
+        api_key="test-key",
+        transport=httpx.MockTransport(handler),
+    )
+    save_path = tmp_path / "keep_me.csv"
+    sentinel = (
+        "Identifier,Response,Successful,Error Log,Time Taken\nkeep,ok,True,,0.1\n"
+    )
+    save_path.write_text(sentinel, encoding="utf-8")
+
+    q = {"ok": NoulQuestion(instructions="ok?")}
+    for bad_model in ("", "   "):
+        with pytest.raises(ValueError, match="decision model"):
+            run(
+                batch_decide(
+                    states=["s1"],
+                    question_sets=[q],
+                    identifiers=["id1"],
+                    client=client,
+                    model=bad_model,
+                    save_path=str(save_path),
+                    reset_files=True,
+                )
+            )
+
+    assert http_calls == 0
+    assert save_path.read_text(encoding="utf-8") == sentinel
+
+
+def test_batch_decide_raises_and_warns_when_all_pending_fail_with_4xx(
+    tmp_path, caplog
+) -> None:
+    """When 0 pending items succeed and deterministic 4xx errors occur, batch_decide warns, flushes, and raises."""
+    import logging
+
+    import pandas as pd
+
+    from leximeter.engine import batch_decide
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content.decode("utf-8"))
+        if body["state"] == "first":
+            return httpx.Response(404, json={"error": "model_not_found"})
+        return httpx.Response(400, json={"error": "bad_request"})
+
+    client = SystemOneClient(
+        base_url="https://api.typesafe.ai",
+        api_key="test-key",
+        transport=httpx.MockTransport(handler),
+    )
+    q = {"ok": NoulQuestion(instructions="ok?")}
+    save_path = tmp_path / "all_4xx.csv"
+
+    with (
+        caplog.at_level(logging.WARNING, logger="leximeter.engine.batch"),
+        pytest.warns(UserWarning, match=r"2/2 pending item\(s\) failed"),
+        pytest.raises(DecisionAPIError) as exc_info,
+    ):
+        run(
+            batch_decide(
+                states=["first", "second"],
+                question_sets=[q, q],
+                identifiers=["id_1", "id_2"],
+                client=client,
+                model="gpt-5.4-mini",
+                max_retries=2,
+                save_path=str(save_path),
+            )
+        )
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.retryable is False
+    assert any("2/2 pending item(s) failed" in r.message for r in caplog.records)
+
+    saved = pd.read_csv(save_path)
+    assert set(saved["Identifier"]) == {"id_1", "id_2"}
+    assert (~saved["Successful"].astype(bool)).all()
+    assert saved["Error Log"].str.contains("DecisionAPIError").all()
+
+
+def test_batch_decide_partial_resume_raises_when_remaining_pending_all_4xx(
+    tmp_path,
+) -> None:
+    """After a partial checkpoint resume, if all remaining pending items fail with 4xx, batch_decide raises."""
+    import pandas as pd
+
+    from leximeter.engine import batch_decide
+
+    save_path = tmp_path / "partial_resume.csv"
+    ok_json = DecisionResult(
+        answers={"ok": NoulAnswer(probability=0.9)}, model="jev-latest"
+    ).to_json()
+    pd.DataFrame(
+        [
+            {
+                "Identifier": "id_done",
+                "Response": ok_json,
+                "Successful": True,
+                "Error Log": "",
+                "Time Taken": 0.1,
+            }
+        ]
+    ).to_csv(save_path, index=False)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={"error": "invalid_model"})
+
+    client = SystemOneClient(
+        base_url="https://api.typesafe.ai",
+        api_key="test-key",
+        transport=httpx.MockTransport(handler),
+    )
+    q = {"ok": NoulQuestion(instructions="ok?")}
+
+    with (
+        pytest.warns(UserWarning, match=r"1/1 pending item\(s\) failed"),
+        pytest.raises(DecisionAPIError) as exc_info,
+    ):
+        run(
+            batch_decide(
+                states=["done_state", "bad_state"],
+                question_sets=[q, q],
+                identifiers=["id_done", "id_bad"],
+                client=client,
+                model="bad-model",
+                save_path=str(save_path),
+            )
+        )
+
+    assert exc_info.value.status_code == 400
+    saved = pd.read_csv(save_path)
+    assert list(saved["Identifier"]) == ["id_done", "id_bad"]
+    assert bool(saved.loc[saved["Identifier"] == "id_done", "Successful"].iloc[0])
+    assert not bool(saved.loc[saved["Identifier"] == "id_bad", "Successful"].iloc[0])
+
+
+def test_batch_decide_non_decision_error_and_empty_pending_do_not_raise(
+    tmp_path,
+) -> None:
+    """RuntimeError all-fail warns without raising; empty/cached pending emits 0 warnings."""
+    import warnings
+
+    import pandas as pd
+
+    from leximeter.client.decision import DecisionClient
+    from leximeter.engine import batch_decide
+
+    class BoomClient(DecisionClient):
+        async def decide(self, state, questions, *, model, **kwargs):
+            raise RuntimeError("boom")
+
+    q = {"ok": NoulQuestion(instructions="ok?")}
+    with pytest.warns(UserWarning, match=r"1/1 pending item\(s\) failed"):
+        df_err = run(
+            batch_decide(
+                states=["s"],
+                question_sets=[q],
+                identifiers=["id_1"],
+                client=BoomClient(),
+                model="d3",
+                max_retries=0,
+                save_path=str(tmp_path / "boom.csv"),
+            )
+        )
+    assert bool(df_err["Successful"].iloc[0]) is False
+
+    # Empty pending & cached-only resume emit zero warnings
+    save_cached = tmp_path / "cached.csv"
+    ok_json = DecisionResult(
+        answers={"ok": NoulAnswer(probability=0.8)}, model="d3"
+    ).to_json()
+    pd.DataFrame(
+        [
+            {
+                "Identifier": "id_cached",
+                "Response": ok_json,
+                "Successful": True,
+                "Error Log": "",
+                "Time Taken": 0.1,
+            }
+        ]
+    ).to_csv(save_cached, index=False)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        df_empty = run(
+            batch_decide(
+                states=[],
+                question_sets=[],
+                identifiers=[],
+                client=BoomClient(),
+                model="d3",
+            )
+        )
+        df_cached = run(
+            batch_decide(
+                states=["s"],
+                question_sets=[q],
+                identifiers=["id_cached"],
+                client=BoomClient(),
+                model="d3",
+                save_path=str(save_cached),
+            )
+        )
+
+    assert len(df_empty) == 0
+    assert len(df_cached) == 1
+    assert caught == []

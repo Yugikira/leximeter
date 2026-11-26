@@ -21,7 +21,6 @@ from ..client.decision import (
     NoulAnswer,
     NoulQuestion,
 )
-from ..client.resolve import resolve_decision_model
 from ..templates import load_prompt
 from ..utils.parsing import safe_json
 from . import _common
@@ -190,6 +189,15 @@ class Filter(Task):
         if requested_per_call < 1:
             raise ValueError("entities_per_call must be an integer >= 1")
 
+        effective_model = (
+            _common.effective_decision_model(
+                decision_client,
+                self.cfg.decision_model,
+                fallback=self.cfg.model,
+            )
+            or self.cfg.model
+        )
+
         provider_cap = max(
             1, int(getattr(decision_client, "max_questions_per_call", 64))
         )
@@ -207,10 +215,6 @@ class Filter(Task):
         ):
             effective_batch_size = saved_batch_size
 
-        effective_model = (
-            resolve_decision_model(self.cfg.decision_model, fallback=self.cfg.model)
-            or self.cfg.model
-        )
         _common.update_run_metadata(
             self.cfg.save_dir,
             base_name,
