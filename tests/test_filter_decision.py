@@ -492,3 +492,68 @@ def test_filter_end_to_end_systemone_mock_transport_non_ascii_and_refusal(
     raw_resp = str(raw_df["Response"].iloc[0])
     assert "0.94" in raw_resp
     assert '"refused": true' in raw_resp.lower()
+
+
+def test_filter_systemone_missing_decision_model_fails_fast_without_disk_mutation(
+    tmp_path, monkeypatch
+) -> None:
+    """SystemOneClient without decision_model / LEXIMETER_DECISION_MODEL fails fast before HTTP or disk resets."""
+    import httpx
+
+    http_calls = 0
+
+    def fail_transport(request: httpx.Request) -> httpx.Response:
+        nonlocal http_calls
+        http_calls += 1
+        raise AssertionError(f"Unexpected HTTP call to {request.url}")
+
+    save_dir = tmp_path / "flt_fail_fast"
+    save_dir.mkdir(parents=True, exist_ok=True)
+    meta_path = save_dir / "filter_responses_run_metadata.json"
+    raw_path = save_dir / "filter_responses_raw_responses.csv"
+    meta_sentinel = '{"model": "prev-model", "effective_batch_size": 2}'
+    raw_sentinel = "Identifier,Response,Successful,Error Log,Time Taken\n"
+    meta_path.write_text(meta_sentinel, encoding="utf-8")
+    raw_path.write_text(raw_sentinel, encoding="utf-8")
+
+    df = pd.DataFrame({"item": ["apple", "banana"]})
+    sys1 = SystemOneClient(
+        base_url="https://api.typesafe.ai",
+        api_key="test-key",
+        transport=httpx.MockTransport(fail_transport),
+    )
+
+    for reset in (False, True):
+        for bad_dm in (None, "   "):
+            with pytest.raises(ValueError, match="decision_model"):
+                run(
+                    leximeter_filter(
+                        df,
+                        "item",
+                        condition="is a fruit",
+                        save_dir=str(save_dir),
+                        model="gpt-5.4-nano",
+                        decision_model=bad_dm,
+                        decision_client=sys1,
+                        reset_files=reset,
+                    )
+                )
+
+    monkeypatch.setenv("LEXIMETER_DECISION_PROTOCOL", "systemone")
+    monkeypatch.setenv("LEXIMETER_DECISION_BASE_URL", "https://api.typesafe.ai")
+    monkeypatch.setenv("LEXIMETER_DECISION_MODEL", "   ")
+    with pytest.raises(ValueError, match="decision_model"):
+        run(
+            leximeter_filter(
+                df,
+                "item",
+                condition="is a fruit",
+                save_dir=str(save_dir),
+                model="gpt-5.4-nano",
+                reset_files=True,
+            )
+        )
+
+    assert http_calls == 0
+    assert meta_path.read_text(encoding="utf-8") == meta_sentinel
+    assert raw_path.read_text(encoding="utf-8") == raw_sentinel

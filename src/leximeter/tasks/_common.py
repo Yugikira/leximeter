@@ -202,6 +202,15 @@ def effective_decision_model(
         return None
     from ..client.resolve import resolve_decision_model
 
+    if getattr(decision_client, "requires_decision_model", False):
+        resolved = resolve_decision_model(decision_model, fallback=None)
+        if not resolved:
+            raise ValueError(
+                f"{type(decision_client).__name__} requires an explicit "
+                "decision_model or LEXIMETER_DECISION_MODEL environment variable "
+                f"(refusing to fall back to generative model {fallback!r})."
+            )
+        return resolved
     return resolve_decision_model(decision_model, fallback=fallback) or fallback
 
 

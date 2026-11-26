@@ -140,3 +140,68 @@ def test_resolve_decision_model_precedence(monkeypatch):
         resolve_decision_model("typesafe/jev-1.14", fallback="gpt-5.4-mini")
         == "typesafe/jev-1.14"
     )
+
+
+def test_resolve_decision_model_strips_whitespace(monkeypatch):
+    """Whitespace-only explicit/env/fallback values are treated as unset and valid IDs are trimmed."""
+    monkeypatch.delenv("LEXIMETER_DECISION_MODEL", raising=False)
+    assert resolve_decision_model("   ", fallback="  gpt-5.4-mini  ") == "gpt-5.4-mini"
+    assert resolve_decision_model("", fallback="   ") is None
+    assert resolve_decision_model("  typesafe/jev-1.14  ") == "typesafe/jev-1.14"
+
+    monkeypatch.setenv("LEXIMETER_DECISION_MODEL", "   ")
+    assert resolve_decision_model(fallback="gpt-5.4-mini") == "gpt-5.4-mini"
+    assert resolve_decision_model(None, fallback=None) is None
+
+    monkeypatch.setenv("LEXIMETER_DECISION_MODEL", "  cloudflare/clef-flash  ")
+    assert (
+        resolve_decision_model("  ", fallback="gpt-5.4-mini") == "cloudflare/clef-flash"
+    )
+
+
+def test_requires_decision_model_flags_and_effective_decision_model(monkeypatch):
+    """SystemOneClient requires an explicit decision model while offline doubles fall back."""
+    from conftest import CountingDecisionClient, DictDecisionClient
+
+    from leximeter.client import DecisionClient
+    from leximeter.tasks import _common
+
+    assert DecisionClient.requires_decision_model is False
+    assert DummyDecisionClient().requires_decision_model is False
+    assert DictDecisionClient().requires_decision_model is False
+    assert CountingDecisionClient().requires_decision_model is False
+    assert (
+        SystemOneClient(base_url="https://api.typesafe.ai").requires_decision_model
+        is True
+    )
+
+    monkeypatch.delenv("LEXIMETER_DECISION_MODEL", raising=False)
+    assert _common.effective_decision_model(None, None, fallback="gpt-5.4-mini") is None
+    assert (
+        _common.effective_decision_model(
+            DummyDecisionClient(), None, fallback="gpt-5.4-mini"
+        )
+        == "gpt-5.4-mini"
+    )
+
+    sys1 = SystemOneClient(base_url="https://api.typesafe.ai")
+    with pytest.raises(ValueError, match="decision_model"):
+        _common.effective_decision_model(sys1, None, fallback="gpt-5.4-mini")
+    with pytest.raises(ValueError, match="decision_model"):
+        _common.effective_decision_model(sys1, "   ", fallback="gpt-5.4-mini")
+
+    monkeypatch.setenv("LEXIMETER_DECISION_MODEL", "  ")
+    with pytest.raises(ValueError, match="decision_model"):
+        _common.effective_decision_model(sys1, None, fallback="gpt-5.4-mini")
+
+    monkeypatch.setenv("LEXIMETER_DECISION_MODEL", "  jev-env  ")
+    assert (
+        _common.effective_decision_model(sys1, None, fallback="gpt-5.4-mini")
+        == "jev-env"
+    )
+    assert (
+        _common.effective_decision_model(
+            sys1, "  jev-explicit  ", fallback="gpt-5.4-mini"
+        )
+        == "jev-explicit"
+    )

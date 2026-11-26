@@ -300,12 +300,79 @@ class Debias(Task):
         if column_name not in df.columns:
             raise ValueError(f"Column '{column_name}' not found in DataFrame")
 
-        decision_client = self._get_decision_client()
-        effective_decision_model = _common.effective_decision_model(
-            decision_client,
-            self.cfg.decision_model,
-            fallback=self.cfg.model,
+        meas_kw = self.cfg.measurement_kwargs or {}
+        missing_raw_attrs = [
+            attr for attr in self.cfg.attributes if attr not in df.columns
+        ]
+        has_stripped_variant = self.cfg.removal_method == "paraphrase" or any(
+            pct > 0 for pct in (self.cfg.strip_percentages or [])
         )
+        uses_decision_measurement = self.cfg.mode in {"classify", "rank"} and (
+            bool(missing_raw_attrs) or has_stripped_variant
+        )
+        if uses_decision_measurement:
+            meas_dc_override = meas_kw.get("decision_client", _UNSET)
+            meas_dc = (
+                self._get_decision_client()
+                if isinstance(meas_dc_override, _UnsetType)
+                else meas_dc_override
+            )
+            meas_model = meas_kw.get("model", self.cfg.model)
+            meas_dm = meas_kw.get("decision_model", self.cfg.decision_model)
+            meas_effective_dec_model = _common.effective_decision_model(
+                meas_dc,
+                meas_dm,
+                fallback=meas_model,
+            )
+        else:
+            meas_effective_dec_model = None
+
+        rem_kw = self.cfg.removal_kwargs or {}
+        if self.cfg.removal_method == "codify":
+            raw_rem_rounds = (
+                rem_kw.get("completion_max_rounds")
+                if rem_kw.get("completion_max_rounds") is not None
+                else rem_kw.get("n_rounds", 3)
+            )
+            try:
+                rem_n_rounds = max(1, int(raw_rem_rounds))
+            except (TypeError, ValueError):
+                rem_n_rounds = 1
+            uses_decision_removal = (
+                bool(self.cfg.signal_dictionary) and rem_n_rounds > 1
+            )
+        else:
+            if "n_rounds" in rem_kw:
+                raw_rem_rounds = rem_kw["n_rounds"]
+            elif (
+                "completion_max_rounds" in rem_kw
+                and rem_kw["completion_max_rounds"] is not None
+            ):
+                raw_rem_rounds = rem_kw["completion_max_rounds"]
+            else:
+                raw_rem_rounds = 3
+            try:
+                rem_n_rounds = max(1, int(raw_rem_rounds))
+            except (TypeError, ValueError):
+                rem_n_rounds = 1
+            uses_decision_removal = rem_n_rounds > 1
+
+        if uses_decision_removal:
+            rem_dc_override = rem_kw.get("decision_client", _UNSET)
+            rem_dc = (
+                self._get_decision_client()
+                if isinstance(rem_dc_override, _UnsetType)
+                else rem_dc_override
+            )
+            rem_model = rem_kw.get("model", self.cfg.model)
+            rem_dm = rem_kw.get("decision_model", self.cfg.decision_model)
+            rem_effective_dec_model = _common.effective_decision_model(
+                rem_dc,
+                rem_dm,
+                fallback=rem_model,
+            )
+        else:
+            rem_effective_dec_model = None
 
         # Input signature covers the whole input frame (the result embeds
         # every input column) plus every config field that shapes the run
@@ -317,7 +384,10 @@ class Debias(Task):
             for k, v in asdict(self.cfg).items()
             if k not in ("save_dir", "run_name")
         }
-        cfg_for_sig["decision_model"] = effective_decision_model
+        cfg_for_sig["decision_model"] = {
+            "measurement": meas_effective_dec_model,
+            "removal": rem_effective_dec_model,
+        }
         signature = _common.compute_input_signature(
             df,
             column_name,

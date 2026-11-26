@@ -886,3 +886,90 @@ def test_rank_resume_rechunks_when_provider_cap_shrinks(tmp_path) -> None:
     assert {len(qs) for _, qs, _ in c_small.requests} == {1, 2}
     for attr in ("a", "b", "c"):
         assert res[f"{attr}_se"].notna().all()
+
+
+def test_rank_systemone_missing_decision_model_fails_fast_without_disk_mutation(
+    tmp_path, monkeypatch
+) -> None:
+    """SystemOneClient without decision_model fails fast before HTTP, disk resets, or empty/cached returns."""
+    import httpx
+
+    from leximeter.client import SystemOneClient
+
+    http_calls = 0
+
+    def fail_transport(request: httpx.Request) -> httpx.Response:
+        nonlocal http_calls
+        http_calls += 1
+        raise AssertionError(f"Unexpected HTTP call to {request.url}")
+
+    save_dir = tmp_path / "rank_fail_fast"
+    save_dir.mkdir(parents=True, exist_ok=True)
+    meta_path = save_dir / "rankings_run_metadata.json"
+    attrs_path = save_dir / "attributes.json"
+    legacy_attrs_path = save_dir / "rankings_attrs.json"
+    round0_path = save_dir / "rankings_round0.csv"
+    final_path = save_dir / "rankings_final.csv"
+
+    meta_sentinel = '{"model": "prev-model"}'
+    attrs_sentinel = '{"old": "kept"}'
+    round0_sentinel = (
+        "Batch,Pair,IdA,IdB,Attribute,Winner,Successful\n0,0,a,b,old,circle,True\n"
+    )
+    final_sentinel = "speech,old,old_raw,old_se\nitem1,0.0,0.0,0.1\n"
+    meta_path.write_text(meta_sentinel, encoding="utf-8")
+    attrs_path.write_text(attrs_sentinel, encoding="utf-8")
+    legacy_attrs_path.write_text(attrs_sentinel, encoding="utf-8")
+    round0_path.write_text(round0_sentinel, encoding="utf-8")
+    final_path.write_text(final_sentinel, encoding="utf-8")
+
+    sys1 = SystemOneClient(
+        base_url="https://api.typesafe.ai",
+        api_key="test-key",
+        transport=httpx.MockTransport(fail_transport),
+    )
+    df = pd.DataFrame({"speech": ["item1", "item2"]})
+    empty_df = pd.DataFrame({"speech": pd.Series([], dtype="object")})
+
+    for frame in (df, empty_df):
+        for reset in (False, True):
+            for bad_dm in (None, "   "):
+                with pytest.raises(ValueError, match="decision_model"):
+                    run(
+                        rank(
+                            frame,
+                            "speech",
+                            attributes={"clarity": "clear expression"},
+                            save_dir=str(save_dir),
+                            model="gpt-5.4-mini",
+                            decision_model=bad_dm,
+                            n_rounds=1,
+                            matches_per_round=1,
+                            decision_client=sys1,
+                            reset_files=reset,
+                        )
+                    )
+
+    monkeypatch.setenv("LEXIMETER_DECISION_PROTOCOL", "systemone")
+    monkeypatch.setenv("LEXIMETER_DECISION_BASE_URL", "https://api.typesafe.ai")
+    monkeypatch.delenv("LEXIMETER_DECISION_MODEL", raising=False)
+    with pytest.raises(ValueError, match="decision_model"):
+        run(
+            rank(
+                df,
+                "speech",
+                attributes={"clarity": "clear expression"},
+                save_dir=str(save_dir),
+                model="gpt-5.4-mini",
+                n_rounds=1,
+                matches_per_round=1,
+                reset_files=True,
+            )
+        )
+
+    assert http_calls == 0
+    assert meta_path.read_text(encoding="utf-8") == meta_sentinel
+    assert attrs_path.read_text(encoding="utf-8") == attrs_sentinel
+    assert legacy_attrs_path.read_text(encoding="utf-8") == attrs_sentinel
+    assert round0_path.read_text(encoding="utf-8") == round0_sentinel
+    assert final_path.read_text(encoding="utf-8") == final_sentinel

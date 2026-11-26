@@ -9,8 +9,10 @@ retry with backoff (honoring ``Retry-After``), and resumable checkpointing
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import time
+import warnings
 from collections.abc import Sequence
 from typing import Any
 
@@ -27,6 +29,7 @@ from ..client.decision import (
 from . import checkpoint as _checkpoint
 
 _SAVE_EVERY = 100
+logger = logging.getLogger(__name__)
 
 
 async def complete_with_retry(
@@ -257,6 +260,13 @@ async def batch_decide(
         raise ValueError(
             "states, question_sets, and identifiers must have the same length"
         )
+    if getattr(client, "requires_decision_model", False) and (
+        not isinstance(model, str) or not model.strip()
+    ):
+        raise ValueError(
+            f"{type(client).__name__} requires a non-empty decision model ID "
+            "(pass decision_model=... or set LEXIMETER_DECISION_MODEL)."
+        )
 
     if save_path and reset_files and os.path.exists(save_path):
         try:
@@ -281,15 +291,21 @@ async def batch_decide(
     lock = asyncio.Lock()
     new_rows: list[dict[str, Any]] = []
     flushed = 0
+    succeeded_count = 0
+    failed_count = 0
+    first_error: tuple[int, Exception] | None = None
+    fatal_4xx_errors: dict[int, DecisionAPIError] = {}
 
     async def worker(
+        idx: int,
         ident: str,
         state: str | dict[str, Any],
         questions: dict[str, DecisionQuestion],
     ) -> None:
-        nonlocal flushed
+        nonlocal flushed, succeeded_count, failed_count, first_error
         async with sem:
             started = time.monotonic()
+            exc_caught: Exception | None = None
             try:
                 result = await decide_with_retry(
                     client,
@@ -308,6 +324,7 @@ async def batch_decide(
                     "Time Taken": round(time.monotonic() - started, 3),
                 }
             except Exception as exc:  # noqa: BLE001
+                exc_caught = exc
                 row = {
                     "Identifier": ident,
                     "Response": "",
@@ -316,15 +333,49 @@ async def batch_decide(
                     "Time Taken": round(time.monotonic() - started, 3),
                 }
             async with lock:
+                if exc_caught is None:
+                    succeeded_count += 1
+                else:
+                    failed_count += 1
+                    if first_error is None or idx < first_error[0]:
+                        first_error = (idx, exc_caught)
+                    if (
+                        isinstance(exc_caught, DecisionAPIError)
+                        and not exc_caught.retryable
+                        and exc_caught.status_code is not None
+                        and 400 <= exc_caught.status_code < 500
+                    ):
+                        fatal_4xx_errors[idx] = exc_caught
                 new_rows.append(row)
                 if save_path and len(new_rows) - flushed >= _SAVE_EVERY:
                     _checkpoint.append_rows(save_path, new_rows[flushed:])
                     flushed = len(new_rows)
 
     if pending:
-        await asyncio.gather(*(worker(i, s, q) for i, s, q in pending))
+        await asyncio.gather(
+            *(worker(idx, i, s, q) for idx, (i, s, q) in enumerate(pending))
+        )
 
     if save_path and len(new_rows) > flushed:
         _checkpoint.append_rows(save_path, new_rows[flushed:])
+
+    if pending and failed_count > 0:
+        summary_exc = (
+            fatal_4xx_errors[min(fatal_4xx_errors)]
+            if fatal_4xx_errors
+            else first_error[1]
+            if first_error is not None
+            else None
+        )
+        msg = (
+            f"batch_decide: {failed_count}/{len(pending)} pending item(s) failed "
+            f"({succeeded_count} succeeded)"
+            + (f"; first error: {summary_exc}" if summary_exc is not None else "")
+        )
+        logger.warning(msg)
+        warnings.warn(msg, UserWarning, stacklevel=2)
+
+    if pending and succeeded_count == 0 and fatal_4xx_errors:
+        raise fatal_4xx_errors[min(fatal_4xx_errors)]
 
     return _checkpoint.merge_with_checkpoint(checkpoint, new_rows)

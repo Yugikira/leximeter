@@ -33,7 +33,6 @@ from ...client.decision import (
     DecisionQuestion,
     DecisionResult,
 )
-from ...client.resolve import resolve_decision_model
 from ...templates import load_prompt
 from ...utils.file_utils import save_dataframe_with_fallback
 from ...utils.parsing import safest_json
@@ -820,6 +819,15 @@ class Rank(Task):
             and ``"<attribute>_se"`` (standard error).  Also written to
             ``save_dir``.
         """
+        decision_client = self._get_decision_client()
+        effective_model = (
+            _common.effective_decision_model(
+                decision_client,
+                self.cfg.decision_model,
+                fallback=self.cfg.model,
+            )
+            or self.cfg.model
+        )
         base_name = self._base_name()
         run_metadata = _common.load_run_metadata(
             self.cfg.save_dir, base_name, reset_files=reset_files
@@ -935,13 +943,6 @@ class Rank(Task):
             a: {i: np.nan for i in item_ids} for a in attr_keys
         }
 
-        decision_client = self._get_decision_client()
-        effective_model = (
-            resolve_decision_model(self.cfg.decision_model, fallback=self.cfg.model)
-            or self.cfg.model
-            if decision_client is not None
-            else self.cfg.model
-        )
         if self.cfg.n_attributes_per_run is not None and (
             not isinstance(self.cfg.n_attributes_per_run, int)
             or self.cfg.n_attributes_per_run < 1

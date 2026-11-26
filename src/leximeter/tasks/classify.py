@@ -35,7 +35,6 @@ from ..client.decision import (
     NoulAnswer,
     NoulQuestion,
 )
-from ..client.resolve import resolve_decision_model
 from ..templates import load_prompt
 from ..utils.file_utils import save_dataframe_with_fallback
 from ..utils.parsing import safest_json
@@ -774,6 +773,15 @@ class Classify(Task):
         ):
             raise ValueError("n_attributes_per_run must be None or an integer >= 1")
 
+        effective_model = (
+            _common.effective_decision_model(
+                decision_client,
+                self.cfg.decision_model,
+                fallback=self.cfg.model,
+            )
+            or self.cfg.model
+        )
+
         df_proc = df.reset_index(drop=True).copy()
         base_name = os.path.splitext(self.cfg.file_name)[0]
         csv_path = os.path.join(self.cfg.save_dir, f"{base_name}_raw_responses.csv")
@@ -790,10 +798,6 @@ class Classify(Task):
             legacy_filename=f"{base_name}_attrs.json",
         )
 
-        effective_model = (
-            resolve_decision_model(self.cfg.decision_model, fallback=self.cfg.model)
-            or self.cfg.model
-        )
         provider_cap = max(
             1, int(getattr(decision_client, "max_questions_per_call", 64))
         )

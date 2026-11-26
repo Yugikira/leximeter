@@ -744,3 +744,78 @@ def test_classify_resume_rechunks_when_provider_cap_shrinks(tmp_path) -> None:
     assert list(res_diff["p1_actual"]) == [True, True]
     assert list(res_diff["p2_inverted"]) == [True, True]
     assert list(res_diff["p3_actual"]) == [True, True]
+
+
+def test_classify_systemone_missing_decision_model_fails_fast_without_disk_mutation(
+    tmp_path, monkeypatch
+) -> None:
+    """SystemOneClient without decision_model / LEXIMETER_DECISION_MODEL fails fast before HTTP or disk resets."""
+    import httpx
+
+    from leximeter.client import SystemOneClient
+
+    http_calls = 0
+
+    def fail_transport(request: httpx.Request) -> httpx.Response:
+        nonlocal http_calls
+        http_calls += 1
+        raise AssertionError(f"Unexpected HTTP call to {request.url}")
+
+    save_dir = tmp_path / "cls_fail_fast"
+    save_dir.mkdir(parents=True, exist_ok=True)
+    meta_path = save_dir / "classify_responses_run_metadata.json"
+    attrs_path = save_dir / "attributes.json"
+    legacy_attrs_path = save_dir / "classify_responses_attrs.json"
+    raw_path = save_dir / "classify_responses_raw_responses.csv"
+    meta_sentinel = '{"model": "prev-model"}'
+    attrs_sentinel = '{"old": "kept"}'
+    raw_sentinel = "Identifier,Response,Successful,Error Log,Time Taken\n"
+    meta_path.write_text(meta_sentinel, encoding="utf-8")
+    attrs_path.write_text(attrs_sentinel, encoding="utf-8")
+    legacy_attrs_path.write_text(attrs_sentinel, encoding="utf-8")
+    raw_path.write_text(raw_sentinel, encoding="utf-8")
+
+    df = pd.DataFrame({"text": ["hello world"]})
+    labels = {"new_lbl": "new description"}
+    sys1 = SystemOneClient(
+        base_url="https://api.typesafe.ai",
+        api_key="test-key",
+        transport=httpx.MockTransport(fail_transport),
+    )
+
+    for reset in (False, True):
+        for bad_dm in (None, "   "):
+            with pytest.raises(ValueError, match="decision_model"):
+                run(
+                    classify(
+                        df,
+                        "text",
+                        labels=labels,
+                        save_dir=str(save_dir),
+                        model="gpt-5.4-mini",
+                        decision_model=bad_dm,
+                        decision_client=sys1,
+                        reset_files=reset,
+                    )
+                )
+
+    monkeypatch.setenv("LEXIMETER_DECISION_PROTOCOL", "systemone")
+    monkeypatch.setenv("LEXIMETER_DECISION_BASE_URL", "https://api.typesafe.ai")
+    monkeypatch.delenv("LEXIMETER_DECISION_MODEL", raising=False)
+    with pytest.raises(ValueError, match="decision_model"):
+        run(
+            classify(
+                df,
+                "text",
+                labels=labels,
+                save_dir=str(save_dir),
+                model="gpt-5.4-mini",
+                reset_files=True,
+            )
+        )
+
+    assert http_calls == 0
+    assert meta_path.read_text(encoding="utf-8") == meta_sentinel
+    assert attrs_path.read_text(encoding="utf-8") == attrs_sentinel
+    assert legacy_attrs_path.read_text(encoding="utf-8") == attrs_sentinel
+    assert raw_path.read_text(encoding="utf-8") == raw_sentinel

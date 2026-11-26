@@ -162,6 +162,8 @@ def _parse_answer(raw: Mapping[str, Any], question: DecisionQuestion) -> Decisio
 class SystemOneClient(DecisionClient):
     """HTTP client for the System One Decision Provider wire protocol."""
 
+    requires_decision_model: bool = True
+
     def __init__(
         self,
         *,
@@ -242,12 +244,19 @@ class SystemOneClient(DecisionClient):
         model: str,
         **kwargs: Any,
     ) -> DecisionResult:
+        cleaned_model = model.strip() if isinstance(model, str) else ""
+        if not cleaned_model:
+            raise ValueError(
+                "SystemOneClient.decide requires a non-empty decision model ID "
+                "(pass decision_model=... or set LEXIMETER_DECISION_MODEL)."
+            )
+
         if not questions:
-            return DecisionResult(answers={}, model=model)
+            return DecisionResult(answers={}, model=cleaned_model)
 
         wire_questions, wire_to_user = encode_wire_keys(questions)
         payload: dict[str, Any] = {
-            "model": model,
+            "model": cleaned_model,
             "state": state,
             "questions": {
                 wire_key: _serialize_question(
@@ -283,7 +292,7 @@ class SystemOneClient(DecisionClient):
                     response.json(),
                     wire_to_user=wire_to_user,
                     questions=questions,
-                    fallback_model=model,
+                    fallback_model=cleaned_model,
                 )
 
             retry_after = parse_retry_after(response.headers.get("Retry-After"))

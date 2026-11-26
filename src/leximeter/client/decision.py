@@ -278,6 +278,7 @@ class DecisionClient(ABC):
     """Minimal protocol for Decision Providers (System One and compatible APIs)."""
 
     max_questions_per_call: int = 64
+    requires_decision_model: bool = False
 
     @abstractmethod
     async def decide(
