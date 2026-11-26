@@ -27,6 +27,13 @@ from . import _common
 from .base import Task
 
 
+def _normalize_optional_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    cleaned = str(value).strip()
+    return cleaned or None
+
+
 def _build_filter_state(
     condition: str, additional_instructions: str | None
 ) -> dict[str, Any]:
@@ -70,6 +77,48 @@ class Filter(Task):
         super().__init__(cfg, **kwargs)
         self._template = load_prompt("filter_prompt.jinja2")
 
+    def _prepare_checkpoint_state(
+        self,
+        *,
+        expected_model: str,
+        decision_provider: bool,
+        reset_files: bool,
+    ) -> tuple[bool, dict[str, Any], str | None]:
+        base_name = self._base_name()
+        csv_path = os.path.join(self.cfg.save_dir, f"{base_name}_raw_responses.csv")
+        cleaned_path = os.path.join(self.cfg.save_dir, f"{base_name}_cleaned.csv")
+        norm_instructions = _normalize_optional_text(self.cfg.additional_instructions)
+        if reset_files:
+            effective_reset = True
+            prev_meta: dict[str, Any] = {}
+        else:
+            prev_meta = _common.load_run_metadata(
+                self.cfg.save_dir, base_name, reset_files=False
+            )
+            if not prev_meta:
+                effective_reset = False
+            else:
+                effective_reset = (
+                    "decision_provider" not in prev_meta
+                    or bool(prev_meta.get("decision_provider")) != decision_provider
+                    or prev_meta.get("model") != expected_model
+                    or "condition" not in prev_meta
+                    or prev_meta.get("condition") != self.cfg.condition
+                    or _normalize_optional_text(
+                        prev_meta.get("additional_instructions")
+                    )
+                    != norm_instructions
+                )
+        if effective_reset:
+            _common.remove_file(csv_path)
+            _common.remove_file(cleaned_path)
+            run_metadata = _common.load_run_metadata(
+                self.cfg.save_dir, base_name, reset_files=True
+            )
+        else:
+            run_metadata = prev_meta
+        return effective_reset, run_metadata, norm_instructions
+
     async def run(
         self,
         df: pd.DataFrame,
@@ -87,6 +136,20 @@ class Filter(Task):
                 reset_files=reset_files,
                 **kwargs,
             )
+
+        effective_reset, _, norm_instructions = self._prepare_checkpoint_state(
+            expected_model=self.cfg.model,
+            decision_provider=False,
+            reset_files=reset_files,
+        )
+        _common.update_run_metadata(
+            self.cfg.save_dir,
+            self._base_name(),
+            decision_provider=False,
+            model=self.cfg.model,
+            condition=self.cfg.condition,
+            additional_instructions=norm_instructions,
+        )
 
         # 1. unique entities, optionally shuffled with a fixed seed
         values = [str(v) for v in df[column_name].tolist()]
@@ -119,7 +182,9 @@ class Filter(Task):
                 meta.append((batch_idx, run_idx))
 
         # 4. execute
-        resp_df = await self._execute(prompts, ids, reset_files=reset_files, **kwargs)
+        resp_df = await self._execute(
+            prompts, ids, reset_files=effective_reset, **kwargs
+        )
         resp_lookup = dict(zip(resp_df["Identifier"], resp_df["Response"]))
 
         # 5. tally "meets condition" per entity across runs
@@ -202,13 +267,17 @@ class Filter(Task):
             1, int(getattr(decision_client, "max_questions_per_call", 64))
         )
         base_name = self._base_name()
-        run_metadata = _common.load_run_metadata(
-            self.cfg.save_dir, base_name, reset_files=reset_files
+        effective_reset, run_metadata, norm_instructions = (
+            self._prepare_checkpoint_state(
+                expected_model=effective_model,
+                decision_provider=True,
+                reset_files=reset_files,
+            )
         )
         effective_batch_size = min(requested_per_call, provider_cap)
         saved_batch_size = run_metadata.get("effective_batch_size")
         if (
-            not reset_files
+            not effective_reset
             and isinstance(saved_batch_size, int)
             and not isinstance(saved_batch_size, bool)
             and 1 <= saved_batch_size <= effective_batch_size
@@ -218,7 +287,10 @@ class Filter(Task):
         _common.update_run_metadata(
             self.cfg.save_dir,
             base_name,
+            decision_provider=True,
             model=effective_model,
+            condition=self.cfg.condition,
+            additional_instructions=norm_instructions,
             effective_batch_size=effective_batch_size,
         )
 
@@ -266,7 +338,7 @@ class Filter(Task):
             save_path=os.path.join(
                 self.cfg.save_dir, f"{self._base_name()}_raw_responses.csv"
             ),
-            reset_files=reset_files,
+            reset_files=effective_reset,
             **kwargs,
         )
         resp_lookup = dict(zip(resp_df["Identifier"], resp_df["Response"]))
