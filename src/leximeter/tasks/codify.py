@@ -637,6 +637,8 @@ class Codify(Task):
     def _purge_iteration_checkpoints(self) -> None:
         """Remove stale per-iteration batch checkpoints after input changes."""
         stem, ext = os.path.splitext(self.cfg.file_name)
+        _common.remove_file(_common.run_metadata_path(self.cfg.save_dir, stem))
+        _common.remove_file(os.path.join(self.cfg.save_dir, "coded_passages.csv"))
         try:
             names = os.listdir(self.cfg.save_dir)
         except OSError:
@@ -692,6 +694,12 @@ class Codify(Task):
         **kwargs: Any,
     ) -> dict[int, dict[str, list[str]]]:
         from ..engine.batch import batch_execute
+
+        iter_path = os.path.join(
+            self.cfg.save_dir, self._iteration_file_name(iteration)
+        )
+        if reset_files:
+            _common.remove_file(iter_path)
 
         if not row_texts:
             return {}
@@ -793,9 +801,7 @@ class Codify(Task):
             model=self.cfg.model,
             json_mode=True,
             n_parallels=self.cfg.n_parallels,
-            save_path=os.path.join(
-                self.cfg.save_dir, self._iteration_file_name(iteration)
-            ),
+            save_path=iter_path,
             reset_files=reset_files,
             **kwargs,
         )
@@ -869,7 +875,7 @@ class Codify(Task):
         additional_instructions: str | None,
         iteration: int,
         reset_files: bool,
-    ) -> dict[int, set[str]]:
+    ) -> tuple[dict[int, set[str]], bool]:
         from .classify import Classify, ClassifyConfig
 
         row_indices: list[int] = []
@@ -882,12 +888,39 @@ class Codify(Task):
                 remaining_texts.append(stripped)
 
         if not row_indices:
-            return {}
+            return {}, False
 
         validation_dir = os.path.join(self.cfg.save_dir, "completion_checks")
         os.makedirs(validation_dir, exist_ok=True)
         stem = Path(self.cfg.file_name).stem
         file_name = f"{stem}_completion_iter{iteration}.csv"
+        base_name = Path(file_name).stem
+        decision_client = self._get_decision_client()
+        effective_model = (
+            _common.effective_decision_model(
+                decision_client,
+                self.cfg.decision_model,
+                fallback=self.cfg.model,
+            )
+            or self.cfg.model
+        )
+        effective_reset = _common.should_reset_substage_checkpoint(
+            validation_dir,
+            base_name,
+            expected_model=effective_model,
+            decision_provider=decision_client is not None,
+            reset_files=reset_files,
+        )
+        if effective_reset:
+            _common.remove_file(
+                os.path.join(validation_dir, f"{base_name}_raw_responses.csv")
+            )
+            _common.remove_file(
+                os.path.join(validation_dir, f"{base_name}_cleaned.csv")
+            )
+            _common.remove_file(
+                os.path.join(validation_dir, f"{base_name}_full_disaggregated.csv")
+            )
 
         base_instruction = (
             "These passages contain the remaining text after previously extracted snippets were removed. "
@@ -919,14 +952,14 @@ class Codify(Task):
         classifier = Classify(
             classify_cfg,
             client=self._get_client(),
-            decision_client=self._get_decision_client(),
+            decision_client=decision_client,
         )
 
         cls_df = pd.DataFrame({"text": remaining_texts})
         results_df = await classifier.run(
             cls_df,
             column_name="text",
-            reset_files=reset_files and iteration == 0,
+            reset_files=effective_reset,
         )
 
         flagged: dict[int, set[str]] = {}
@@ -940,7 +973,7 @@ class Codify(Task):
             if flagged_categories:
                 flagged[row_idx] = flagged_categories
 
-        return flagged
+        return flagged, effective_reset
 
     async def _completion_loop(
         self,
@@ -954,17 +987,28 @@ class Codify(Task):
     ) -> dict[int, dict[str, list[str]]]:
         total_rounds = max(1, int(self.cfg.n_rounds))
         completion_iterations = max(0, total_rounds - 1)
+        loop_reset = reset_files
 
         for depth in range(1, completion_iterations + 1):
-            flagged = await self._classify_remaining(
+            flagged, did_reset = await self._classify_remaining(
                 aggregated,
                 original_texts,
                 categories,
                 additional_instructions,
                 iteration=depth - 1,
-                reset_files=reset_files,
+                reset_files=loop_reset,
             )
+            if did_reset:
+                loop_reset = True
             if not flagged:
+                if loop_reset:
+                    for rem_depth in range(depth, completion_iterations + 1):
+                        _common.remove_file(
+                            os.path.join(
+                                self.cfg.save_dir,
+                                self._iteration_file_name(rem_depth),
+                            )
+                        )
                 break
 
             category_subset = set().union(*flagged.values())
@@ -986,7 +1030,7 @@ class Codify(Task):
                 additional_instructions=additional_instructions,
                 iteration=depth,
                 dynamic_mode=False,
-                reset_files=False,
+                reset_files=loop_reset,
                 category_subset=category_subset,
                 **kwargs,
             )
@@ -1052,8 +1096,10 @@ class Codify(Task):
         list_columns = (
             ["coded_passages"] if dynamic_mode else list(categories_dict.keys())
         )
+        stem = Path(self.cfg.file_name).stem
         if reset_files:
             _common.clear_task_state(self.cfg.save_dir, "codify")
+            self._purge_iteration_checkpoints()
         else:
             state = _common.load_task_state(self.cfg.save_dir, "codify")
             if state is not None and state.get("input_signature") != signature:
@@ -1061,9 +1107,31 @@ class Codify(Task):
                 # so stale batch checkpoints must be purged when the inputs
                 # change or old completions would be silently reused.
                 self._purge_iteration_checkpoints()
+            elif state is None and _common.should_reset_substage_checkpoint(
+                self.cfg.save_dir,
+                stem,
+                expected_model=self.cfg.model,
+                decision_provider=False,
+                reset_files=False,
+            ):
+                self._purge_iteration_checkpoints()
             loaded = self._load_completed(signature, list_columns)
             if loaded is not None:
                 return loaded
+
+        _common.save_task_state(
+            self.cfg.save_dir,
+            "codify",
+            input_signature=signature,
+            result_artifacts=[],
+            status="in_progress",
+        )
+        _common.update_run_metadata(
+            self.cfg.save_dir,
+            stem,
+            model=self.cfg.model,
+            decision_provider=False,
+        )
 
         aggregated: dict[int, dict[str, list[str]]] = {}
         if not dynamic_mode:

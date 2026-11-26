@@ -463,17 +463,36 @@ class Classify(Task):
                 **kwargs,
             )
 
+        if not isinstance(self.cfg.n_runs, int) or self.cfg.n_runs < 1:
+            raise ValueError("n_runs must be an integer >= 1")
+
         df_proc = df.reset_index(drop=True).copy()
         base_name = os.path.splitext(self.cfg.file_name)[0]
         csv_path = os.path.join(self.cfg.save_dir, f"{base_name}_raw_responses.csv")
+        cleaned_path = os.path.join(self.cfg.save_dir, f"{base_name}_cleaned.csv")
+        disagg_path = os.path.join(
+            self.cfg.save_dir, f"{base_name}_full_disaggregated.csv"
+        )
+        effective_reset = _common.should_reset_substage_checkpoint(
+            self.cfg.save_dir,
+            base_name,
+            expected_model=self.cfg.model,
+            decision_provider=False,
+            reset_files=reset_files,
+        )
+        if effective_reset:
+            _common.remove_file(csv_path)
+            _common.remove_file(cleaned_path)
+            _common.remove_file(disagg_path)
+
         run_metadata = _common.load_run_metadata(
-            self.cfg.save_dir, base_name, reset_files=reset_files
+            self.cfg.save_dir, base_name, reset_files=effective_reset
         )
 
         self.cfg.labels = _common.load_persisted_attributes(
             save_dir=self.cfg.save_dir,
             incoming=self.cfg.labels,
-            reset_files=reset_files,
+            reset_files=effective_reset,
             task_name="Classify",
             item_name="labels",
             legacy_filename=f"{base_name}_attrs.json",
@@ -485,7 +504,7 @@ class Classify(Task):
                 items=label_items,
                 requested_n=self.cfg.n_attributes_per_run,
                 metadata=run_metadata,
-                reset_files=reset_files,
+                reset_files=effective_reset,
             )
         )
         label_batches: list[dict[str, str]] = [
@@ -511,9 +530,6 @@ class Classify(Task):
             n_attributes_per_run=effective_n_attributes_per_run,
             attribute_batches=[[name for name, _ in b] for b in label_batch_items],
         )
-
-        if not isinstance(self.cfg.n_runs, int) or self.cfg.n_runs < 1:
-            raise ValueError("n_runs must be an integer >= 1")
 
         order_strategy = _common.validate_order_strategy(self.cfg.order_strategy)
 
@@ -563,7 +579,7 @@ class Classify(Task):
                 base_ids.append(ident)
 
         existing_ids: set[str] = set()
-        if not reset_files and os.path.exists(csv_path):
+        if not effective_reset and os.path.exists(csv_path):
             try:
                 existing_df = pd.read_csv(csv_path, usecols=["Identifier"])
                 existing_ids = set(existing_df["Identifier"].astype(str))
@@ -626,7 +642,7 @@ class Classify(Task):
             json_mode=True,
             n_parallels=self.cfg.n_parallels,
             save_path=csv_path,
-            reset_files=reset_files,
+            reset_files=effective_reset,
             **kwargs,
         )
         if not isinstance(df_resp_all, pd.DataFrame):
@@ -785,14 +801,30 @@ class Classify(Task):
         df_proc = df.reset_index(drop=True).copy()
         base_name = os.path.splitext(self.cfg.file_name)[0]
         csv_path = os.path.join(self.cfg.save_dir, f"{base_name}_raw_responses.csv")
+        cleaned_path = os.path.join(self.cfg.save_dir, f"{base_name}_cleaned.csv")
+        disagg_path = os.path.join(
+            self.cfg.save_dir, f"{base_name}_full_disaggregated.csv"
+        )
+        effective_reset = _common.should_reset_substage_checkpoint(
+            self.cfg.save_dir,
+            base_name,
+            expected_model=effective_model,
+            decision_provider=True,
+            reset_files=reset_files,
+        )
+        if effective_reset:
+            _common.remove_file(csv_path)
+            _common.remove_file(cleaned_path)
+            _common.remove_file(disagg_path)
+
         run_metadata = _common.load_run_metadata(
-            self.cfg.save_dir, base_name, reset_files=reset_files
+            self.cfg.save_dir, base_name, reset_files=effective_reset
         )
 
         self.cfg.labels = _common.load_persisted_attributes(
             save_dir=self.cfg.save_dir,
             incoming=self.cfg.labels,
-            reset_files=reset_files,
+            reset_files=effective_reset,
             task_name="Classify",
             item_name="labels",
             legacy_filename=f"{base_name}_attrs.json",
@@ -885,7 +917,7 @@ class Classify(Task):
                 pairs,
                 effective_limit=effective_limit,
                 metadata=run_metadata,
-                reset_files=reset_files,
+                reset_files=effective_reset,
                 max_batch_size=provider_cap,
             )
             _common.update_run_metadata(
@@ -925,7 +957,7 @@ class Classify(Task):
                 items=label_items,
                 requested_n=effective_limit,
                 metadata=run_metadata,
-                reset_files=reset_files,
+                reset_files=effective_reset,
                 max_batch_size=provider_cap,
             )
             label_batches = [dict(b) for b in label_batch_items]
@@ -976,7 +1008,7 @@ class Classify(Task):
             model=effective_model,
             n_parallels=self.cfg.n_parallels,
             save_path=csv_path,
-            reset_files=reset_files,
+            reset_files=effective_reset,
             **kwargs,
         )
         resp_lookup = dict(zip(df_resp_all["Identifier"], df_resp_all["Response"]))

@@ -829,19 +829,41 @@ class Rank(Task):
             or self.cfg.model
         )
         base_name = self._base_name()
+        effective_reset = _common.should_reset_substage_checkpoint(
+            self.cfg.save_dir,
+            base_name,
+            expected_model=effective_model,
+            decision_provider=decision_client is not None,
+            reset_files=reset_files,
+        )
+        final_path = os.path.join(self.cfg.save_dir, f"{base_name}_final.csv")
+        if effective_reset:
+            _common.remove_file(final_path)
+            try:
+                for fname in os.listdir(self.cfg.save_dir):
+                    if fname.startswith(f"{base_name}_round") and fname.endswith(
+                        ".csv"
+                    ):
+                        try:
+                            int(fname[len(base_name) + 6 : -4])
+                        except ValueError:
+                            continue
+                        _common.remove_file(os.path.join(self.cfg.save_dir, fname))
+            except OSError:
+                pass
+
         run_metadata = _common.load_run_metadata(
-            self.cfg.save_dir, base_name, reset_files=reset_files
+            self.cfg.save_dir, base_name, reset_files=effective_reset
         )
         self.cfg.attributes = _common.load_persisted_attributes(
             save_dir=self.cfg.save_dir,
             incoming=self.cfg.attributes,
-            reset_files=reset_files,
+            reset_files=effective_reset,
             task_name="Rank",
             item_name="attributes",
             legacy_filename=f"{base_name}_attrs.json",
         )
 
-        final_path = os.path.join(self.cfg.save_dir, f"{base_name}_final.csv")
         if n_runs is not None:
             print(
                 "Parameter 'n_runs' is ignored. Use 'n_rounds' to control the "
@@ -883,7 +905,7 @@ class Rank(Task):
         # reuse it; otherwise resume from the next incomplete round.
         start_round = 0
         existing_rounds: list[int] = []
-        if not reset_files:
+        if not effective_reset:
             try:
                 for fname in os.listdir(self.cfg.save_dir):
                     if fname.startswith(f"{base_name}_round") and fname.endswith(
@@ -968,7 +990,7 @@ class Rank(Task):
                 attr_items,
                 requested_n=requested_batch_size,
                 metadata=run_metadata,
-                reset_files=reset_files,
+                reset_files=effective_reset,
                 max_batch_size=provider_cap,
             )
         )
@@ -1124,7 +1146,7 @@ class Rank(Task):
             se_store=se_store,
             base_name=base_name,
             _write_checkpoint=_write_checkpoint,
-            reset_files=reset_files,
+            reset_files=effective_reset,
             decision_client=decision_client,
             effective_model=effective_model,
             **kwargs,
@@ -1159,7 +1181,7 @@ class Rank(Task):
                 rnd=rnd,
                 id_prefix="",
                 round_path=round_path,
-                reset_files=reset_files,
+                reset_files=effective_reset,
                 decision_client=decision_client,
                 effective_model=effective_model,
                 history_pairs=history_pairs,
