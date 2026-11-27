@@ -391,3 +391,80 @@ def test_poll_supports_mapping_questions_with_short_ids_and_signature(tmp_path):
         )
     )
     assert client.calls > calls_after_v1
+
+
+def test_poll_tier_basic_prevents_key_stealing_and_mapping_order_updates_signature(
+    tmp_path,
+):
+    # 1. Mapping mode: duplicate question text cannot be stolen by q2 in Tier 1
+    df = pd.DataFrame({"seed": ["Alice"]})
+    map_dup = {"q1": "Rate insulation", "q2": "Rate insulation"}
+    map_res = run(
+        poll(
+            df,
+            "seed",
+            questions=map_dup,
+            save_dir=str(tmp_path / "map_dup"),
+            client=SurveyStubClient(
+                {
+                    "Alice": {
+                        "q1": [["A", 1.0]],
+                        "Rate insulation": [["Ambiguous", 1.0]],
+                    }
+                }
+            ),
+        )
+    )
+    assert map_res["q1"].iloc[0] == "A"
+    assert pd.isna(map_res["q2"].iloc[0])
+
+    # 2. List mode: normalized punctuation duplicate cannot be stolen by second question
+    list_dup = ["Rate insulation?", "Rate insulation."]
+    list_res = run(
+        poll(
+            df,
+            "seed",
+            questions=list_dup,
+            save_dir=str(tmp_path / "list_dup"),
+            client=SurveyStubClient(
+                {
+                    "Alice": {
+                        "Rate insulation?": [["A", 1.0]],
+                        "rate insulation": [["Dup", 1.0]],
+                    }
+                }
+            ),
+        )
+    )
+    assert list_res[list_dup[0]].iloc[0] == "A"
+    assert pd.isna(list_res[list_dup[1]].iloc[0])
+
+    # 3. Reordering Mapping keys invalidates poll_state.json and updates column order
+    order_dir = str(tmp_path / "map_order")
+    order_client = SurveyStubClient(
+        {"Alice": {"a": [["Alpha", 1.0]], "b": [["Beta", 1.0]]}}
+    )
+    first = run(
+        poll(
+            df,
+            "seed",
+            questions={"b": "Question B?", "a": "Question A?"},
+            save_dir=order_dir,
+            client=order_client,
+        )
+    )
+    assert list(first.columns) == ["seed", "persona", "b", "a"]
+
+    reordered = run(
+        poll(
+            df,
+            "seed",
+            questions={"a": "Question A?", "b": "Question B?"},
+            save_dir=order_dir,
+            client=order_client,
+            reset_files=False,
+        )
+    )
+    assert list(reordered.columns) == ["seed", "persona", "a", "b"]
+    assert reordered["a"].iloc[0] == "Alpha"
+    assert reordered["b"].iloc[0] == "Beta"

@@ -67,9 +67,9 @@ class QuestionPlan:
         return [q.column for q in self.items]
 
     @property
-    def signature_payload(self) -> dict[str, str] | list[str]:
+    def signature_payload(self) -> dict[str, list[list[str]]] | list[str]:
         if self.use_ids:
-            return {q.column: q.text for q in self.items}
+            return {"mapping": [[q.column, q.text] for q in self.items]}
         return self.columns
 
     def batches(self, batch_size: int) -> list[QuestionPlan]:
@@ -202,11 +202,18 @@ def resolve_batch_answers(
     if not unclaimed_q or not unclaimed_k:
         return resolved
 
+    all_basic_targets: list[set[str]] = []
     expected_tags: list[set[str]] = []
     all_tags_in_batch: set[str] = set()
     all_no_parens: list[set[str]] = []
     all_stems: list[str] = []
     for q in batch.items:
+        basic_targets = {_norm_basic(q.column), _norm_basic(q.text)}
+        if batch.use_ids:
+            basic_targets.add(_norm_basic(f"[{q.column}] {q.text}"))
+        basic_targets.discard("")
+        all_basic_targets.append(basic_targets)
+
         tags: set[str] = set()
         if batch.use_ids:
             cid = _norm_basic(q.column).strip("[]")
@@ -226,6 +233,10 @@ def resolve_batch_answers(
 
         all_stems.append(_core_stem(q.text))
 
+    all_basic_counts: Counter[str] = Counter()
+    for targets in all_basic_targets:
+        for t in targets:
+            all_basic_counts[t] += 1
     all_stem_counts = Counter(s for s in all_stems if s)
     all_tag_counts: Counter[str] = Counter()
     for tags in expected_tags:
@@ -271,14 +282,8 @@ def resolve_batch_answers(
 
     # Tier 1: basic normalized match (leading bullet, whitespace, quotes, trailing punctuation, case)
     def tier_basic(qi: int, rk: str) -> bool:
-        q = batch.items[qi]
         nk = _norm_basic(rk)
-        if not nk:
-            return False
-        targets = {_norm_basic(q.column), _norm_basic(q.text)}
-        if batch.use_ids:
-            targets.add(_norm_basic(f"[{q.column}] {q.text}"))
-        return nk in targets
+        return bool(nk) and nk in all_basic_targets[qi] and all_basic_counts[nk] == 1
 
     # Tier 2: trailing parenthetical hints stripped while preserving any leading tag/number
     def tier_no_trailing_parens(qi: int, rk: str) -> bool:
