@@ -5,7 +5,9 @@ Ported and modified from openai/GABRIEL's ``tasks/poll.py`` (Apache-2.0).
 
 from __future__ import annotations
 
+import hashlib
 import json
+import math
 import os
 from dataclasses import dataclass, field
 from typing import Any
@@ -32,6 +34,7 @@ class PollConfig:
     num_personas: int = 1000
     entities_per_generation: int = 50
     n_questions_per_run: int = 8
+    random_seed: int | None = None
 
 
 class Poll(Task):
@@ -47,6 +50,7 @@ class Poll(Task):
         *,
         population_description: str | None = None,
         questions: Any | None = None,
+        random_seed: int | None = None,
         reset_files: bool = False,
         **kwargs: Any,
     ) -> pd.DataFrame:
@@ -56,11 +60,12 @@ class Poll(Task):
             else list(questions or self.cfg.questions)
         )
         desc = population_description or self.cfg.population_description
+        effective_seed = self.cfg.random_seed if random_seed is None else random_seed
 
         # Input signature covers everything that shapes the run: the seed
         # source (input frame, or population description), the questions,
-        # and the per-stage models.  A completed run with the same signature
-        # is reloaded instead of re-executed (zero provider calls).
+        # the per-stage models, and the sampling seed.  A completed run with
+        # the same signature is reloaded instead of re-executed (zero calls).
         seed_key = (
             (df, column_name) if df is not None else (desc, self.cfg.num_personas)
         )
@@ -73,6 +78,7 @@ class Poll(Task):
             self.cfg.n_questions_per_run,
             self.cfg.entities_per_generation,
             self.cfg.file_name,
+            effective_seed,
         )
         loaded = self._load_completed(signature, qs, reset_files=reset_files)
         if loaded is not None:
@@ -148,7 +154,8 @@ class Poll(Task):
                 obj = safe_json(ans_map.get(ans_ids[j]))
                 if isinstance(obj, dict):
                     for q in batch:
-                        out.at[j, q] = self._sample(obj.get(q))
+                        sample_key = f"{effective_seed}:{j}:{seed_ids[j]}:{q}"
+                        out.at[j, q] = self._sample(obj.get(q), sample_key=sample_key)
 
         self._save(out, qs)
         _common.save_task_state(
@@ -200,11 +207,80 @@ class Poll(Task):
         return parsed if isinstance(parsed, (list, dict)) else value
 
     @staticmethod
-    def _sample(distribution: Any) -> Any:
-        if isinstance(distribution, list) and distribution:
-            first = distribution[0]
-            return first[0] if isinstance(first, list) and first else first
-        return distribution
+    def _stable_uniform(key: str) -> float:
+        digest = hashlib.sha1(key.encode("utf-8")).digest()
+        return int.from_bytes(digest[:8], "big") / float(1 << 64)
+
+    @staticmethod
+    def _coerce_weight(weight: Any) -> float | None:
+        if isinstance(weight, bool) or weight is None:
+            return None
+        try:
+            val = float(weight)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(val) or val < 0.0:
+            return None
+        return val
+
+    @classmethod
+    def _sample(cls, distribution: Any, *, sample_key: str = "") -> Any:
+        if isinstance(distribution, dict):
+            if (
+                len(distribution) == 1
+                and "options" in distribution
+                and isinstance(distribution["options"], list)
+            ):
+                distribution = distribution["options"]
+            else:
+                return distribution
+
+        if not isinstance(distribution, list):
+            return distribution
+        if not distribution:
+            return None
+
+        valid_pairs: list[tuple[Any, float]] = []
+        saw_pair_shape = False
+        fallback_candidates: list[Any] = []
+        for entry in distribution:
+            if isinstance(entry, (list, tuple)) and len(entry) == 2:
+                saw_pair_shape = True
+                ans, raw_weight = entry
+                fallback_candidates.append(ans)
+                w = cls._coerce_weight(raw_weight)
+                if w is not None:
+                    valid_pairs.append((ans, w))
+            elif isinstance(entry, dict) and ("answer" in entry or "option" in entry):
+                saw_pair_shape = True
+                ans = entry.get("answer", entry.get("option"))
+                fallback_candidates.append(ans)
+                raw_weight = entry.get(
+                    "probability", entry.get("prob", entry.get("weight"))
+                )
+                w = cls._coerce_weight(raw_weight)
+                if w is not None:
+                    valid_pairs.append((ans, w))
+
+        u = cls._stable_uniform(sample_key)
+        if valid_pairs:
+            positive = [(ans, w) for ans, w in valid_pairs if w > 0.0]
+            if positive:
+                total = sum(w for _, w in positive)
+                threshold = u * total
+                cumulative = 0.0
+                for ans, w in positive:
+                    cumulative += w
+                    if threshold < cumulative:
+                        return ans
+                return positive[-1][0]
+            candidates = [ans for ans, _ in valid_pairs]
+            return candidates[min(int(u * len(candidates)), len(candidates) - 1)]
+
+        candidates = fallback_candidates if saw_pair_shape else list(distribution)
+        if not candidates:
+            return None
+        return candidates[min(int(u * len(candidates)), len(candidates) - 1)]
 
     @staticmethod
     def _seed_instructions(desc: str | None) -> str:

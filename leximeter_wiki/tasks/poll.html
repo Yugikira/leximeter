@@ -82,11 +82,11 @@ result = await leximeter.poll(
         <tr><td>A 67-year-old White woman from Fort Myers, Florida, retired …</td><td>Name: Nancy Carol Whitfield (née Bowen)<br>Nationality: USA<br>Age…</td><td>1.0</td><td>bad</td></tr>
         <tr><td>A 42-year-old White woman from rural Tennessee, high-school …</td><td>Name: Darlene “Darla” Sue Whitfield<br>Nationality: USA<br>Age: 42…</td><td>1.0</td><td>good</td></tr>
       </table>
-      <div class="dim">真实运行共 6 行（6 个 persona）；seed 与 persona 传记很长，显示时截断为前 60 字符。答案列取的是模型给出的"答案 + 概率"分布的第一个候选，不一定是概率最高的答案（如第 1 位受访者对第 1 问的原始分布中"4 小时"概率最高、为 0.25，但首个候选是 1）。完整分布与传记保存在 save_dir 下的 answers_raw.csv / personas_raw.csv。</div>
+      <div class="dim">真实运行共 6 行（6 个 persona）；seed 与 persona 传记很长，显示时截断为前 60 字符。答案列由模型给出的"答案 + 概率"分布按概率加权确定性采样得出（可通过 <code class="inline">random_seed</code> 重采样）。完整分布与传记保存在 save_dir 下的 answers_raw.csv / personas_raw.csv。</div>
     </div>
 
     <h3>回到数据里</h3>
-    <p>每个问题一列，直接 <code class="inline">result.to_csv("poll_results.csv")</code> 后用 Stata / R 做频数、交叉与分组分析。想要概率加权的完整分布，到 <code class="inline">save_dir</code> 下的 answers_raw.csv 取原始 JSON。</p>
+    <p>每个问题一列，直接 <code class="inline">result.to_csv("poll_results.csv")</code> 后用 Stata / R 做频数、交叉与分组分析。想要原始概率分布，到 <code class="inline">save_dir</code> 下的 answers_raw.csv 取原始 JSON。</p>
 
     <h2>实现原理（简版）</h2>
     <p>整个过程不需要你理解细节，但知道原理有助于判断结果质量：</p>
@@ -94,7 +94,7 @@ result = await leximeter.poll(
       <li><strong>种子生成</strong>：未传表格时，用 seed 任务按人群描述逐批生成 <code class="inline">num_personas</code> 条种子（每批 <code class="inline">entities_per_generation</code> 条），存到 save_dir/seed/。</li>
       <li><strong>传记扩写</strong>：每条种子套用 persona 模板，扩写成约 750 词、格式固定的人物传记（家庭、教育、职业、性格五因素、政治观点、人生目标……）。</li>
       <li><strong>逐批提问</strong>：问题按 <code class="inline">n_questions_per_run</code> 个一批；对每个 persona 发一个 poll 提示词，要求完全以该人视角作答、输出 JSON：每个问题对应一个"答案 + 概率"数组（概率为 0–1，和为 1）。</li>
-      <li><strong>解析输出</strong>：取每个问题分布的第一个候选写入结果表对应列（persona 的原始传记写入 persona 列）；完整分布存 answers_raw.csv，供加权分析。</li>
+      <li><strong>解析输出</strong>：对每位受访者在每个问题上的候选分布按概率加权确定性抽样，写入结果表对应列（persona 的原始传记写入 persona 列）；完整分布存 answers_raw.csv，供加权分析。</li>
     </ol>
 
     <h3>给模型的提示词（概括）</h3>
@@ -106,7 +106,7 @@ result = await leximeter.poll(
       真实运行示例（节选）：<br>
       <code>"Do you think social media is mostly good or mostly bad for society? (good/bad)": [["bad", 0.65], ["good", 0.35]]</code>
     </div>
-    <p>概率分布就是"随机性"的载体：同一 persona 在不同日子、不同心情下可能给出不同答案，分布反映这种真实的不确定性——这也是为何结果表展示的只是"第一个候选"，而非唯一答案。</p>
+    <p>概率分布就是"随机性"的载体：同一 persona 在不同日子、不同心情下可能给出不同答案，分布反映这种真实的不确定性——按概率抽样既保留个体随机性，又通过确定性哈希保证同输入复现一致。</p>
 
     <h2>参数设置</h2>
     <table>
@@ -118,6 +118,7 @@ result = await leximeter.poll(
       <tr><td><code>num_personas</code></td><td>1000</td><td>要生成的 persona 数量（即种子总数）。</td></tr>
       <tr><td><code>entities_per_generation</code></td><td>50</td><td>人群生成阶段每批产出的种子数。</td></tr>
       <tr><td><code>n_questions_per_run</code></td><td>8</td><td>每次提问最多包含几个问题；问题太多时模型可能顾此失彼。</td></tr>
+      <tr><td><code>random_seed</code></td><td>None</td><td>分布抽样随机种子；改种子可基于已缓存的 <code>answers_raw.csv</code> 零 API 调用重新抽样。</td></tr>
       <tr><td><code>seed_model</code></td><td>gpt-5.5</td><td>人群生成阶段使用的模型（默认从环境变量 <code>LEXIMETER_MODEL</code> 读取）。</td></tr>
       <tr><td><code>persona_model</code></td><td>gpt-5.5</td><td>传记扩写阶段使用的模型（同上）。</td></tr>
       <tr><td><code>poll_model</code></td><td>gpt-5.5</td><td>提问阶段使用的模型（同上）。</td></tr>

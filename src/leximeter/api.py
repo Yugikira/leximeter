@@ -987,6 +987,7 @@ async def poll(
     num_personas: int = 1000,
     entities_per_generation: int = 50,
     n_questions_per_run: int = 8,
+    random_seed: int | None = None,
     file_name: str = "poll_results.csv",
     reset_files: bool = False,
     max_retries: int = 0,
@@ -1014,6 +1015,7 @@ async def poll(
         num_personas=num_personas,
         entities_per_generation=entities_per_generation,
         n_questions_per_run=n_questions_per_run,
+        random_seed=random_seed,
     )
     task = Poll(
         cfg,
