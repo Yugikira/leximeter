@@ -468,3 +468,125 @@ def test_poll_tier_basic_prevents_key_stealing_and_mapping_order_updates_signatu
     assert list(reordered.columns) == ["seed", "persona", "a", "b"]
     assert reordered["a"].iloc[0] == "Alpha"
     assert reordered["b"].iloc[0] == "Beta"
+
+
+def test_poll_preserves_unweighted_list_candidates_and_degrades_malformed_weights(
+    tmp_path,
+):
+    seeds = [f"persona_{i}" for i in range(40)]
+    df = pd.DataFrame({"seed": seeds})
+    q_two_elem_multi = "Unweighted 2-element list candidates"
+    q_two_elem_single = "Single unweighted 2-element list candidate"
+    q_mixed_len = "Mixed-length unweighted list candidates"
+    q_wrapped_lists = "Wrapped unweighted 2-element list candidates"
+    q_malformed_neg = "Malformed negative weight pairs"
+    q_malformed_nonfinite = "Malformed non-finite weight pairs"
+    q_mixed_neg_and_long = "Mixed 2-element negative entry and 3-element list"
+    q_bool_pairs = "Unweighted 2-element list with boolean flags"
+    q_zero_weights = "All zero-weight valid pairs"
+    q_flat_scalars = "Flat unweighted scalar list"
+    q_scalar = "Direct scalar fallback"
+    questions = [
+        q_two_elem_multi,
+        q_two_elem_single,
+        q_mixed_len,
+        q_wrapped_lists,
+        q_malformed_neg,
+        q_malformed_nonfinite,
+        q_mixed_neg_and_long,
+        q_bool_pairs,
+        q_zero_weights,
+        q_flat_scalars,
+        q_scalar,
+    ]
+
+    payload: dict[str, Any] = {
+        q_two_elem_multi: [["Salmon", "Cheese"], ["Brisket", "Ribs"]],
+        q_two_elem_single: [["Salmon", "Cheese"]],
+        q_mixed_len: [["a", "b"], ["c", "d", "e"]],
+        q_wrapped_lists: {"options": [["Salmon", "Cheese"], ["Brisket", "Ribs"]]},
+        q_malformed_neg: [["a", -0.5], ["b", -1.0]],
+        q_malformed_nonfinite: [["a", -0.5], ["b", float("nan")], ["c", float("inf")]],
+        q_mixed_neg_and_long: [["a", -0.5], ["c", "d", "e"]],
+        q_bool_pairs: [["a", True], ["b", False]],
+        q_zero_weights: [["zero_a", 0.0], ["zero_b", 0.0]],
+        q_flat_scalars: ["Yes", "No"],
+        q_scalar: "Direct answer",
+    }
+    responses = {s: payload for s in seeds}
+
+    save_dir = str(tmp_path / "poll_unweighted_lists")
+    client = SurveyStubClient(responses)
+    first = run(
+        poll(
+            df,
+            "seed",
+            questions=questions,
+            save_dir=save_dir,
+            client=client,
+            n_questions_per_run=len(questions),
+        )
+    )
+
+    def assert_expected_frame(frame: pd.DataFrame) -> None:
+        two_elem_vals = list(frame[q_two_elem_multi])
+        assert all(isinstance(v, list) for v in two_elem_vals)
+        assert all(
+            v in (["Salmon", "Cheese"], ["Brisket", "Ribs"]) for v in two_elem_vals
+        )
+        assert ["Salmon", "Cheese"] in two_elem_vals
+        assert ["Brisket", "Ribs"] in two_elem_vals
+
+        assert list(frame[q_two_elem_single]) == [["Salmon", "Cheese"]] * len(seeds)
+
+        mixed_vals = list(frame[q_mixed_len])
+        assert all(isinstance(v, list) for v in mixed_vals)
+        assert all(v in (["a", "b"], ["c", "d", "e"]) for v in mixed_vals)
+        assert ["a", "b"] in mixed_vals
+        assert ["c", "d", "e"] in mixed_vals
+
+        wrapped_vals = list(frame[q_wrapped_lists])
+        assert all(isinstance(v, list) for v in wrapped_vals)
+        assert all(
+            v in (["Salmon", "Cheese"], ["Brisket", "Ribs"]) for v in wrapped_vals
+        )
+        assert ["Salmon", "Cheese"] in wrapped_vals
+        assert ["Brisket", "Ribs"] in wrapped_vals
+
+        assert set(frame[q_malformed_neg]) == {"a", "b"}
+        assert set(frame[q_malformed_nonfinite]) == {"a", "b", "c"}
+
+        mixed_neg_vals = list(frame[q_mixed_neg_and_long])
+        assert all(isinstance(v, list) for v in mixed_neg_vals)
+        assert all(v in (["a", -0.5], ["c", "d", "e"]) for v in mixed_neg_vals)
+        assert ["a", -0.5] in mixed_neg_vals
+        assert ["c", "d", "e"] in mixed_neg_vals
+
+        bool_pair_vals = list(frame[q_bool_pairs])
+        assert all(isinstance(v, list) for v in bool_pair_vals)
+        assert all(v in (["a", True], ["b", False]) for v in bool_pair_vals)
+        assert ["a", True] in bool_pair_vals
+        assert ["b", False] in bool_pair_vals
+
+        assert set(frame[q_zero_weights]) == {"zero_a", "zero_b"}
+        assert set(frame[q_flat_scalars]) == {"Yes", "No"}
+        assert list(frame[q_scalar]) == ["Direct answer"] * len(seeds)
+
+    assert_expected_frame(first)
+
+    calls_after_first = client.calls
+    reloaded = run(
+        poll(
+            df,
+            "seed",
+            questions=questions,
+            save_dir=save_dir,
+            client=client,
+            n_questions_per_run=len(questions),
+            reset_files=False,
+        )
+    )
+    assert client.calls == calls_after_first
+    assert_expected_frame(reloaded)
+    for col in questions:
+        assert list(reloaded[col]) == list(first[col])

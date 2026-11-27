@@ -348,6 +348,15 @@ def _pick_uniform(candidates: Sequence[Any], u: float) -> Any:
     return candidates[min(int(u * len(candidates)), len(candidates) - 1)]
 
 
+def _is_malformed_numeric_pair(entry: Any) -> bool:
+    if not (isinstance(entry, (list, tuple)) and len(entry) == 2):
+        return False
+    raw_weight = entry[1]
+    if not isinstance(raw_weight, (int, float)) or isinstance(raw_weight, bool):
+        return False
+    return _coerce_weight(raw_weight) is None
+
+
 def sample_distribution(distribution: Any, *, sample_key: str = "") -> Any:
     """Draw a deterministic probability-weighted answer from ``distribution``."""
     if isinstance(distribution, dict):
@@ -366,13 +375,9 @@ def sample_distribution(distribution: Any, *, sample_key: str = "") -> Any:
         return None
 
     valid_pairs: list[tuple[Any, float]] = []
-    saw_pair_shape = False
-    fallback_candidates: list[Any] = []
     for entry in distribution:
         if isinstance(entry, (list, tuple)) and len(entry) == 2:
-            saw_pair_shape = True
             ans, raw_weight = entry
-            fallback_candidates.append(ans)
             w = _coerce_weight(raw_weight)
             if w is not None:
                 valid_pairs.append((ans, w))
@@ -391,7 +396,8 @@ def sample_distribution(distribution: Any, *, sample_key: str = "") -> Any:
             return positive[-1][0]
         return _pick_uniform([ans for ans, _ in valid_pairs], u)
 
-    candidates = fallback_candidates if saw_pair_shape else list(distribution)
-    if not candidates:
-        return None
+    if all(_is_malformed_numeric_pair(entry) for entry in distribution):
+        candidates = [entry[0] for entry in distribution]
+    else:
+        candidates = list(distribution)
     return _pick_uniform(candidates, u)
