@@ -39,7 +39,8 @@ from .tasks.filter import Filter, FilterConfig
 from .tasks.ideate import Ideate, IdeateConfig
 from .tasks.merge import Merge, MergeConfig
 from .tasks.paraphrase import Paraphrase, ParaphraseConfig
-from .tasks.poll import Poll, PollConfig, normalize_poll_questions
+from .tasks.poll import Poll, PollConfig
+from .tasks.poll.parsing import PollQuestionInput
 from .tasks.rank import Rank, RankConfig
 from .tasks.rate import Rate, RateConfig
 from .tasks.seed import Seed, SeedConfig
@@ -978,7 +979,7 @@ async def poll(
     column_name: str | None = None,
     *,
     population_description: str | None = None,
-    questions: Any | None = None,
+    questions: PollQuestionInput | None = None,
     save_dir: str,
     seed_model: str = "gpt-5.5",
     persona_model: str = "gpt-5.5",
@@ -1005,7 +1006,7 @@ async def poll(
     """
     cfg = PollConfig(
         population_description=population_description,
-        questions=normalize_poll_questions(questions),
+        questions=questions if questions is not None else [],
         save_dir=save_dir,
         file_name=file_name,
         seed_model=seed_model,
@@ -1028,8 +1029,6 @@ async def poll(
         max_retries,
         df=df,
         column_name=column_name,
-        population_description=population_description,
-        questions=questions,
         reset_files=reset_files,
         **engine_kwargs,
     )

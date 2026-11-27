@@ -1,5 +1,5 @@
-"""Poll task: seed a population, expand personas, and survey them."""
+"""Synthetic survey / polling task."""
 
-from .task import Poll, PollConfig, normalize_poll_questions
+from .task import Poll, PollConfig
 
-__all__ = ["Poll", "PollConfig", "normalize_poll_questions"]
+__all__ = ["Poll", "PollConfig"]

@@ -4,29 +4,42 @@ from __future__ import annotations
 
 import asyncio
 import json
+from typing import Any
 
 import pandas as pd
+import pytest
+from conftest import CountingClient
 
 from leximeter import poll
-from leximeter.client.base import LLMClient
 
 
 def run(coro):
     return asyncio.run(coro)
 
 
-class SurveyStubClient(LLMClient):
-    """Fake LLMClient returning per-seed persona bios and canned survey payloads."""
+class SurveyStubClient(CountingClient):
+    """CountingClient returning per-seed persona bios and canned survey payloads."""
 
-    def __init__(self, responses_by_seed: dict[str, dict]) -> None:
+    def __init__(
+        self,
+        responses_by_seed: dict[str, dict[str, Any]],
+        *,
+        fail_on_survey_substring: str | None = None,
+    ) -> None:
+        super().__init__({})
         self._responses_by_seed = responses_by_seed
-        self.calls = 0
+        self.fail_on_survey_substring = fail_on_survey_substring
         self.prompts: list[str] = []
 
     async def complete(self, prompt, *, model, json_mode=False, **kwargs) -> str:
         self.calls += 1
         self.prompts.append(prompt)
         if "BEGIN SURVEY QUESTIONS" in prompt:
+            if (
+                self.fail_on_survey_substring is not None
+                and self.fail_on_survey_substring in prompt
+            ):
+                raise asyncio.CancelledError("transient survey interruption")
             for seed_name, payload in self._responses_by_seed.items():
                 if f"BIO_FOR_{seed_name}" in prompt:
                     return json.dumps(payload)
@@ -36,35 +49,34 @@ class SurveyStubClient(LLMClient):
                 return f"BIO_FOR_{seed_name}"
         return "BIO_FOR_UNKNOWN"
 
-    def estimate_tokens(self, prompt, *, model) -> int:
-        return 0
-
-    def estimate_cost(self, prompt, *, model) -> float:
-        return 0.0
-
 
 def test_poll_preserves_list_and_dict_answers_across_run_and_reload(tmp_path):
     df = pd.DataFrame({"seed": ["Alice", "Bob", "Carol"]})
     questions = [
         "Which foods do you cold-smoke? (Select all that apply)",
         "Rank your top two priorities",
+        "Unweighted dict candidate",
         "Any open-ended note?",
     ]
     responses = {
         "Alice": {
             questions[0]: [[["Salmon", "Cheese"], 1.0]],
             questions[1]: [[{"first": "temp_control", "second": "safety"}, 1.0]],
-            questions[2]: [["[unclosed bracket note", 1.0]],
+            # Flat unweighted list holding a structured dict with "answer"/"option" keys
+            questions[2]: [{"answer": "temp", "option": "smoke"}],
+            questions[3]: [["[unclosed bracket note", 1.0]],
         },
         "Bob": {
             questions[0]: [[["Brisket"], 1.0]],
             questions[1]: [[{"first": "clean_smoke", "second": "capacity"}, 1.0]],
-            questions[2]: [["Plain text answer", 1.0]],
+            questions[2]: [{"answer": "safety", "option": "size"}],
+            questions[3]: [["Plain text answer", 1.0]],
         },
         "Carol": {
             questions[0]: [[[], 1.0]],
             questions[1]: [[["safety", "price", "size", "brand"], 1.0]],
-            questions[2]: [[42, 1.0]],
+            questions[2]: [{"answer": "price", "option": "brand"}],
+            questions[3]: [[42, 1.0]],
         },
     }
 
@@ -86,9 +98,14 @@ def test_poll_preserves_list_and_dict_answers_across_run_and_reload(tmp_path):
         {"first": "clean_smoke", "second": "capacity"},
         ["safety", "price", "size", "brand"],
     ]
-    assert first[questions[2]].iloc[0] == "[unclosed bracket note"
-    assert first[questions[2]].iloc[1] == "Plain text answer"
-    assert first[questions[2]].iloc[2] == 42
+    assert list(first[questions[2]]) == [
+        {"answer": "temp", "option": "smoke"},
+        {"answer": "safety", "option": "size"},
+        {"answer": "price", "option": "brand"},
+    ]
+    assert first[questions[3]].iloc[0] == "[unclosed bracket note"
+    assert first[questions[3]].iloc[1] == "Plain text answer"
+    assert first[questions[3]].iloc[2] == 42
 
     calls_after_first = client.calls
     reloaded = run(
@@ -108,13 +125,18 @@ def test_poll_preserves_list_and_dict_answers_across_run_and_reload(tmp_path):
         {"first": "clean_smoke", "second": "capacity"},
         ["safety", "price", "size", "brand"],
     ]
-    assert reloaded[questions[2]].iloc[0] == "[unclosed bracket note"
-    assert reloaded[questions[2]].iloc[1] == "Plain text answer"
-    assert int(reloaded[questions[2]].iloc[2]) == 42
+    assert list(reloaded[questions[2]]) == [
+        {"answer": "temp", "option": "smoke"},
+        {"answer": "safety", "option": "size"},
+        {"answer": "price", "option": "brand"},
+    ]
+    assert reloaded[questions[3]].iloc[0] == "[unclosed bracket note"
+    assert reloaded[questions[3]].iloc[1] == "Plain text answer"
+    assert int(reloaded[questions[3]].iloc[2]) == 42
 
 
 def test_poll_weighted_sampling_reproducibility_and_seed_resampling(tmp_path):
-    seeds = [f"respondent_{i}" for i in range(60)]
+    seeds = [f"persona_{i}" for i in range(60)]
     df = pd.DataFrame({"seed": seeds})
     q_scale = "How satisfied are you? (1-5)"
     q_guard = "Edge case guard"
@@ -138,6 +160,7 @@ def test_poll_weighted_sampling_reproducibility_and_seed_resampling(tmp_path):
             questions=questions,
             save_dir=str(dir_a),
             client=client_a,
+            n_questions_per_run=2,
         )
     )
 
@@ -150,37 +173,41 @@ def test_poll_weighted_sampling_reproducibility_and_seed_resampling(tmp_path):
     assert list(res_a[q_guard]) == ["valid_pick"] * 60
     assert list(res_a[q_wrapped]) == ["wrapped_yes"] * 60
 
-    # 3. Fresh run in a separate directory with default random_seed=None is deterministic
-    dir_b = tmp_path / "run_b"
-    client_b = SurveyStubClient(responses)
-    res_b = run(
-        poll(
-            df,
-            "seed",
-            questions=questions,
-            save_dir=str(dir_b),
-            client=client_b,
+    # 3. Interrupted run driven through client= seam (batch 2 fails on attempt 1, succeeds on resume)
+    dir_interrupted = tmp_path / "run_interrupted"
+    flaky_client = SurveyStubClient(responses, fail_on_survey_substring=q_wrapped)
+    with pytest.raises(asyncio.CancelledError):
+        run(
+            poll(
+                df,
+                "seed",
+                questions=questions,
+                save_dir=str(dir_interrupted),
+                client=flaky_client,
+                n_questions_per_run=2,
+                max_retries=0,
+            )
         )
-    )
-    assert list(res_b[q_scale]) == list(res_a[q_scale])
-
-    # 4. Interrupted resume (poll_state.json missing) reproduces identical draws with 0 calls
-    (dir_a / "poll_state.json").unlink()
-    calls_before_resume = client_a.calls
+    # Batch 1 (60 personas + 60 batch-1 survey calls) succeeded; only batch 2 (60 calls) remains
+    flaky_client.fail_on_survey_substring = None
+    calls_before_resume = flaky_client.calls
     res_resumed = run(
         poll(
             df,
             "seed",
             questions=questions,
-            save_dir=str(dir_a),
-            client=client_a,
+            save_dir=str(dir_interrupted),
+            client=flaky_client,
+            n_questions_per_run=2,
             reset_files=False,
         )
     )
-    assert client_a.calls == calls_before_resume
+    assert flaky_client.calls - calls_before_resume == 60
     assert list(res_resumed[q_scale]) == list(res_a[q_scale])
+    assert list(res_resumed[q_wrapped]) == ["wrapped_yes"] * 60
 
-    # 5. Changing random_seed invalidates manifest, re-samples cached answers_raw.csv with 0 calls
+    # 4. Changing random_seed invalidates manifest, re-samples cached answers_raw.csv with 0 calls
+    calls_before_reseed = client_a.calls
     res_seed_1 = run(
         poll(
             df,
@@ -188,6 +215,7 @@ def test_poll_weighted_sampling_reproducibility_and_seed_resampling(tmp_path):
             questions=questions,
             save_dir=str(dir_a),
             client=client_a,
+            n_questions_per_run=2,
             random_seed=101,
             reset_files=False,
         )
@@ -199,49 +227,78 @@ def test_poll_weighted_sampling_reproducibility_and_seed_resampling(tmp_path):
             questions=questions,
             save_dir=str(dir_a),
             client=client_a,
+            n_questions_per_run=2,
             random_seed=202,
             reset_files=False,
         )
     )
-    assert client_a.calls == calls_before_resume
+    assert client_a.calls == calls_before_reseed
     assert list(res_seed_1[q_scale]) != list(res_seed_2[q_scale])
     assert res_seed_1[q_scale].value_counts().to_dict().get(5, 0) >= 45
     assert res_seed_2[q_scale].value_counts().to_dict().get(5, 0) >= 45
 
 
 def test_poll_resolves_shortened_and_normalized_question_keys_safely(tmp_path):
-    df = pd.DataFrame({"seed": ["Alice", "Bob"]})
+    df = pd.DataFrame({"seed": ["Alice", "Bob", "Carol"]})
     q_bullet = "How often do you grill outdoors?"
-    q_tagged = (
+    q_nested = (
         "[Q14] How interested are you in cold smoking at home? "
-        "(Select one: Very interested / Somewhat interested / Not interested)"
+        "(Scale: 1 (Not at all) to 5 (Extremely))"
     )
-    q_exact = "How old are you?"
-    q_ambig_a = "[Q54] Rate continuous smoke output (If present)"
-    q_ambig_b = "[Q55] Rate continuous smoke output (If absent)"
-    questions = [q_bullet, q_tagged, q_exact, q_ambig_a, q_ambig_b]
+    q_short_en = "[Q1] Age? (in years)"
+    q_short_zh = "[Q2] 年龄 (周岁)"
+    q_num_a = "1. Rate continuous smoke output (If present)"
+    q_num_b = "2. Rate continuous smoke output (If absent)"
+    q_ambig_a = "[Q54] Rate chamber insulation (If present)"
+    q_ambig_b = "[Q55] Rate chamber insulation (If absent)"
+    questions = [
+        q_bullet,
+        q_nested,
+        q_short_en,
+        q_short_zh,
+        q_num_a,
+        q_num_b,
+        q_ambig_a,
+        q_ambig_b,
+    ]
 
     responses = {
         "Alice": {
-            # Echoed leading prompt bullet + smart punctuation/case variation
             "- how often do you grill outdoors? ": [["Weekly", 1.0]],
-            # Dropped both leading [Q14] tag and trailing (Select one: ...) hint
-            "How interested are you in cold smoking at home?": [
-                ["Very interested", 1.0]
-            ],
-            # Exact match must never be stolen
-            "How old are you?": [[34, 1.0]],
-            # Unambiguous when leading ID tags are kept even if trailing hints drop
-            "[Q54] Rate continuous smoke output": [["Must-be", 1.0]],
-            "[Q55] Rate continuous smoke output": [["Dislike", 1.0]],
+            # Dropped [Q14] and nested parenthetical hint
+            "How interested are you in cold smoking at home?": [[5, 1.0]],
+            # Short English and CJK stems
+            "Age": [[34, 1.0]],
+            "年龄": [[34, 1.0]],
+            # Numbered siblings with trailing parentheticals dropped
+            "1. Rate continuous smoke output": [["Must-be", 1.0]],
+            "2. Rate continuous smoke output": [["Dislike", 1.0]],
+            # Bracket-tagged siblings with trailing parentheticals dropped
+            "[Q54] Rate chamber insulation": [["Attractive", 1.0]],
+            "[Q55] Rate chamber insulation": [["Neutral", 1.0]],
         },
         "Bob": {
-            # Keyed by leading [Q14] ID alone
-            "Q14": [["Somewhat interested", 1.0]],
-            "- How often do you grill outdoors?": [["Monthly", 1.0]],
-            "How old are you?": [[49, 1.0]],
+            "- How often do you grill outdoors.": [["Monthly", 1.0]],
+            # Keyed by leading ID tag alone
+            "Q14.": [[3, 1.0]],
+            "Q1": [[49, 1.0]],
+            "Q2": [[49, 1.0]],
             # Ambiguous bare stem matches BOTH Q54 and Q55 -> must NOT cross-contaminate
-            "Rate continuous smoke output": [["Ambiguous", 1.0]],
+            "Rate chamber insulation": [["Ambiguous", 1.0]],
+            # Wrong tag [Q99] must NEVER match Q54 or Q55
+            "[Q99] Rate continuous smoke output": [["WrongTag", 1.0]],
+        },
+        "Carol": {
+            "How often do you grill outdoors?": [["Daily", 1.0]],
+            "[Q14] How interested are you in cold smoking at home?": [[4, 1.0]],
+            "[Q1] Age? (in years)": [[28, 1.0]],
+            "[Q2] 年龄 (周岁)": [[28, 1.0]],
+            "1. Rate continuous smoke output (If present)": [["Like", 1.0]],
+            "2. Rate continuous smoke output (If absent)": [["Live with", 1.0]],
+            # Q54 matched exact, Q55 omitted, plus stray bare stem & duplicate Q54 key -> Q55 stays None
+            q_ambig_a: [["ExactQ54", 1.0]],
+            "[Q54] Rate chamber insulation": [["DupQ54", 1.0]],
+            "Rate chamber insulation": [["StrayBareStem", 1.0]],
         },
     }
 
@@ -255,13 +312,20 @@ def test_poll_resolves_shortened_and_normalized_question_keys_safely(tmp_path):
         )
     )
 
-    assert list(res[q_bullet]) == ["Weekly", "Monthly"]
-    assert list(res[q_tagged]) == ["Very interested", "Somewhat interested"]
-    assert list(res[q_exact]) == [34, 49]
-    assert res[q_ambig_a].iloc[0] == "Must-be"
-    assert res[q_ambig_b].iloc[0] == "Dislike"
+    assert list(res[q_bullet]) == ["Weekly", "Monthly", "Daily"]
+    assert list(res[q_nested]) == [5, 3, 4]
+    assert list(res[q_short_en]) == [34, 49, 28]
+    assert list(res[q_short_zh]) == [34, 49, 28]
+    assert res[q_num_a].iloc[0] == "Must-be"
+    assert res[q_num_b].iloc[0] == "Dislike"
+    assert pd.isna(res[q_num_a].iloc[1])
+    assert pd.isna(res[q_num_b].iloc[1])
+    assert res[q_ambig_a].iloc[0] == "Attractive"
+    assert res[q_ambig_b].iloc[0] == "Neutral"
     assert pd.isna(res[q_ambig_a].iloc[1])
     assert pd.isna(res[q_ambig_b].iloc[1])
+    assert res[q_ambig_a].iloc[2] == "ExactQ54"
+    assert pd.isna(res[q_ambig_b].iloc[2])
 
 
 def test_poll_supports_mapping_questions_with_short_ids_and_signature(tmp_path):
@@ -275,12 +339,12 @@ def test_poll_supports_mapping_questions_with_short_ids_and_signature(tmp_path):
     }
 
     responses = {
-        # Alice's completion keys by short question_id (prompt contract)
+        # Alice keys by short question_id (including trailing period normalization)
         "Alice": {
-            "smoke_interest": [[5, 1.0]],
+            "smoke_interest.": [[5, 1.0]],
             "preferred_fuel": [["Pellets", 1.0]],
         },
-        # Bob's completion echoes full question text on one item and ID on the other
+        # Bob echoes full question stem on one item and ID on the other
         "Bob": {
             "How interested are you in cold smoking salmon or cheese?": [[4, 1.0]],
             "preferred_fuel": [["Wood chips", 1.0]],

@@ -75,12 +75,12 @@ result = await leximeter.poll(
     <div class="result">
       <table>
         <tr><th>seed（前 60 字符）</th><th>persona（前 60 字符）</th><th>How many hours per day do you spend on social media? (1-10)</th><th>Do you think social media is mostly good or mostly bad for society? (good/bad)</th></tr>
-        <tr><td>A 29-year-old White man from rural Ohio, high-school-educate…</td><td>Name: Tyler “Ty” McAllister<br>Nationality: USA<br>Age: 29<br>Gender: …</td><td>1.0</td><td>bad</td></tr>
-        <tr><td>A 34-year-old Hispanic woman from Phoenix, Arizona, register…</td><td>Name: Mariana “Mary” Sandoval<br>Nationality: American<br>Age: 34<br>…</td><td>1.0</td><td>bad</td></tr>
-        <tr><td>A 51-year-old White man from suburban Chicago, works as an I…</td><td>Name: Mark Sullivan<br>Nationality: USA<br>Age: 51<br>Gender: Male<br>Ra…</td><td>1.0</td><td>bad</td></tr>
-        <tr><td>A 25-year-old Black woman from Atlanta, Georgia, has some co…</td><td>Name: Kiana Renee Harris<br>Nationality: American<br>Age: 25<br>Gende…</td><td>1.0</td><td>good</td></tr>
-        <tr><td>A 67-year-old White woman from Fort Myers, Florida, retired …</td><td>Name: Nancy Carol Whitfield (née Bowen)<br>Nationality: USA<br>Age…</td><td>1.0</td><td>bad</td></tr>
-        <tr><td>A 42-year-old White woman from rural Tennessee, high-school …</td><td>Name: Darlene “Darla” Sue Whitfield<br>Nationality: USA<br>Age: 42…</td><td>1.0</td><td>good</td></tr>
+        <tr><td>A 29-year-old White man from rural Ohio, high-school-educate…</td><td>Name: Tyler “Ty” McAllister<br>Nationality: USA<br>Age: 29<br>Gender: …</td><td>4</td><td>bad</td></tr>
+        <tr><td>A 34-year-old Hispanic woman from Phoenix, Arizona, register…</td><td>Name: Mariana “Mary” Sandoval<br>Nationality: American<br>Age: 34<br>…</td><td>3</td><td>good</td></tr>
+        <tr><td>A 51-year-old White man from suburban Chicago, works as an I…</td><td>Name: Mark Sullivan<br>Nationality: USA<br>Age: 51<br>Gender: Male<br>Ra…</td><td>1</td><td>good</td></tr>
+        <tr><td>A 25-year-old Black woman from Atlanta, Georgia, has some co…</td><td>Name: Kiana Renee Harris<br>Nationality: American<br>Age: 25<br>Gende…</td><td>6</td><td>bad</td></tr>
+        <tr><td>A 67-year-old White woman from Fort Myers, Florida, retired …</td><td>Name: Nancy Carol Whitfield (née Bowen)<br>Nationality: USA<br>Age…</td><td>4</td><td>bad</td></tr>
+        <tr><td>A 42-year-old White woman from rural Tennessee, high-school …</td><td>Name: Darlene “Darla” Sue Whitfield<br>Nationality: USA<br>Age: 42…</td><td>5</td><td>bad</td></tr>
       </table>
       <div class="dim">真实运行共 6 行（6 个 persona）；seed 与 persona 传记很长，显示时截断为前 60 字符。答案列由模型给出的"答案 + 概率"分布按概率加权确定性采样得出（可通过 <code class="inline">random_seed</code> 重采样）。完整分布与传记保存在 save_dir 下的 answers_raw.csv / personas_raw.csv。</div>
     </div>
@@ -111,7 +111,7 @@ result = await leximeter.poll(
     <h2>参数设置</h2>
     <table>
       <tr><th>参数</th><th>默认值</th><th>说明</th></tr>
-      <tr><td><code>questions</code></td><td>（必填）</td><td>问题列表（字符串）。每个问题输出一列。</td></tr>
+      <tr><td><code>questions</code></td><td>（必填）</td><td>问题列表（字符串序列），或 <code>{问题ID: 完整题干}</code> 字典（长题干推荐用短 ID 作列名）。每个问题输出一列。</td></tr>
       <tr><td><code>save_dir</code></td><td>（必填）</td><td>保存目录（自动创建）。</td></tr>
       <tr><td><code>population_description</code></td><td>None</td><td>人群描述，如 "The general US adult population."；不传且未提供 df 时生成"代表性人群"。</td></tr>
       <tr><td><code>df</code> / <code>column_name</code></td><td>None</td><td>（调用时传）直接提供你自己的种子列表（表格 + 列名），跳过人群生成阶段。</td></tr>
