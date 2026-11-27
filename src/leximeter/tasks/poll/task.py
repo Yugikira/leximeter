@@ -5,6 +5,7 @@ Ported and modified from openai/GABRIEL's ``tasks/poll.py`` (Apache-2.0).
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, field
 from typing import Any
@@ -73,7 +74,7 @@ class Poll(Task):
             self.cfg.entities_per_generation,
             self.cfg.file_name,
         )
-        loaded = self._load_completed(signature, reset_files=reset_files)
+        loaded = self._load_completed(signature, qs, reset_files=reset_files)
         if loaded is not None:
             return loaded
 
@@ -140,13 +141,16 @@ class Poll(Task):
                 **kwargs,
             )
             ans_map = dict(zip(ans_resp["Identifier"], ans_resp["Response"]))
+            for q in batch:
+                if q not in out.columns:
+                    out[q] = pd.Series([None] * len(seeds), dtype=object)
             for j, s in enumerate(seeds):
                 obj = safe_json(ans_map.get(ans_ids[j]))
                 if isinstance(obj, dict):
                     for q in batch:
-                        out.loc[j, q] = self._sample(obj.get(q))
+                        out.at[j, q] = self._sample(obj.get(q))
 
-        self._save(out)
+        self._save(out, qs)
         _common.save_task_state(
             self.cfg.save_dir,
             "poll",
@@ -156,7 +160,11 @@ class Poll(Task):
         return out
 
     def _load_completed(
-        self, signature: str, *, reset_files: bool = False
+        self,
+        signature: str,
+        question_cols: list[str],
+        *,
+        reset_files: bool = False,
     ) -> pd.DataFrame | None:
         """Return the saved result when inputs match and it is complete."""
         out = _common.load_completed_csv(
@@ -168,9 +176,28 @@ class Poll(Task):
         )
         if out is None:
             return None
+        for col in question_cols:
+            if col in out.columns:
+                out[col] = out[col].map(self._restore_structured_cell)
         path = os.path.join(self.cfg.save_dir, self.cfg.file_name)
         print(f"[Poll] Found completed result in {path}; loading {len(out)} responses.")
         return out
+
+    @staticmethod
+    def _serialize_structured_cell(value: Any) -> Any:
+        if isinstance(value, (list, dict)):
+            return json.dumps(value, ensure_ascii=False)
+        return value
+
+    @staticmethod
+    def _restore_structured_cell(value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        try:
+            parsed = json.loads(value)
+        except ValueError:
+            return value
+        return parsed if isinstance(parsed, (list, dict)) else value
 
     @staticmethod
     def _sample(distribution: Any) -> Any:
@@ -187,9 +214,13 @@ class Poll(Task):
             else "Generate a representative set of people."
         )
 
-    def _save(self, out: pd.DataFrame) -> None:
+    def _save(self, out: pd.DataFrame, question_cols: list[str]) -> None:
         out_path = os.path.join(self.cfg.save_dir, self.cfg.file_name)
+        to_write = out.copy()
+        for col in question_cols:
+            if col in to_write.columns:
+                to_write[col] = to_write[col].map(self._serialize_structured_cell)
         try:
-            out.to_csv(out_path, index=False)
+            to_write.to_csv(out_path, index=False)
         except OSError:
             pass
