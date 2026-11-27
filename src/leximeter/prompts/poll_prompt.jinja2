@@ -29,7 +29,10 @@ Important formatting rules:
 - Calibrate probabilities realistically. Do not be overconfident. If this persona could plausibly answer in multiple ways, reflect that uncertainty directly and give some probability mass even to less likely but still realistic outcomes.
 - Include a realistic support set rather than every conceivable answer.
 - For true/false questions, include both `true` and `false`.
-- For closed sets with 10 or fewer options, include every option with probability mass. This includes rating scales like 1 to 5 or 1 to 7, and small categorical sets.
+- For single-choice closed sets with 10 or fewer options, include every option with probability mass. This includes rating scales like 1 to 5 or 1 to 7, and small single-select categorical sets. For single-choice questions, each candidate `answer` must be a single scalar value (string, number, or boolean), not a JSON array.
+- For multi-select questions ("select all that apply", "choose multiple", or selecting up to N options), each candidate `answer` must be a JSON array of the selected option strings representing one complete, mutually exclusive combination the persona might choose, and the probabilities across candidate option arrays must still sum to approximately 1. Include a realistic spread of plausible combinations rather than every possible subset.
+- Example (multi-select): `[[["Option A", "Option B"], 0.45], [["Option A"], 0.35], [["Option B"], 0.20]]`. Do NOT emit bare option strings or independent per-option marginal probabilities such as `[["Option A", 0.7], ["Option B", 0.5]]`.
+- Format the JSON across multiple lines (one `[answer, probability]` pair per line) and keep brackets strictly balanced: for multi-select questions, every pair has the form `[["Option A", "Option B"], 0.45]` inside the question's outer `[...]` array.
 - For wider numeric ranges, include a sparse but representative spread of plausible values across the support rather than every number. Cover the distribution broadly, and include occasional outliers only when they are genuinely plausible for this persona.
 - Example: if a question asks for an integer from 0 to 100, do not output all 101 integers. Instead, output a spread of plausible integers such as `[[12, 0.03], [24, 0.06], [38, 0.12], [49, 0.16], [61, 0.20], [73, 0.18], [84, 0.14], [93, 0.08], [99, 0.03]]`, adjusted to fit this persona.
 - For open-ended text questions, usually include 1 or 2 short, distinct answers; occasionally include 3 if several phrasings are genuinely plausible. If the answer should be long-form, 1 candidate answer is usually enough.
@@ -44,9 +47,9 @@ BEGIN OUTPUT FORMAT
         [<insert answer option 1 here>, <insert probability 1 here>],
         [<insert answer option 2 here>, <insert probability 2 here>]
     ],
-    "{% if use_question_ids %}<insert question 2 ID here>{% else %}<insert question 2 here>{% endif %}": [
-        [<insert answer option 1 here>, <insert probability 1 here>],
-        [<insert answer option 2 here>, <insert probability 2 here>]
+    "{% if use_question_ids %}<insert multi-select question ID here (only for select-all / choose-multiple questions)>{% else %}<insert multi-select question verbatim here (only for select-all / choose-multiple questions)>{% endif %}": [
+        [[<insert selected option 1>, <insert selected option 2>], <insert probability 1 here>],
+        [[<insert selected option 1>], <insert probability 2 here>]
     ],
     ...
 }
