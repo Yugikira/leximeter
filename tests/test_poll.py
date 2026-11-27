@@ -391,3 +391,77 @@ def test_poll_supports_mapping_questions_with_short_ids_and_signature(tmp_path):
         )
     )
     assert client.calls > calls_after_v1
+
+
+def test_poll_prompt_includes_multiselect_subset_guidance_in_shared_prefix(tmp_path):
+    df = pd.DataFrame({"seed": ["Alice", "Bob", "Carol"]})
+    questions_map = {
+        "foods": "Which cold-smoked foods do you eat? (Select all that apply)",
+        "freq": "How often do you grill? (1-5)",
+    }
+    responses = {
+        seed_name: {
+            "foods": [
+                [["Salmon", "Cheese"], 0.5],
+                [["Salmon"], 0.3],
+                [["Cheese"], 0.2],
+            ],
+            "freq": [[4, 0.7], [5, 0.3]],
+        }
+        for seed_name in df["seed"]
+    }
+
+    client = SurveyStubClient(responses)
+    res = run(
+        poll(
+            df,
+            "seed",
+            questions=questions_map,
+            save_dir=str(tmp_path / "poll_multiselect_prompt"),
+            client=client,
+            random_seed=42,
+        )
+    )
+
+    assert all(isinstance(v, list) for v in res["foods"])
+    assert all(set(v).issubset({"Salmon", "Cheese"}) and v for v in res["foods"])
+    assert set(res["freq"]).issubset({4, 5})
+
+    survey_prompts = [p for p in client.prompts if "BEGIN SURVEY QUESTIONS" in p]
+    assert len(survey_prompts) == 3
+
+    # ADR-0005 prefix-first invariance: entire static prefix before BEGIN PERSONA is identical
+    prefixes = [p.split("BEGIN PERSONA")[0] for p in survey_prompts]
+    assert len(set(prefixes)) == 1
+    shared = prefixes[0]
+
+    # Single-choice closed-set rule is scoped to single-choice sets
+    assert "single-choice" in shared.lower()
+    assert "multi-select" in shared.lower()
+    # Multi-select JSON-array combination example and forbidden marginal-probability anti-pattern
+    assert (
+        '[[["Option A", "Option B"], 0.45], [["Option A"], 0.35], [["Option B"], 0.20]]'
+        in shared
+    )
+    assert '[["Option A", 0.7], ["Option B", 0.5]]' in shared
+    assert "marginal" in shared.lower()
+
+    # Section ordering preserved intact before BEGIN PERSONA / END PERSONA
+    for prompt in survey_prompts:
+        idx_q_begin = prompt.index("BEGIN SURVEY QUESTIONS")
+        idx_q_end = prompt.index("END SURVEY QUESTIONS")
+        idx_multi = prompt.lower().index("multi-select")
+        idx_out_begin = prompt.index("BEGIN OUTPUT FORMAT")
+        idx_out_end = prompt.index("END OUTPUT FORMAT")
+        idx_p_begin = prompt.index("BEGIN PERSONA")
+        idx_p_end = prompt.index("END PERSONA")
+        assert (
+            idx_q_begin
+            < idx_q_end
+            < idx_multi
+            < idx_out_begin
+            < idx_out_end
+            < idx_p_begin
+            < idx_p_end
+        )
+        assert "BIO_FOR_" not in prompt[:idx_p_begin]
