@@ -39,7 +39,7 @@ from .tasks.filter import Filter, FilterConfig
 from .tasks.ideate import Ideate, IdeateConfig
 from .tasks.merge import Merge, MergeConfig
 from .tasks.paraphrase import Paraphrase, ParaphraseConfig
-from .tasks.poll import Poll, PollConfig
+from .tasks.poll import Poll, PollConfig, normalize_poll_questions
 from .tasks.rank import Rank, RankConfig
 from .tasks.rate import Rate, RateConfig
 from .tasks.seed import Seed, SeedConfig
@@ -1005,7 +1005,7 @@ async def poll(
     """
     cfg = PollConfig(
         population_description=population_description,
-        questions=list(questions) if questions else [],
+        questions=normalize_poll_questions(questions),
         save_dir=save_dir,
         file_name=file_name,
         seed_model=seed_model,

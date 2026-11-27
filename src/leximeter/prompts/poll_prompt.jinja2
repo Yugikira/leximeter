@@ -18,7 +18,11 @@ END SURVEY QUESTIONS
 
 Important formatting rules:
 - Return exactly one JSON object and nothing else.
+{% if use_question_ids -%}
+- The keys must be the exact question IDs shown in brackets (without brackets or the question text).
+{%- else -%}
 - The keys must be the survey questions reproduced verbatim.
+{%- endif %}
 - The value for each key must be a JSON array of answer-probability pairs.
 - Each pair must be of the form `[answer, probability]`.
 - Probabilities must be JSON numbers between 0 and 1, and the pairs for each question should sum to approximately 1.
@@ -36,11 +40,11 @@ Important formatting rules:
 
 BEGIN OUTPUT FORMAT
 {
-    "<insert question 1 verbatim here>": [
+    "{% if use_question_ids %}<insert question 1 ID here>{% else %}<insert question 1 verbatim here>{% endif %}": [
         [<insert answer option 1 here>, <insert probability 1 here>],
         [<insert answer option 2 here>, <insert probability 2 here>]
     ],
-    "<insert question 2 here>": [
+    "{% if use_question_ids %}<insert question 2 ID here>{% else %}<insert question 2 here>{% endif %}": [
         [<insert answer option 1 here>, <insert probability 1 here>],
         [<insert answer option 2 here>, <insert probability 2 here>]
     ],

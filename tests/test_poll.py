@@ -207,3 +207,123 @@ def test_poll_weighted_sampling_reproducibility_and_seed_resampling(tmp_path):
     assert list(res_seed_1[q_scale]) != list(res_seed_2[q_scale])
     assert res_seed_1[q_scale].value_counts().to_dict().get(5, 0) >= 45
     assert res_seed_2[q_scale].value_counts().to_dict().get(5, 0) >= 45
+
+
+def test_poll_resolves_shortened_and_normalized_question_keys_safely(tmp_path):
+    df = pd.DataFrame({"seed": ["Alice", "Bob"]})
+    q_bullet = "How often do you grill outdoors?"
+    q_tagged = (
+        "[Q14] How interested are you in cold smoking at home? "
+        "(Select one: Very interested / Somewhat interested / Not interested)"
+    )
+    q_exact = "How old are you?"
+    q_ambig_a = "[Q54] Rate continuous smoke output (If present)"
+    q_ambig_b = "[Q55] Rate continuous smoke output (If absent)"
+    questions = [q_bullet, q_tagged, q_exact, q_ambig_a, q_ambig_b]
+
+    responses = {
+        "Alice": {
+            # Echoed leading prompt bullet + smart punctuation/case variation
+            "- how often do you grill outdoors? ": [["Weekly", 1.0]],
+            # Dropped both leading [Q14] tag and trailing (Select one: ...) hint
+            "How interested are you in cold smoking at home?": [
+                ["Very interested", 1.0]
+            ],
+            # Exact match must never be stolen
+            "How old are you?": [[34, 1.0]],
+            # Unambiguous when leading ID tags are kept even if trailing hints drop
+            "[Q54] Rate continuous smoke output": [["Must-be", 1.0]],
+            "[Q55] Rate continuous smoke output": [["Dislike", 1.0]],
+        },
+        "Bob": {
+            # Keyed by leading [Q14] ID alone
+            "Q14": [["Somewhat interested", 1.0]],
+            "- How often do you grill outdoors?": [["Monthly", 1.0]],
+            "How old are you?": [[49, 1.0]],
+            # Ambiguous bare stem matches BOTH Q54 and Q55 -> must NOT cross-contaminate
+            "Rate continuous smoke output": [["Ambiguous", 1.0]],
+        },
+    }
+
+    res = run(
+        poll(
+            df,
+            "seed",
+            questions=questions,
+            save_dir=str(tmp_path / "poll_keys"),
+            client=SurveyStubClient(responses),
+        )
+    )
+
+    assert list(res[q_bullet]) == ["Weekly", "Monthly"]
+    assert list(res[q_tagged]) == ["Very interested", "Somewhat interested"]
+    assert list(res[q_exact]) == [34, 49]
+    assert res[q_ambig_a].iloc[0] == "Must-be"
+    assert res[q_ambig_b].iloc[0] == "Dislike"
+    assert pd.isna(res[q_ambig_a].iloc[1])
+    assert pd.isna(res[q_ambig_b].iloc[1])
+
+
+def test_poll_supports_mapping_questions_with_short_ids_and_signature(tmp_path):
+    df = pd.DataFrame({"seed": ["Alice", "Bob"]})
+    questions_v1 = {
+        "smoke_interest": (
+            "How interested are you in cold smoking salmon or cheese? "
+            "(1 = Not at all, 5 = Extremely)"
+        ),
+        "preferred_fuel": "Which fuel type do you prefer? (Pellets / Wood chips)",
+    }
+
+    responses = {
+        # Alice's completion keys by short question_id (prompt contract)
+        "Alice": {
+            "smoke_interest": [[5, 1.0]],
+            "preferred_fuel": [["Pellets", 1.0]],
+        },
+        # Bob's completion echoes full question text on one item and ID on the other
+        "Bob": {
+            "How interested are you in cold smoking salmon or cheese?": [[4, 1.0]],
+            "preferred_fuel": [["Wood chips", 1.0]],
+        },
+    }
+
+    save_dir = str(tmp_path / "poll_map")
+    client = SurveyStubClient(responses)
+    res = run(
+        poll(
+            df,
+            "seed",
+            questions=questions_v1,
+            save_dir=save_dir,
+            client=client,
+        )
+    )
+
+    assert list(res.columns) == ["seed", "persona", "smoke_interest", "preferred_fuel"]
+    assert list(res["smoke_interest"]) == [5, 4]
+    assert list(res["preferred_fuel"]) == ["Pellets", "Wood chips"]
+
+    # Prefix-first invariant preserved: question IDs + texts precede BEGIN PERSONA
+    survey_prompts = [p for p in client.prompts if "BEGIN SURVEY QUESTIONS" in p]
+    prefixes = [p.split("BEGIN PERSONA")[0] for p in survey_prompts]
+    assert len(set(prefixes)) == 1
+    assert "smoke_interest" in prefixes[0]
+    assert "cold smoking salmon or cheese" in prefixes[0]
+
+    # Changing question wording under the same question_id must invalidate cache
+    calls_after_v1 = client.calls
+    questions_v2 = {
+        **questions_v1,
+        "smoke_interest": "How interested are you in hot smoking brisket? (1-5)",
+    }
+    run(
+        poll(
+            df,
+            "seed",
+            questions=questions_v2,
+            save_dir=save_dir,
+            client=client,
+            reset_files=False,
+        )
+    )
+    assert client.calls > calls_after_v1
